@@ -5,3 +5,4 @@ pub mod hooks;
 pub mod mcp;
 pub mod store;
 pub mod types;
+pub mod updater;

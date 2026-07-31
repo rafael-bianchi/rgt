@@ -14,22 +14,42 @@
 - **First-Class Temporal Derivations**: Native `Number`, `Date`, and `Duration` types powered by `chrono`.
 - **Dual Integration Surface**: Passive background execution hooks (`PreToolUse`/`PostToolUse`) + active Model Context Protocol (MCP) stdio RPC server.
 - **One-Command Setup**: `rgt init -g` auto-detects installed AI coding tools and writes hook configurations.
+- **Self-Update Mechanism**: `rgt update` checks GitHub Releases and performs atomic in-place binary upgrades with SHA-256 verification.
 
 ---
 
 ## Quickstart
 
-### 1. Installation & Initialization
+### 1. Installation
+
+**Shell (macOS/Linux):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/rafael-bianchi/rgt/main/install.sh | sh
+```
+
+**Homebrew:**
+```bash
+brew install rafael-bianchi/tap/rgt
+```
+
+**Cargo:**
+```bash
+cargo install rgt
+```
+
+**From Source:**
+```bash
+cargo build --release
+```
+
+### 2. Initialization
 
 ```bash
-# Build binary
-cargo build --release
-
 # Initialize RGT in project and auto-configure AI agent hooks
 rgt init -g
 ```
 
-### 2. Inspecting Graph Status
+### 3. Inspecting Graph Status
 
 ```bash
 # Check node staleness summary
@@ -39,14 +59,14 @@ rgt status
 rgt status --json
 ```
 
-### 3. Querying Value Lineage ("Why is this value X?")
+### 4. Querying Value Lineage ("Why is this value X?")
 
 ```bash
 # Query derivation tree for a node ID
 rgt query node_drv_a1b2c3d4 --json
 ```
 
-### 4. Exporting Dependency Graph
+### 5. Exporting Dependency Graph
 
 ```bash
 # Export as Mermaid diagram
