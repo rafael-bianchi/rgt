@@ -92,3 +92,18 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[package.metadata.deb]
+maintainer = "RGT Contributors"
+section = "utils"
+assets = [
+    ["target/release/rgt", "usr/bin/rgt", "755"],
+]
+depends = ""
+
+[package.metadata.generate-rpm]
+license = "MIT OR Apache-2.0"
+summary = "Rust Graph Tracker: Numeric and date provenance tracking for LLM coding agents"
+assets = [
+    { source = "target/release/rgt", dest = "/usr/bin/rgt", mode = "755" },
+]

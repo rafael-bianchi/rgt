@@ -47,7 +47,7 @@ mod tests {
                     size: 5000000,
                 },
                 GitHubReleaseAsset {
-                    name: "rgt-v0.2.0-x86_64-unknown-linux-gnu.tar.gz".to_string(),
+                    name: "rgt-v0.2.0-x86_64-unknown-linux-musl.tar.gz".to_string(),
                     browser_download_url: "https://example.com/linux-x64.tar.gz".to_string(),
                     size: 6000000,
                 },
@@ -78,7 +78,7 @@ mod tests {
         let linux_x64 = Platform {
             os: Os::Linux,
             arch: Arch::X86_64,
-            target_triple: "x86_64-unknown-linux-gnu".to_string(),
+            target_triple: "x86_64-unknown-linux-musl".to_string(),
         };
         let asset = find_asset(&release, &linux_x64).unwrap();
         assert_eq!(
@@ -109,7 +109,7 @@ mod tests {
         let platforms = vec![
             (Os::Darwin, Arch::X86_64, "x86_64-apple-darwin"),
             (Os::Darwin, Arch::Aarch64, "aarch64-apple-darwin"),
-            (Os::Linux, Arch::X86_64, "x86_64-unknown-linux-gnu"),
+            (Os::Linux, Arch::X86_64, "x86_64-unknown-linux-musl"),
             (Os::Linux, Arch::Aarch64, "aarch64-unknown-linux-gnu"),
             (Os::Windows, Arch::X86_64, "x86_64-pc-windows-msvc"),
         ];

@@ -55,14 +55,14 @@ impl Platform {
         match (os, arch) {
             (Os::Darwin, Arch::X86_64) => "x86_64-apple-darwin".to_string(),
             (Os::Darwin, Arch::Aarch64) => "aarch64-apple-darwin".to_string(),
-            (Os::Linux, Arch::X86_64) => "x86_64-unknown-linux-gnu".to_string(),
+            (Os::Linux, Arch::X86_64) => "x86_64-unknown-linux-musl".to_string(),
             (Os::Linux, Arch::Aarch64) => "aarch64-unknown-linux-gnu".to_string(),
             (Os::Windows, Arch::X86_64) => "x86_64-pc-windows-msvc".to_string(),
             _ => format!(
                 "{}-{}",
                 match os {
                     Os::Darwin => "apple-darwin",
-                    Os::Linux => "unknown-linux-gnu",
+                    Os::Linux => "unknown-linux-musl",
                     Os::Windows => "pc-windows-msvc",
                     Os::Unknown(s) => s.as_str(),
                 },
@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn test_build_target_triple_linux_x86_64() {
         let triple = Platform::build_target_triple(&Os::Linux, &Arch::X86_64);
-        assert_eq!(triple, "x86_64-unknown-linux-gnu");
+        assert_eq!(triple, "x86_64-unknown-linux-musl");
     }
 
     #[test]
@@ -155,11 +155,11 @@ mod tests {
         let platform = Platform {
             os: Os::Linux,
             arch: Arch::X86_64,
-            target_triple: "x86_64-unknown-linux-gnu".to_string(),
+            target_triple: "x86_64-unknown-linux-musl".to_string(),
         };
         assert_eq!(
             platform.asset_name("v0.1.0"),
-            "rgt-v0.1.0-x86_64-unknown-linux-gnu.tar.gz"
+            "rgt-v0.1.0-x86_64-unknown-linux-musl.tar.gz"
         );
     }
 }
