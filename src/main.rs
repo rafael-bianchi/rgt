@@ -5,6 +5,7 @@ mod hooks;
 mod mcp;
 mod store;
 mod types;
+mod updater;
 
 use clap::{Parser, Subcommand};
 
@@ -60,6 +61,20 @@ enum Commands {
     },
     /// Start the Model Context Protocol stdio RPC server
     Mcp,
+    /// Check for and install binary updates from GitHub Releases
+    Update {
+        /// Only check if an update is available (no download)
+        #[arg(long)]
+        check: bool,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+
+        /// Target a specific release version tag
+        #[arg(long)]
+        version: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -84,6 +99,7 @@ async fn main() {
             }
             Ok(())
         }
+        Commands::Update { check, yes, version } => cli::execute_update(check, yes, version),
     };
 
     if let Err(err_msg) = result {
