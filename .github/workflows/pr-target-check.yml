@@ -1,0 +1,39 @@
+name: PR Target Branch Check
+
+on:
+  pull_request_target:
+    types: [opened, edited]
+
+permissions: {}
+
+jobs:
+  check-target:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.ref != 'develop'
+    steps:
+      - name: Add wrong-base label and comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              labels: ['wrong-base']
+            });
+
+            const body = `Automatic message from CI checks : It seems like this branch is targeting the wrong branch. Any contribution should target the \`develop\` branch.
+
+            See [CONTRIBUTING.md](https://github.com/rafael-bianchi/rgt/blob/main/CONTRIBUTING.md) for details.`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: body
+            });

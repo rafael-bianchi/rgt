@@ -53,7 +53,7 @@ fn test_dry_run_linux_x86_64() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("linux"));
     assert!(stdout.contains("x86_64"));
-    assert!(stdout.contains("x86_64-unknown-linux-gnu"));
+    assert!(stdout.contains("x86_64-unknown-linux-musl"));
 }
 
 #[test]

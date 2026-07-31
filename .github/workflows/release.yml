@@ -1,12 +1,32 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Tag to release'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v0.1.0)'
+        required: true
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   build:
@@ -23,12 +43,13 @@ jobs:
             target: aarch64-apple-darwin
             suffix: tar.gz
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             suffix: tar.gz
+            musl: true
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             suffix: tar.gz
-            use-cross: true
+            cross: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             suffix: zip
@@ -41,27 +62,25 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross (ARM64 Linux only)
-        if: matrix.use-cross == true
-        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Install cross-compilation tools
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - name: Install musl tools
+        if: matrix.musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+          key: ${{ matrix.target }}
 
       - name: Build release binary
-        if: matrix.use-cross != true
         run: cargo build --release --locked --target ${{ matrix.target }}
-
-      - name: Build release binary (cross)
-        if: matrix.use-cross == true
-        run: cross build --release --locked --target ${{ matrix.target }}
 
       - name: Strip binary (Unix)
         if: matrix.suffix == 'tar.gz'
@@ -70,18 +89,18 @@ jobs:
       - name: Package archive (tar.gz)
         if: matrix.suffix == 'tar.gz'
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
+          TAG="${{ inputs.tag }}"
           VERSION="${TAG#v}"
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/rgt dist/
-          tar -czf "rgt-v${VERSION}-${{ matrix.target }}.tar.gz" -C dist rgt
+          cd target/${{ matrix.target }}/release
+          tar -czf "../../../rgt-v${VERSION}-${{ matrix.target }}.tar.gz" rgt
+          cd ../../..
           sha256sum "rgt-v${VERSION}-${{ matrix.target }}.tar.gz" > "rgt-v${VERSION}-${{ matrix.target }}.tar.gz.sha256"
         shell: bash
 
       - name: Package archive (zip)
         if: matrix.suffix == 'zip'
         run: |
-          $tag = '${{ github.ref }}' -replace 'refs/tags/', ''
+          $tag = '${{ inputs.tag }}' -replace 'refs/tags/', ''
           $version = $tag -replace '^v', ''
           New-Item -ItemType Directory -Force -Path dist
           Copy-Item "target/${{ matrix.target }}/release/rgt.exe" "dist/rgt.exe"
@@ -93,66 +112,111 @@ jobs:
       - name: Upload archive artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.target }}
+          name: rgt-${{ matrix.target }}
           path: |
             rgt-v*.${{ matrix.suffix }}
             rgt-v*.${{ matrix.suffix }}.sha256
           if-no-files-found: error
 
-  release:
-    name: Create GitHub Release
+  build-deb:
+    name: Build DEB package
     runs-on: ubuntu-latest
-    needs: build
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Build DEB
+        run: cargo deb
+
+      - name: Upload DEB
+        uses: actions/upload-artifact@v4
+        with:
+          name: rgt-deb
+          path: target/debian/*.deb
+
+  build-rpm:
+    name: Build RPM package
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: dnf install -y rust cargo rpm-build
+
+      - name: Install cargo-generate-rpm
+        run: cargo install cargo-generate-rpm
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Generate RPM
+        run: cargo generate-rpm
+
+      - name: Upload RPM
+        uses: actions/upload-artifact@v4
+        with:
+          name: rgt-rpm
+          path: target/generate-rpm/*.rpm
+
+  release:
+    name: Create GitHub Release
+    needs: [build, build-deb, build-rpm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          TAG="${{ inputs.tag }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          merge-multiple: true
 
-      - name: Generate checksums.txt
+      - name: Flatten artifacts
         run: |
-          cat rgt-*.sha256 | sort > checksums.txt
-          rm -f rgt-*.sha256
-        shell: bash
-        working-directory: artifacts
+          mkdir -p release
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.deb" -o -name "*.rpm" \) -exec cp {} release/ \;
 
-      - name: Create GitHub Release
+      - name: Create checksums
+        run: |
+          cd release
+          sha256sum * > checksums.txt
+
+      - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
-          body: |
-            ## RGT ${{ github.ref_name }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          files: release/*
+          prerelease: ${{ inputs.prerelease }}
 
-            ### Installation
-
-            **Shell (macOS/Linux):**
-            ```sh
-            curl -fsSL https://raw.githubusercontent.com/rafael-bianchi/rgt/main/install.sh | sh
-            ```
-
-            **Homebrew:**
-            ```sh
-            brew install rafael-bianchi/tap/rgt
-            ```
-
-            **Cargo:**
-            ```sh
-            cargo install rgt
-            ```
-
-            ### Checksums
-            See `checksums.txt` for SHA-256 hashes of all release archives.
-          files: artifacts/*
-          generate_release_notes: true
-
-  update-homebrew:
-    name: Update Homebrew Tap Formula
-    runs-on: ubuntu-latest
+  homebrew:
+    name: Update Homebrew formula
     needs: release
+    if: ${{ !inputs.prerelease }}
+    runs-on: ubuntu-latest
     steps:
+      - name: Get version
+        id: version
+        run: |
+          TAG="${{ inputs.tag }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Dispatch Homebrew tap update
         uses: peter-evans/repository-dispatch@v3
         with:
@@ -161,6 +225,6 @@ jobs:
           event-type: rgt-release
           client-payload: |
             {
-              "version": "${{ github.ref_name }}",
-              "tag": "${{ github.ref_name }}"
+              "version": "${{ steps.version.outputs.version }}",
+              "tag": "${{ steps.version.outputs.tag }}"
             }
