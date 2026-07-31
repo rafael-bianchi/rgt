@@ -1,0 +1,54 @@
+[package]
+name = "rgt"
+version = "0.1.0"
+edition = "2021"
+authors = ["RGT Contributors"]
+description = "Rust Graph Tracker: Numeric and date provenance tracking for LLM coding agents"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+petgraph = "0.6"
+chrono = { version = "0.4", features = ["serde"] }
+blake3 = "1.5"
+rusqlite = { version = "0.31", features = ["bundled"] }
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1.38", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+regex = "1.10"
+dirs = "5.0"
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[[test]]
+name = "test_invalidation"
+path = "tests/unit/test_invalidation.rs"
+
+[[test]]
+name = "test_date_diff"
+path = "tests/unit/test_date_diff.rs"
+
+[[test]]
+name = "test_hooks_contract"
+path = "tests/contract/test_hooks_contract.rs"
+
+[[test]]
+name = "test_mcp_contract"
+path = "tests/contract/test_mcp_contract.rs"
+
+[[test]]
+name = "test_file_invalidation"
+path = "tests/integration/test_file_invalidation.rs"
+
+[[test]]
+name = "test_derivation_chain"
+path = "tests/integration/test_derivation_chain.rs"
+
+[[test]]
+name = "test_quickstart"
+path = "tests/integration/test_quickstart.rs"
+
+[[bench]]
+name = "bench_detection"
+harness = false

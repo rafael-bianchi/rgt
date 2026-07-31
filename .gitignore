@@ -8,3 +8,16 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Rust build artifacts
+/target
+debug/
+release/
+
+# RGT store & logs
+.rgt/store.db
+.rgt/*.log
+
+# OS & Editor
+.DS_Store
+Thumbs.db
