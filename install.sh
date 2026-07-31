@@ -158,7 +158,10 @@ detect_arch() {
 build_target_triple() {
     case "${RGT_OS}" in
         darwin) RGT_TARGET_TRIPLE="${RGT_ARCH}-apple-darwin" ;;
-        linux)  RGT_TARGET_TRIPLE="${RGT_ARCH}-unknown-linux-gnu" ;;
+        linux)  case "${RGT_ARCH}" in
+                     x86_64) RGT_TARGET_TRIPLE="x86_64-unknown-linux-musl" ;;
+                     *)      RGT_TARGET_TRIPLE="${RGT_ARCH}-unknown-linux-gnu" ;;
+                 esac ;; 
     esac
 }
 
