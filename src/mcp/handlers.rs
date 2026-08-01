@@ -203,15 +203,16 @@ pub fn handle_query_provenance(params: &serde_json::Value) -> Result<serde_json:
         if visited.contains(&current_id) {
             continue;
         }
-        visited.insert(current_id.clone());
 
         let current_node = match get_tracked_node(conn, &current_id).map_err(|e| e.to_string())? {
             Some(n) => n,
             None => continue,
         };
+        visited.insert(current_id.clone());
 
         let parent_edges = get_parent_edges(conn, &current_id).map_err(|e| e.to_string())?;
-        let parent_ids: Vec<String> = parent_edges.iter().map(|e| e.parent_node_id.clone()).collect();
+        let mut parent_ids: Vec<String> = parent_edges.iter().map(|e| e.parent_node_id.clone()).collect();
+        parent_ids.sort();
 
         lineage_steps.push(json!({
             "node_id": current_node.id,
