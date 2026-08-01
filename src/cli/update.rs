@@ -29,13 +29,17 @@ pub fn execute_update(check_only: bool, yes: bool, version: Option<String>) -> R
     }
 
     if latest_version == current_version {
-        println!("rgt is already at the latest version (v{})", current_version);
+        println!(
+            "rgt is already at the latest version (v{})",
+            current_version
+        );
         return Ok(());
     }
 
     println!(
         "Update available: {} -> {}{}",
-        current_version, latest_tag,
+        current_version,
+        latest_tag,
         if let Some(ref tag_ver) = version {
             format!(" (requested: {})", tag_ver)
         } else {
@@ -81,13 +85,13 @@ pub fn execute_update(check_only: bool, yes: bool, version: Option<String>) -> R
     }
 
     let extract_dir = tmp_dir.path().join("extracted");
-    std::fs::create_dir_all(&extract_dir)
-        .map_err(|e| format!("Create dir error: {}", e))?;
+    std::fs::create_dir_all(&extract_dir).map_err(|e| format!("Create dir error: {}", e))?;
 
     extract_archive(&archive_path, &extract_dir)?;
 
     let extracted_binary = find_binary(&extract_dir)?;
-    let current_exe = env::current_exe().map_err(|e| format!("Cannot locate current binary: {}", e))?;
+    let current_exe =
+        env::current_exe().map_err(|e| format!("Cannot locate current binary: {}", e))?;
 
     println!("Replacing {}...", current_exe.display());
     let ar = AtomicReplace::new(&current_exe);
@@ -99,8 +103,7 @@ pub fn execute_update(check_only: bool, yes: bool, version: Option<String>) -> R
 }
 
 fn extract_archive(archive_path: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
-    let file = std::fs::File::open(archive_path)
-        .map_err(|e| format!("Open error: {}", e))?;
+    let file = std::fs::File::open(archive_path).map_err(|e| format!("Open error: {}", e))?;
 
     let archive_name = archive_path
         .file_name()

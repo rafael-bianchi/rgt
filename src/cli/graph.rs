@@ -12,11 +12,20 @@ pub fn execute_graph(format: &str) -> Result<(), String> {
             println!("graph TD");
             for node in &all_nodes {
                 let status_icon = if node.is_stale { " (STALE)" } else { "" };
-                println!("    {}[\"{}: {}{}\"]", node.id, node.value_kind, node.value.to_string_repr(), status_icon);
-                
+                println!(
+                    "    {}[\"{}: {}{}\"]",
+                    node.id,
+                    node.value_kind,
+                    node.value.to_string_repr(),
+                    status_icon
+                );
+
                 if let Ok(edges) = get_child_edges(conn, &node.id) {
                     for edge in edges {
-                        println!("    {} -->|\"{}\"| {}", edge.parent_node_id, edge.operation_type, edge.child_node_id);
+                        println!(
+                            "    {} -->|\"{}\"| {}",
+                            edge.parent_node_id, edge.operation_type, edge.child_node_id
+                        );
                     }
                 }
             }
@@ -25,11 +34,20 @@ pub fn execute_graph(format: &str) -> Result<(), String> {
             println!("digraph RGT {{");
             for node in &all_nodes {
                 let color = if node.is_stale { "red" } else { "black" };
-                println!("    \"{}\" [label=\"{}: {}\", color={}];", node.id, node.value_kind, node.value.to_string_repr(), color);
-                
+                println!(
+                    "    \"{}\" [label=\"{}: {}\", color={}];",
+                    node.id,
+                    node.value_kind,
+                    node.value.to_string_repr(),
+                    color
+                );
+
                 if let Ok(edges) = get_child_edges(conn, &node.id) {
                     for edge in edges {
-                        println!("    \"{}\" -> \"{}\" [label=\"{}\"];", edge.parent_node_id, edge.child_node_id, edge.operation_type);
+                        println!(
+                            "    \"{}\" -> \"{}\" [label=\"{}\"];",
+                            edge.parent_node_id, edge.child_node_id, edge.operation_type
+                        );
                     }
                 }
             }
@@ -39,7 +57,13 @@ pub fn execute_graph(format: &str) -> Result<(), String> {
             println!("=== RGT Provenance DAG Tree ===");
             for node in &all_nodes {
                 let status = if node.is_stale { "STALE" } else { "VALID" };
-                println!("[{}] {} = {} ({})", node.id, node.value_kind, node.value.to_string_repr(), status);
+                println!(
+                    "[{}] {} = {} ({})",
+                    node.id,
+                    node.value_kind,
+                    node.value.to_string_repr(),
+                    status
+                );
                 if let Ok(edges) = get_child_edges(conn, &node.id) {
                     for edge in edges {
                         println!("    └── {} --> {}", edge.operation_type, edge.child_node_id);

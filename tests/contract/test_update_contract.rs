@@ -1,8 +1,7 @@
 #[cfg(test)]
 mod tests {
     use rgt::updater::github::{
-        find_asset, find_checksum_asset, GitHubRelease, GitHubReleaseAsset,
-        UpdateCheckResult,
+        find_asset, find_checksum_asset, GitHubRelease, GitHubReleaseAsset, UpdateCheckResult,
     };
     use rgt::updater::platform::{Arch, Os, Platform};
 

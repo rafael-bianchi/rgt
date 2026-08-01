@@ -24,14 +24,23 @@ impl InvalidationCascade {
         for node in &all_nodes {
             let edges = get_child_edges(conn, &node.id)?;
             for edge in edges {
-                let _ = engine.add_derivation_edge(&edge.parent_node_id, &edge.child_node_id, &edge.operation_type);
+                let _ = engine.add_derivation_edge(
+                    &edge.parent_node_id,
+                    &edge.child_node_id,
+                    &edge.operation_type,
+                );
             }
         }
 
         Ok(Self { engine })
     }
 
-    pub fn invalidate_file<P: AsRef<Path>>(&mut self, db: &DbStore, file_path: P, stale_reason: &str) -> Result<usize> {
+    pub fn invalidate_file<P: AsRef<Path>>(
+        &mut self,
+        db: &DbStore,
+        file_path: P,
+        stale_reason: &str,
+    ) -> Result<usize> {
         let path_str = file_path.as_ref().to_string_lossy().to_string();
         let conn = db.conn();
 
@@ -57,9 +66,15 @@ impl InvalidationCascade {
         Ok(total_invalidated)
     }
 
-    pub fn evaluate_and_invalidate_all<P: AsRef<Path>>(&mut self, db: &DbStore, project_root: P) -> Result<usize> {
+    pub fn evaluate_and_invalidate_all<P: AsRef<Path>>(
+        &mut self,
+        db: &DbStore,
+        project_root: P,
+    ) -> Result<usize> {
         let conn = db.conn();
-        let mut stmt = conn.prepare("SELECT id, file_path, mtime_nsec, file_size, blake3_hash FROM source_documents")?;
+        let mut stmt = conn.prepare(
+            "SELECT id, file_path, mtime_nsec, file_size, blake3_hash FROM source_documents",
+        )?;
         let rows = stmt.query_map([], |row| {
             let id: i64 = row.get(0)?;
             let rel_path: String = row.get(1)?;
@@ -74,10 +89,25 @@ impl InvalidationCascade {
             let (_doc_id, rel_path, stored_mtime, stored_size, stored_hash) = row?;
             let full_path = project_root.as_ref().join(&rel_path);
 
-            match crate::detection::evaluate_file_change(&full_path, stored_mtime, stored_size, &stored_hash) {
+            match crate::detection::evaluate_file_change(
+                &full_path,
+                stored_mtime,
+                stored_size,
+                &stored_hash,
+            ) {
                 crate::detection::DetectionResult::Unchanged => {}
-                crate::detection::DetectionResult::Changed { new_mtime_nsec, new_file_size, new_blake3_hash } => {
-                    upsert_source_document(conn, &rel_path, new_mtime_nsec, new_file_size, &new_blake3_hash)?;
+                crate::detection::DetectionResult::Changed {
+                    new_mtime_nsec,
+                    new_file_size,
+                    new_blake3_hash,
+                } => {
+                    upsert_source_document(
+                        conn,
+                        &rel_path,
+                        new_mtime_nsec,
+                        new_file_size,
+                        &new_blake3_hash,
+                    )?;
                     invalidations += self.invalidate_file(db, &rel_path, "SOURCE_FILE_MODIFIED")?;
                 }
                 crate::detection::DetectionResult::FileNotFound => {

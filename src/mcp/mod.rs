@@ -111,7 +111,10 @@ pub async fn run_mcp_server() -> io::Result<()> {
                 };
 
                 match res {
-                    Ok(val) => JsonRpcResponse::success(req.id.clone(), json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&val).unwrap_or_default() }] })),
+                    Ok(val) => JsonRpcResponse::success(
+                        req.id.clone(),
+                        json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&val).unwrap_or_default() }] }),
+                    ),
                     Err(err) => JsonRpcResponse::error(req.id.clone(), -32603, &err),
                 }
             }

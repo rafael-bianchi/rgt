@@ -90,10 +90,7 @@ pub fn find_asset<'a>(
 }
 
 pub fn find_checksum_asset(release: &GitHubRelease) -> Option<&GitHubReleaseAsset> {
-    release
-        .assets
-        .iter()
-        .find(|a| a.name == "checksums.txt")
+    release.assets.iter().find(|a| a.name == "checksums.txt")
 }
 
 pub fn check_update(
@@ -111,10 +108,8 @@ pub fn check_update(
         current_version: current,
         latest_version: latest,
         is_update_available,
-        download_url: find_asset(&release, &platform)
-            .map(|a| a.browser_download_url.clone()),
-        checksum_url: find_checksum_asset(&release)
-            .map(|a| a.browser_download_url.clone()),
+        download_url: find_asset(&release, &platform).map(|a| a.browser_download_url.clone()),
+        checksum_url: find_checksum_asset(&release).map(|a| a.browser_download_url.clone()),
     })
 }
 
@@ -127,8 +122,7 @@ pub fn download_asset(url: &str, dest: &std::path::Path) -> Result<(), String> {
         .map_err(|e| format!("Download failed: {}", e))?;
 
     let mut reader = response.into_reader();
-    let mut file =
-        std::fs::File::create(dest).map_err(|e| format!("Cannot create file: {}", e))?;
+    let mut file = std::fs::File::create(dest).map_err(|e| format!("Cannot create file: {}", e))?;
     std::io::copy(&mut reader, &mut file).map_err(|e| format!("Write error: {}", e))?;
 
     Ok(())
