@@ -50,10 +50,11 @@ pub fn handle_passive_hook_event(_event_type: &str) -> io::Result<()> {
             Err(_) => return Ok(()),
         };
 
-        let doc = match upsert_source_document(db.conn(), path, meta.mtime_nsec, meta.file_size, &hash) {
-            Ok(d) => d,
-            Err(_) => return Ok(()),
-        };
+        let doc =
+            match upsert_source_document(db.conn(), path, meta.mtime_nsec, meta.file_size, &hash) {
+                Ok(d) => d,
+                Err(_) => return Ok(()),
+            };
 
         let extracted = extract_values_from_content(content_text);
         let now = Utc::now();

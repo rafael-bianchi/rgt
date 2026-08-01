@@ -9,7 +9,7 @@ pub struct MetadataSnapshot {
 
 pub fn get_metadata_snapshot<P: AsRef<Path>>(path: P) -> io::Result<MetadataSnapshot> {
     let meta = fs::metadata(path)?;
-    
+
     #[cfg(unix)]
     let mtime_nsec = {
         use std::os::unix::fs::MetadataExt;
