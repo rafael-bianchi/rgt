@@ -80,7 +80,12 @@ impl Platform {
             Os::Windows => "zip",
             _ => "tar.gz",
         };
-        format!("rgt-v{}-{}.{}", version.trim_start_matches('v'), self.target_triple, ext)
+        format!(
+            "rgt-v{}-{}.{}",
+            version.trim_start_matches('v'),
+            self.target_triple,
+            ext
+        )
     }
 }
 

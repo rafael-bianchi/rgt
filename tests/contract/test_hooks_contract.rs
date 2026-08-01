@@ -19,10 +19,18 @@ mod tests {
             Some("docs/budget.md")
         );
 
-        let content = parsed.tool_response.as_ref().unwrap().content.as_deref().unwrap();
+        let content = parsed
+            .tool_response
+            .as_ref()
+            .unwrap()
+            .content
+            .as_deref()
+            .unwrap();
         let extracted = extract_values_from_content(content);
         assert!(!extracted.is_empty());
-        assert!(extracted.iter().any(|v| v.value.kind() == ValueKind::Number));
+        assert!(extracted
+            .iter()
+            .any(|v| v.value.kind() == ValueKind::Number));
         assert!(extracted.iter().any(|v| v.value.kind() == ValueKind::Date));
     }
 }

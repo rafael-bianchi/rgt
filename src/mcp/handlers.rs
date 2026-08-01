@@ -1,7 +1,7 @@
 use crate::detection::{compute_blake3_hash, get_metadata_snapshot};
 use crate::store::queries::{
-    get_parent_edges, get_tracked_node, insert_derivation_edge,
-    insert_tracked_node, list_stale_nodes, upsert_source_document,
+    get_parent_edges, get_tracked_node, insert_derivation_edge, insert_tracked_node,
+    list_stale_nodes, upsert_source_document,
 };
 use crate::store::DbStore;
 use crate::types::{NodeType, TrackedNode, ValueData};
@@ -21,7 +21,10 @@ pub fn handle_record_value(params: &serde_json::Value) -> Result<serde_json::Val
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing 'value_kind'".to_string())?;
 
-    let line_number = params.get("line_number").and_then(|v| v.as_u64()).map(|n| n as u32);
+    let line_number = params
+        .get("line_number")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32);
 
     let val = match value_kind_str.to_uppercase().as_str() {
         "NUMBER" => {
@@ -169,7 +172,8 @@ pub fn handle_record_derivation(params: &serde_json::Value) -> Result<serde_json
     insert_tracked_node(conn, &node).map_err(|e| e.to_string())?;
 
     for pid in &parent_ids {
-        insert_derivation_edge(conn, pid, &node_id, op_type, expression).map_err(|e| e.to_string())?;
+        insert_derivation_edge(conn, pid, &node_id, op_type, expression)
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(json!({
@@ -211,7 +215,10 @@ pub fn handle_query_provenance(params: &serde_json::Value) -> Result<serde_json:
         visited.insert(current_id.clone());
 
         let parent_edges = get_parent_edges(conn, &current_id).map_err(|e| e.to_string())?;
-        let mut parent_ids: Vec<String> = parent_edges.iter().map(|e| e.parent_node_id.clone()).collect();
+        let mut parent_ids: Vec<String> = parent_edges
+            .iter()
+            .map(|e| e.parent_node_id.clone())
+            .collect();
         parent_ids.sort();
 
         lineage_steps.push(json!({

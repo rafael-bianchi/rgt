@@ -29,7 +29,10 @@ pub fn parse_checksums(content: &str) -> Vec<ChecksumEntry> {
         .collect()
 }
 
-pub fn find_checksum<'a>(entries: &'a [ChecksumEntry], filename: &str) -> Option<&'a ChecksumEntry> {
+pub fn find_checksum<'a>(
+    entries: &'a [ChecksumEntry],
+    filename: &str,
+) -> Option<&'a ChecksumEntry> {
     entries.iter().find(|e| e.filename == filename)
 }
 
@@ -98,6 +101,10 @@ a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3  rgt-v0.1.0-x86
 
         let hash = compute_sha256(path).unwrap();
         assert!(verify_checksum(path, &hash).unwrap());
-        assert!(!verify_checksum(path, "0000000000000000000000000000000000000000000000000000000000000000").unwrap());
+        assert!(!verify_checksum(
+            path,
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        )
+        .unwrap());
     }
 }
