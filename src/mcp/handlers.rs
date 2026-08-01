@@ -7,6 +7,7 @@ use crate::store::DbStore;
 use crate::types::{NodeType, TrackedNode, ValueData};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
+use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 
 pub fn handle_record_value(params: &serde_json::Value) -> Result<serde_json::Value, String> {
@@ -191,36 +192,51 @@ pub fn handle_query_provenance(params: &serde_json::Value) -> Result<serde_json:
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Node not found: {}", node_id))?;
 
-    let parent_edges = get_parent_edges(conn, node_id).map_err(|e| e.to_string())?;
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    queue.push_back(node_id.to_string());
 
     let mut lineage_steps = Vec::new();
+    let is_stale = node.is_stale;
 
-    let parent_ids: Vec<String> = parent_edges.iter().map(|e| e.parent_node_id.clone()).collect();
+    while let Some(current_id) = queue.pop_front() {
+        if visited.contains(&current_id) {
+            continue;
+        }
+        visited.insert(current_id.clone());
 
-    lineage_steps.push(json!({
-        "node_id": node.id,
-        "value_kind": node.value_kind.to_string(),
-        "value": node.value.to_string_repr(),
-        "is_stale": node.is_stale,
-        "stale_reason": node.stale_reason,
-        "parent_ids": parent_ids,
-    }));
+        let current_node = match get_tracked_node(conn, &current_id).map_err(|e| e.to_string())? {
+            Some(n) => n,
+            None => continue,
+        };
 
-    for pid in parent_ids {
-        if let Some(pnode) = get_tracked_node(conn, &pid).map_err(|e| e.to_string())? {
-            lineage_steps.push(json!({
-                "node_id": pnode.id,
-                "value_kind": pnode.value_kind.to_string(),
-                "value": pnode.value.to_string_repr(),
-                "is_stale": pnode.is_stale,
-                "line_number": pnode.line_number,
-            }));
+        let parent_edges = get_parent_edges(conn, &current_id).map_err(|e| e.to_string())?;
+        let parent_ids: Vec<String> = parent_edges.iter().map(|e| e.parent_node_id.clone()).collect();
+
+        lineage_steps.push(json!({
+            "node_id": current_node.id,
+            "value_kind": current_node.value_kind.to_string(),
+            "value": current_node.value.to_string_repr(),
+            "is_stale": current_node.is_stale,
+            "stale_reason": current_node.stale_reason,
+            "parent_ids": parent_ids,
+            "line_number": current_node.line_number,
+            "node_type": format!("{:?}", current_node.node_type),
+        }));
+
+        for pid in &parent_ids {
+            if !visited.contains(pid) {
+                queue.push_back(pid.clone());
+            }
         }
     }
 
+    let total_ancestors = visited.len().saturating_sub(1);
+
     Ok(json!({
         "node_id": node.id,
-        "is_stale": node.is_stale,
+        "is_stale": is_stale,
+        "total_ancestors": total_ancestors,
         "lineage_steps": lineage_steps
     }))
 }
