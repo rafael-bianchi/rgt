@@ -72,6 +72,10 @@ name = "test_installer_script"
 path = "tests/integration/test_installer_script.rs"
 
 [[test]]
+name = "test_hooks_installer"
+path = "tests/integration/test_hooks_installer.rs"
+
+[[test]]
 name = "test_update_contract"
 path = "tests/contract/test_update_contract.rs"
 
