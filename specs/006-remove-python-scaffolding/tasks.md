@@ -16,17 +16,17 @@
 
 ### Implementation
 
-- [ ] T001 [P] [US1] Delete `main.py` from repository root
-- [ ] T002 [P] [US1] Delete `pyproject.toml` from repository root
-- [ ] T003 [P] [US1] Delete `.python-version` from repository root
-- [ ] T004 [P] [US1] Add `.specify/` entry to `.gitignore`
-- [ ] T005 [P] [US1] Add `.agents/` entry to `.gitignore`
+- [x] T001 [P] [US1] Delete `main.py` from repository root
+- [x] T002 [P] [US1] Delete `pyproject.toml` from repository root
+- [x] T003 [P] [US1] Delete `.python-version` from repository root
+- [x] T004 [P] [US1] Add `.specify/` entry to `.gitignore`
+- [x] T005 [P] [US1] Add `.agents/` entry to `.gitignore`
 
 ### Validation
 
-- [ ] T006 [US1] Run `cargo build` to verify build succeeds after deletions
-- [ ] T007 [US1] Run `cargo test --all` to verify no regressions
-- [ ] T008 [US1] Run `find . -not -path './target/*' -name "main.py" -o -name "pyproject.toml" -o -name ".python-version"` to verify no Python files remain
+- [x] T006 [US1] Run `cargo build` to verify build succeeds after deletions
+- [x] T007 [US1] Run `cargo test --all` to verify no regressions
+- [x] T008 [US1] Run `find . -not -path './target/*' -name "main.py" -o -name "pyproject.toml" -o -name ".python-version"` to verify no Python files remain
 
 **Checkpoint**: Repository is clean — zero Python artifacts, `.gitignore` updated.
 
