@@ -4,12 +4,21 @@ mod tests {
         handle_query_provenance, handle_record_derivation, handle_record_value,
     };
     use serde_json::json;
+    use std::sync::Mutex;
     use tempfile::tempdir;
+
+    static CWD_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn set_cwd(dir: &std::path::Path) -> std::sync::MutexGuard<'static, ()> {
+        let guard = CWD_MUTEX.lock().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+        guard
+    }
 
     #[test]
     fn test_mcp_record_value_and_derivation() {
         let dir = tempdir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = set_cwd(dir.path());
 
         let file_path = dir.path().join("spec.md");
         std::fs::write(&file_path, "Target: 100").unwrap();
@@ -39,7 +48,7 @@ mod tests {
     #[test]
     fn test_query_provenance_response_schema() {
         let dir = tempdir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = set_cwd(dir.path());
 
         let file_path = dir.path().join("data.txt");
         std::fs::write(&file_path, "100").unwrap();
