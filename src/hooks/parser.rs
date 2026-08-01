@@ -33,7 +33,8 @@ pub fn parse_hook_payload(json_str: &str) -> Result<HookPayload, serde_json::Err
 
 pub fn extract_values_from_content(content: &str) -> Vec<ExtractedValue> {
     let mut results = Vec::new();
-    let iso_date_regex = Regex::new(r"\b(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)?)\b").unwrap();
+    let iso_date_regex =
+        Regex::new(r"\b(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)?)\b").unwrap();
     let number_regex = Regex::new(r"\b(\d+(?:\.\d+)?)\b").unwrap();
 
     for (idx, line) in content.lines().enumerate() {

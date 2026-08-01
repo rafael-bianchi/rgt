@@ -27,7 +27,12 @@ impl GraphEngine {
         }
     }
 
-    pub fn add_derivation_edge(&mut self, parent_id: &str, child_id: &str, op: &str) -> Result<(), String> {
+    pub fn add_derivation_edge(
+        &mut self,
+        parent_id: &str,
+        child_id: &str,
+        op: &str,
+    ) -> Result<(), String> {
         let parent_idx = self.get_or_add_node(parent_id);
         let child_idx = self.get_or_add_node(child_id);
 
@@ -35,7 +40,10 @@ impl GraphEngine {
 
         if is_cyclic_directed(&self.graph) {
             self.graph.remove_edge(edge_idx);
-            return Err(format!("Adding edge from {} to {} introduces a cycle", parent_id, child_id));
+            return Err(format!(
+                "Adding edge from {} to {} introduces a cycle",
+                parent_id, child_id
+            ));
         }
 
         Ok(())
