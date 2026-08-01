@@ -84,7 +84,12 @@ jobs:
 
       - name: Strip binary (Unix)
         if: matrix.suffix == 'tar.gz'
-        run: strip target/${{ matrix.target }}/release/rgt
+        run: |
+          if [ "${{ matrix.cross || '' }}" = "true" ]; then
+            aarch64-linux-gnu-strip target/${{ matrix.target }}/release/rgt
+          else
+            strip target/${{ matrix.target }}/release/rgt
+          fi
 
       - name: Package archive (tar.gz)
         if: matrix.suffix == 'tar.gz'
