@@ -9,7 +9,9 @@ pub fn execute_init(global: bool, force: bool) -> Result<(), String> {
         .map_err(|e| format!("Hook configuration failed: {}", e))?;
 
     if configured.is_empty() {
-        println!("! No new AI coding tool hook configs written (use --force to overwrite existing).");
+        println!(
+            "! No new AI coding tool hook configs written (use --force to overwrite existing)."
+        );
     } else {
         println!("✓ Auto-configured AI coding agent hooks:");
         for item in configured {
