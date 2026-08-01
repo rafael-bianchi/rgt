@@ -28,6 +28,10 @@ enum Commands {
         /// Overwrite existing hook configurations
         #[arg(long)]
         force: bool,
+
+        /// Target a specific agent (claude-code, cursor, codex, windsurf). Detects all if omitted.
+        #[arg(long)]
+        agent: Option<String>,
     },
     /// Inspect provenance graph status, active nodes, and stale values
     Status {
@@ -82,7 +86,7 @@ async fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Init { global, force } => cli::execute_init(global, force),
+        Commands::Init { global, force, agent } => cli::execute_init(global, force, agent.as_deref()),
         Commands::Status { stale_only, json } => cli::execute_status(stale_only, json),
         Commands::Query { node_id, json } => cli::execute_query(&node_id, json),
         Commands::Graph { format } => cli::execute_graph(&format),
