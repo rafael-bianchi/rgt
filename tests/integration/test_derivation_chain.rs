@@ -11,15 +11,16 @@ mod tests {
 
     static CWD_MUTEX: Mutex<()> = Mutex::new(());
 
-    fn set_cwd(dir: &std::path::Path) {
-        let _guard = CWD_MUTEX.lock().unwrap();
+    fn set_cwd(dir: &std::path::Path) -> std::sync::MutexGuard<'static, ()> {
+        let guard = CWD_MUTEX.lock().unwrap();
         std::env::set_current_dir(dir).unwrap();
+        guard
     }
 
     #[test]
     fn test_multi_level_derivation_chain_query() {
         let dir = tempdir().unwrap();
-        set_cwd(dir.path());
+        let _guard = set_cwd(dir.path());
 
         let file_path = dir.path().join("source.txt");
         std::fs::write(&file_path, "50").unwrap();
@@ -69,7 +70,7 @@ mod tests {
     #[test]
     fn test_root_node_query() {
         let dir = tempdir().unwrap();
-        set_cwd(dir.path());
+        let _guard = set_cwd(dir.path());
 
         let file_path = dir.path().join("source.txt");
         std::fs::write(&file_path, "42").unwrap();
@@ -99,7 +100,7 @@ mod tests {
     #[test]
     fn test_branching_chain_query() {
         let dir = tempdir().unwrap();
-        set_cwd(dir.path());
+        let _guard = set_cwd(dir.path());
 
         let src_a = dir.path().join("a.txt");
         let src_b = dir.path().join("b.txt");
@@ -147,7 +148,7 @@ mod tests {
     #[test]
     fn test_determinism_repeatable_query() {
         let dir = tempdir().unwrap();
-        set_cwd(dir.path());
+        let _guard = set_cwd(dir.path());
 
         let file_path = dir.path().join("src.txt");
         std::fs::write(&file_path, "7").unwrap();
@@ -176,7 +177,7 @@ mod tests {
     #[test]
     fn test_self_loop_cycle() {
         let dir = tempdir().unwrap();
-        set_cwd(dir.path());
+        let _guard = set_cwd(dir.path());
 
         let file_path = dir.path().join("src.txt");
         std::fs::write(&file_path, "7").unwrap();
@@ -205,7 +206,7 @@ mod tests {
     #[test]
     fn test_cross_node_cycle() {
         let dir = tempdir().unwrap();
-        set_cwd(dir.path());
+        let _guard = set_cwd(dir.path());
 
         let src_a = dir.path().join("a.txt");
         let src_b = dir.path().join("b.txt");
@@ -246,7 +247,7 @@ mod tests {
     #[test]
     fn test_diamond_dependency() {
         let dir = tempdir().unwrap();
-        set_cwd(dir.path());
+        let _guard = set_cwd(dir.path());
 
         let src_a = dir.path().join("a.txt");
         std::fs::write(&src_a, "5").unwrap();
@@ -309,7 +310,7 @@ mod tests {
     #[test]
     fn test_deep_linear_chain_performance() {
         let dir = tempdir().unwrap();
-        set_cwd(dir.path());
+        let _guard = set_cwd(dir.path());
 
         let file_path = dir.path().join("deep.txt");
         std::fs::write(&file_path, "1").unwrap();
@@ -356,7 +357,7 @@ mod tests {
     #[test]
     fn test_shallow_branching_performance() {
         let dir = tempdir().unwrap();
-        set_cwd(dir.path());
+        let _guard = set_cwd(dir.path());
 
         let file_path = dir.path().join("shallow.txt");
         std::fs::write(&file_path, "1").unwrap();
