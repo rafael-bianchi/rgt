@@ -99,7 +99,11 @@ async fn main() {
             }
             Ok(())
         }
-        Commands::Update { check, yes, version } => cli::execute_update(check, yes, version),
+        Commands::Update {
+            check,
+            yes,
+            version,
+        } => cli::execute_update(check, yes, version),
     };
 
     if let Err(err_msg) = result {

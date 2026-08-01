@@ -39,7 +39,9 @@ mod tests {
         std::fs::write(&file_path, "200").unwrap();
 
         let mut cascade = InvalidationCascade::build_from_db(&db).unwrap();
-        let count = cascade.evaluate_and_invalidate_all(&db, dir.path()).unwrap();
+        let count = cascade
+            .evaluate_and_invalidate_all(&db, dir.path())
+            .unwrap();
         assert!(count >= 2);
 
         let stale_nodes = list_stale_nodes(db.conn()).unwrap();

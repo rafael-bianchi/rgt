@@ -5,10 +5,10 @@ use serde_json::json;
 
 pub fn execute_status(_stale_only: bool, json_output: bool) -> Result<(), String> {
     let db = DbStore::open_in_project(".").map_err(|e| format!("Failed to open DB: {}", e))?;
-    
+
     let mut cascade = InvalidationCascade::build_from_db(&db)
         .map_err(|e| format!("Failed to build invalidation cascade: {}", e))?;
-    
+
     let _ = cascade.evaluate_and_invalidate_all(&db, ".");
 
     let conn = db.conn();
@@ -35,7 +35,10 @@ pub fn execute_status(_stale_only: bool, json_output: bool) -> Result<(), String
             "stale_details": stale_details,
         });
 
-        println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).unwrap_or_default()
+        );
     } else {
         println!("=== RGT Provenance Graph Status ===");
         println!("Total Nodes:  {}", all_nodes.len());
