@@ -5,12 +5,21 @@ mod tests {
     use rgt::store::queries::{get_tracked_node, list_stale_nodes};
     use rgt::store::DbStore;
     use serde_json::json;
+    use std::sync::Mutex;
     use tempfile::tempdir;
+
+    static CWD_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn set_cwd(dir: &std::path::Path) -> std::sync::MutexGuard<'static, ()> {
+        let guard = CWD_MUTEX.lock().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+        guard
+    }
 
     #[test]
     fn test_file_edit_cascades_staleness_to_derived_nodes() {
         let dir = tempdir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = set_cwd(dir.path());
 
         let db = DbStore::open_in_project(dir.path()).unwrap();
 
