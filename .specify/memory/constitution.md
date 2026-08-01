@@ -1,13 +1,9 @@
 <!--
 --- SYNC IMPACT REPORT ---
-Version Change: 0.0.0 -> 1.0.0
-Modified Principles:
-  - Initialized initial constitution template with 7 non-negotiable principles for RGT (Rust Graph Tracker).
+Version Change: 1.0.0 -> 1.1.0
+Modified Principles: None
 Added Sections:
-  - Core Principles (Principles I through VII)
-  - Architecture & Performance Standards
-  - Integration & Tooling Policy
-  - Governance
+  - Development Workflow (branching model, commit conventions, PR rules, GitHub identity)
 Removed Sections: None
 Templates Status:
   - .specify/templates/plan-template.md: ✅ verified
@@ -79,10 +75,19 @@ RGT MUST be licensed under permissive open-source terms: MIT OR Apache-2.0. All 
 - **Hook Reliability**: Passive hooks (`PreToolUse`/`PostToolUse`) MUST execute asynchronously or fail open with non-blocking error handling to ensure host developer tool performance is never impacted.
 - **MCP Standards**: The MCP server MUST follow official Model Context Protocol specifications and JSON-RPC transport standards over stdio.
 
+## Development Workflow
+
+- **Trunk-Based Development**: Feature and bugfix work MUST branch from `develop`, with PR targets always set to `develop`. Direct commits or PRs to `main` are prohibited — promotion from `develop` to `main` is handled automatically by the release-please CD workflow.
+- **Branch Naming**: Branches MUST follow the pattern `<type>/<description>`, where type is one of: `fix`, `feat`, `style`, `docs`, `chore`. Examples: `fix/issue-1-provenance-query-bfs`, `feat/issue-2-agent-hooks`.
+- **Merge Strategy**: PRs MUST use merge commits (`--merge`), with the source branch deleted after merge (`--delete-branch`). Squash and rebase strategies are prohibited for feature branches.
+- **Commit Conventions**: All commits MUST follow Conventional Commits format: `type: description (#N)`. Accepted types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`. GitHub issues MUST be referenced via `(#N)` suffix in commit messages and auto-linked via `Closes #N` or `Fixes #N` in PR bodies.
+- **GitHub Identity**: Commits MUST use the GitHub noreply email (`ID+USER@users.noreply.github.com`) for both author and committer fields to avoid push restrictions from private email settings. The email is obtained via `gh api user --jq '"\(.id)+\(.login)@users.noreply.github.com"'`.
+- **CI/CD Gating**: All PRs MUST pass CI checks (fmt, clippy, test on ubuntu/macOS/Windows, security) before merge. The CD workflow requires the repository setting "Allow GitHub Actions to create and approve pull requests" to be enabled.
+
 ## Governance
 
 - **Supremacy**: This Constitution supersedes all other documentation, architectural decision records (ADRs), or PR suggestions for RGT.
 - **Amendments**: Amendments require explicit documentation of rationale, a bump to the constitution version according to SemVer rules, and verification that dependent artifacts and templates remain aligned.
 - **Compliance**: All pull requests, code reviews, and releases MUST be verified against these core principles.
 
-**Version**: 1.0.0 | **Ratified**: 2026-07-31 | **Last Amended**: 2026-07-31
+**Version**: 1.1.0 | **Ratified**: 2026-07-31 | **Last Amended**: 2026-08-01
