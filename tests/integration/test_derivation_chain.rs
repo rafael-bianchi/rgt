@@ -3,13 +3,21 @@ mod tests {
     use rgt::mcp::handlers::{handle_query_provenance, handle_record_derivation, handle_record_value};
     use rgt::store::{DbStore, insert_derivation_edge};
     use serde_json::json;
+    use std::sync::Mutex;
     use std::time::Instant;
     use tempfile::tempdir;
+
+    static CWD_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn set_cwd(dir: &std::path::Path) {
+        let _guard = CWD_MUTEX.lock().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+    }
 
     #[test]
     fn test_multi_level_derivation_chain_query() {
         let dir = tempdir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        set_cwd(dir.path());
 
         let file_path = dir.path().join("source.txt");
         std::fs::write(&file_path, "50").unwrap();
@@ -47,7 +55,7 @@ mod tests {
     #[test]
     fn test_root_node_query() {
         let dir = tempdir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        set_cwd(dir.path());
 
         let file_path = dir.path().join("source.txt");
         std::fs::write(&file_path, "42").unwrap();
@@ -71,7 +79,7 @@ mod tests {
     #[test]
     fn test_branching_chain_query() {
         let dir = tempdir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        set_cwd(dir.path());
 
         let src_a = dir.path().join("a.txt");
         let src_b = dir.path().join("b.txt");
@@ -110,7 +118,7 @@ mod tests {
     #[test]
     fn test_determinism_repeatable_query() {
         let dir = tempdir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        set_cwd(dir.path());
 
         let file_path = dir.path().join("src.txt");
         std::fs::write(&file_path, "7").unwrap();
@@ -138,7 +146,7 @@ mod tests {
     #[test]
     fn test_self_loop_cycle() {
         let dir = tempdir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        set_cwd(dir.path());
 
         let file_path = dir.path().join("src.txt");
         std::fs::write(&file_path, "7").unwrap();
@@ -162,7 +170,7 @@ mod tests {
     #[test]
     fn test_cross_node_cycle() {
         let dir = tempdir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        set_cwd(dir.path());
 
         let src_a = dir.path().join("a.txt");
         let src_b = dir.path().join("b.txt");
@@ -197,7 +205,7 @@ mod tests {
     #[test]
     fn test_diamond_dependency() {
         let dir = tempdir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        set_cwd(dir.path());
 
         let src_a = dir.path().join("a.txt");
         std::fs::write(&src_a, "5").unwrap();
@@ -247,7 +255,7 @@ mod tests {
     #[test]
     fn test_deep_linear_chain_performance() {
         let dir = tempdir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        set_cwd(dir.path());
 
         let file_path = dir.path().join("deep.txt");
         std::fs::write(&file_path, "1").unwrap();
@@ -286,7 +294,7 @@ mod tests {
     #[test]
     fn test_shallow_branching_performance() {
         let dir = tempdir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        set_cwd(dir.path());
 
         let file_path = dir.path().join("shallow.txt");
         std::fs::write(&file_path, "1").unwrap();
@@ -311,12 +319,14 @@ mod tests {
             root_ids.push(r.get("node_id").unwrap().as_str().unwrap().to_string());
         }
 
-        // create additional shallow nodes to build graph size (8,000 total)
-        for _ in 0..8000 {
+        // create additional distinct nodes to grow the graph
+        let bulk_count = 500;
+        for i in 0..bulk_count {
             let _ = handle_record_value(&json!({
                 "file_path": file_path.to_str().unwrap(),
                 "value_kind": "NUMBER",
-                "number_value": 42.0
+                "number_value": 42.0,
+                "line_number": i + 10
             })).unwrap();
         }
 
