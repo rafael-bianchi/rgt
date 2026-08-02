@@ -136,7 +136,7 @@ detect_os() {
         Linux)   RGT_OS="linux" ;;
         *)
             err "Unsupported OS: ${RGT_OS_RAW}"
-            err "Install from source: cargo install rgt"
+            err "Install from source: cargo install --git https://github.com/rafael-bianchi/rgt"
             exit 1
             ;;
     esac
@@ -149,7 +149,7 @@ detect_arch() {
         aarch64|arm64) RGT_ARCH="aarch64" ;;
         *)
             err "Unsupported architecture: ${RGT_ARCH_RAW}"
-            err "Install from source: cargo install rgt"
+            err "Install from source: cargo install --git https://github.com/rafael-bianchi/rgt"
             exit 1
             ;;
     esac
