@@ -21,7 +21,8 @@ struct Cli {
 enum Commands {
     /// Initialize RGT project tracking and configure AI agent hooks
     Init {
-        /// Detect and configure global hooks for Claude Code, Cursor, Codex CLI, and Windsurf
+        /// Detect and configure global hooks for Claude Code, Cursor (full hook), Windsurf
+        /// (rules-file) and Codex CLI (rules-file)
         #[arg(short = 'g', long)]
         global: bool,
 
@@ -29,7 +30,7 @@ enum Commands {
         #[arg(long)]
         force: bool,
 
-        /// Target a specific agent (claude-code, cursor, codex, windsurf). Detects all if omitted.
+        /// Target a specific agent: claude-code, cursor (full hook), windsurf, codex (rules-file). Detects all if omitted.
         #[arg(long)]
         agent: Option<String>,
     },
