@@ -23,5 +23,6 @@ release/
 Thumbs.db
 
 # Development tooling
+.kilo/
 .specify/
 .agents/
