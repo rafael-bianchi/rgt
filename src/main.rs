@@ -86,7 +86,11 @@ async fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Init { global, force, agent } => cli::execute_init(global, force, agent.as_deref()),
+        Commands::Init {
+            global,
+            force,
+            agent,
+        } => cli::execute_init(global, force, agent.as_deref()),
         Commands::Status { stale_only, json } => cli::execute_status(stale_only, json),
         Commands::Query { node_id, json } => cli::execute_query(&node_id, json),
         Commands::Graph { format } => cli::execute_graph(&format),
