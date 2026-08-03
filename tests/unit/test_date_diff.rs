@@ -32,7 +32,7 @@ mod tests {
 
     #[test]
     fn test_duration_to_string_middle_zero_preservation() {
-        let dur = Duration::seconds(1 * 3_600 + 0 * 60 + 5);
+        let dur = Duration::seconds(3_600 + 5);
         assert_eq!(ValueData::Duration(dur).to_string_repr(), "1h 0m 5s");
     }
 

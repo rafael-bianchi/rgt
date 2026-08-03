@@ -29,12 +29,12 @@ curl -fsSL https://raw.githubusercontent.com/rafael-bianchi/rgt/main/install.sh 
 
 **Homebrew:**
 ```bash
-brew install rafael-bianchi/tap/rgt
+brew install rafael-bianchi/rgt/rgt
 ```
 
 **Cargo:**
 ```bash
-cargo install rgt
+cargo install --git https://github.com/rafael-bianchi/rgt
 ```
 
 **From Source:**
