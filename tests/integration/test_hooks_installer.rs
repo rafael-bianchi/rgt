@@ -27,14 +27,26 @@ mod tests {
         let result = detect_and_configure_hooks(true, true, Some("claude-code")).unwrap();
         assert_eq!(result.len(), 1);
         assert!(result[0].contains("Claude Code"));
+        assert!(result[0].contains("settings.json"));
 
-        let hooks = read_json(&dir.path().join(".claude").join("hooks.json"));
+        let settings = read_json(&dir.path().join(".claude").join("settings.json"));
+        let hooks = &settings["hooks"];
         assert!(hooks.get("PostToolUse").is_some());
         assert!(hooks.get("PreToolUse").is_some());
-        assert_eq!(
-            hooks["PostToolUse"]["command"].as_str().unwrap(),
-            "rgt hook post"
-        );
+
+        let post = &hooks["PostToolUse"][0];
+        assert_eq!(post["matcher"].as_str().unwrap(), "");
+        let post_hooks = post["hooks"].as_array().unwrap();
+        assert_eq!(post_hooks[0]["type"].as_str().unwrap(), "command");
+        assert_eq!(post_hooks[0]["command"].as_str().unwrap(), "rgt hook post");
+
+        let pre = &hooks["PreToolUse"][0];
+        assert_eq!(pre["matcher"].as_str().unwrap(), "");
+        let pre_hooks = pre["hooks"].as_array().unwrap();
+        assert_eq!(pre_hooks[0]["command"].as_str().unwrap(), "rgt hook pre");
+
+        // Old hooks.json must NOT exist
+        assert!(!dir.path().join(".claude").join("hooks.json").exists());
     }
 
     #[test]
@@ -48,10 +60,15 @@ mod tests {
         assert!(result[0].contains("Cursor"));
 
         let hooks = read_json(&dir.path().join(".cursor").join("hooks.json"));
-        let arr = hooks["hooks"].as_array().unwrap();
-        assert_eq!(arr.len(), 2);
-        assert_eq!(arr[0]["event"].as_str().unwrap(), "PostToolUse");
-        assert_eq!(arr[1]["event"].as_str().unwrap(), "PreToolUse");
+        assert_eq!(hooks["version"].as_i64().unwrap(), 1);
+
+        let pre = &hooks["hooks"]["preToolUse"][0];
+        assert_eq!(pre["command"].as_str().unwrap(), "rgt hook pre");
+        assert_eq!(pre["matcher"].as_str().unwrap(), "Shell");
+
+        let post = &hooks["hooks"]["postToolUse"][0];
+        assert_eq!(post["command"].as_str().unwrap(), "rgt hook post");
+        assert_eq!(post["matcher"].as_str().unwrap(), "Shell");
     }
 
     #[test]
@@ -63,9 +80,20 @@ mod tests {
         let result = detect_and_configure_hooks(true, true, Some("codex")).unwrap();
         assert_eq!(result.len(), 1);
         assert!(result[0].contains("Codex CLI"));
+        assert!(result[0].contains("rules-file"));
 
-        let hooks = read_json(&dir.path().join(".codex").join("hooks.json"));
-        assert_eq!(hooks["rgt_hook"].as_str().unwrap(), "rgt hook post");
+        let content = std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        assert!(content.contains("## RGT Integration"));
+        assert!(content.contains("rgt --help"));
+
+        // No hooks.json with rgt_hook key
+        let hooks_path = dir.path().join(".codex").join("hooks.json");
+        assert!(
+            !hooks_path.exists() || {
+                let hooks = read_json(&hooks_path);
+                !hooks.get("rgt_hook").is_some()
+            }
+        );
     }
 
     #[test]
@@ -77,17 +105,11 @@ mod tests {
         let result = detect_and_configure_hooks(true, true, Some("windsurf")).unwrap();
         assert_eq!(result.len(), 1);
         assert!(result[0].contains("Windsurf"));
+        assert!(result[0].contains("rules-file"));
 
-        let hooks = read_json(
-            &dir.path()
-                .join(".codeium")
-                .join("windsurf")
-                .join("hooks.json"),
-        );
-        assert_eq!(
-            hooks["hooks"]["post_execution"].as_str().unwrap(),
-            "rgt hook post"
-        );
+        let content = std::fs::read_to_string(dir.path().join(".windsurfrules")).unwrap();
+        assert!(content.contains("RGT Integration"));
+        assert!(content.contains("rgt --help"));
     }
 
     #[test]
