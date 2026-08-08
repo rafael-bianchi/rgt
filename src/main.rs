@@ -6,6 +6,7 @@ mod query;
 mod store;
 mod types;
 mod updater;
+mod verify;
 
 use clap::{Parser, Subcommand};
 
@@ -96,6 +97,33 @@ enum Commands {
         #[arg(long)]
         result: f64,
     },
+    /// Record numeric and date values from a file into the provenance graph
+    Record {
+        /// Path to the data file to record values from
+        file: String,
+
+        /// Read file content from stdin instead of disk (path still required for node IDs)
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Verify and record a derived value from parent nodes
+    Derive {
+        /// Comma-separated parent node IDs in variable order (parent[0]=a, parent[1]=b, ...)
+        #[arg(long)]
+        parents: String,
+
+        /// Operation type: EXPRESSION or DATE_DIFF
+        #[arg(long)]
+        operation: String,
+
+        /// Formula string for EXPRESSION (e.g., "(a + b) * c / 100")
+        #[arg(long)]
+        expression: Option<String>,
+
+        /// Expected numeric result to verify and record
+        #[arg(long)]
+        result: f64,
+    },
 }
 
 #[tokio::main]
@@ -131,6 +159,13 @@ async fn main() {
             rgt::verify::run_verify_cli(&parents, &operation, expression.as_deref(), result);
             Ok(())
         }
+        Commands::Record { file, stdin } => cli::execute_record(&file, stdin),
+        Commands::Derive {
+            parents,
+            operation,
+            expression,
+            result,
+        } => cli::execute_derive(&parents, &operation, expression.as_deref(), result),
     };
 
     if let Err(err_msg) = result {

@@ -12,8 +12,8 @@
 - **Two-Tier File Detection**: Tier 1 (`mtime` + `size`) < 1ms per file; Tier 2 (BLAKE3) only on change.
 - **Provenance DAG**: `petgraph` reverse-edge graph tracks how every value was derived. Invalidation cascades update only affected subgraph.
 - **Rich Value Types**: Native `Number`, `Date`, and `Duration` types with first-class date arithmetic.
-- **Derivation Verification**: `rgt verify` re-computes derived values using expression evaluation (`a + b * c`) and date arithmetic (`date2 - date1`), rejecting incorrect calculations before they enter the graph.
-- **Dual Integration**: Passive hooks (`PreToolUse`/`PostToolUse`) + active CLI subcommands (`rgt query`, `rgt status`, `rgt verify`, `rgt graph`).
+- **Derivation Verification**: `rgt verify` re-computes derived values using expression evaluation (`a + b * c`) and date arithmetic (`date2 - date1`), rejecting incorrect calculations before they enter the graph. `rgt derive` combines verification with automatic recording.
+- **Dual Integration**: Passive hooks (`PreToolUse`/`PostToolUse`) for automatic background capture, plus active CLI subcommands (`rgt record`, `rgt derive`, `rgt status`, `rgt query`, `rgt verify`, `rgt graph`) for explicit invocation.
 - **One-Command Setup**: `rgt init -g` auto-detects AI coding tools and configures hooks.
 - **Self-Update**: `rgt update` performs atomic in-place binary upgrades from GitHub Releases.
 
@@ -47,16 +47,17 @@ rgt init -g --agent claude-code  # configure a specific agent only
 
 ### Record and Verify Values
 
-RGT operates through passive hooks that call CLI subcommands. AI agent hooks invoke these commands automatically:
+RGT provides CLI subcommands for active provenance tracking. AI coding agents invoke these directly or through passive hooks:
 
 ```
-record_value       # record a root number or date from a source file
-record_derivation  # record a derived calculation linked to parent nodes
-query_provenance   # trace a value back to its source files
-list_stale_values  # find values whose sources have changed
+rgt record         # extract and track numeric/date values from a file
+rgt derive         # verify and record a derived calculation linked to parent nodes
+rgt query          # trace a value back to its source files
+rgt status         # find values whose sources have changed (stale nodes)
+rgt verify         # verify a derived value matches its parent computations
 ```
 
-**Verification happens automatically**: when the agent calls `record_derivation`, the hook calls `rgt verify` to re-compute the result from parent values. Wrong values are rejected before storage.
+**Verification is gated**: `rgt derive` re-computes the result from parent values before inserting. Wrong values are rejected (exit 1) without modifying the graph.
 
 ### Example: End-to-End Flow
 
@@ -64,30 +65,36 @@ list_stale_values  # find values whose sources have changed
 # 1. Initialize
 rgt init
 
-# 2. Agent records values via hooks (automatic)
-# 3. Agent computes 100 + 200 = 300, hooks call:
-rgt verify --parents node_a,node_b --operation EXPRESSION --expression "a + b" --result 300
-# exit 0 — verified
+# 2. Agent reads a data file, then records its values
+rgt record budget.csv
+# Output: Recorded 5 values from budget.csv
 
-# 4. If the agent gets it wrong:
-rgt verify --parents node_a,node_b --operation EXPRESSION --expression "a + b" --result 500
-# Error: verification failed for EXPRESSION "a + b"
-#   expected: 300, got: 500
+# 3. Check graph state
+rgt status
+
+# 4. Agent computes profit = revenue - costs, records the derivation
+rgt derive --parents node_raw_X,node_raw_Y --operation EXPRESSION --expression "a - b" --result 60000
+# Output: Derived node: node_drv_Z
+
+# 5. If the agent gets it wrong:
+rgt derive --parents node_raw_X,node_raw_Y --operation EXPRESSION --expression "a - b" --result 99999
+# Error: verification failed for EXPRESSION "a - b"
+#   expected: 60000, got: 99999
 #   hint: retry with the correct result
-# exit 1 — rejected
+# exit 1 — rejected, no node inserted
 
-# 5. Date arithmetic:
+# 6. Date arithmetic verification:
 rgt verify --parents d1,d2 --operation DATE_DIFF --result 864000
 # exit 0 (10 days verified)
 
-# 6. Query provenance:
-rgt query node_drv_a1b2c3d4 --json
+# 7. Query provenance:
+rgt query node_drv_Z --json
 
-# 7. Check graph status:
+# 8. Check graph status:
 rgt status
 rgt status --stale-only --json
 
-# 8. Export graph:
+# 9. Export graph:
 rgt graph --format mermaid
 ```
 
@@ -133,8 +140,8 @@ RGT models values as nodes in a directed acyclic graph (DAG). Each node knows it
 
 | Node Type | Created By | Example |
 |---|---|---|
-| Root | `record_value` | A number read from a config file |
-| Derived | `record_derivation` | `revenue = price * quantity` |
+| Root | `rgt record` or passive hooks | A number read from a config file |
+| Derived | `rgt derive` | `revenue = price * quantity` |
 
 ### Staleness
 

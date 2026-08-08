@@ -127,10 +127,24 @@ pub fn detect_and_configure_hooks(
     if all_agents || agent == Some("codex") {
         let agents_file = PathBuf::from("AGENTS.md");
         let codex_section = "\n## RGT Integration\n\n\
-            For shell commands, use the `rgt` prefix to get optimized output:\n\
-            - `rgt git status`, `rgt cargo test`, `rgt ls`, `rgt grep`\n\
-            - `rgt npm install`, `rgt pip install`, `rgt docker ps`\n\
-            - Run `rgt --help` for supported commands\n";
+            RGT tracks numeric and date provenance for AI coding agents.\n\
+            \n\
+            ### Recording Values\n\
+            After reading a data file containing numbers or dates, record its values:\n\
+            - `rgt record <file>` — extracts and tracks numeric/date values from file content\n\
+            - Run `rgt status` to check what's tracked\n\
+            \n\
+            ### Recording Derivations\n\
+            After computing a derived value from tracked root nodes:\n\
+            - `rgt derive --parents <id1>,<id2> --operation EXPRESSION --expression \"a - b\" --result <val>`\n\
+            - The derivation is verified before recording; wrong results are rejected (exit 1)\n\
+            \n\
+            ### Inspecting the Graph\n\
+            - `rgt status` — see all tracked nodes and staleness state\n\
+            - `rgt query <node_id>` — trace provenance lineage for a value\n\
+            - `rgt graph` — export the dependency graph as text or mermaid\n\
+            \n\
+            Run `rgt --help` for all available commands.\n";
 
         let write_file = force
             || !agents_file.exists()
@@ -161,11 +175,12 @@ pub fn detect_and_configure_hooks(
     if all_agents || agent == Some("windsurf") {
         let rules_file = PathBuf::from(".windsurfrules");
         let rules_content = "# RGT Integration\n\
-            When executing shell commands such as git, cargo, npm, ls, grep,\n\
-            use the `rgt` prefix for optimized, token-efficient output.\n\
-            Example: `rgt git status`, `rgt cargo test`, `rgt ls`.\n\
-            Run `rgt --help` for available commands.\n\
-            Learn more: https://github.com/rafael-bianchi/rgt\n";
+            RGT tracks numeric and date provenance for AI coding agents.\n\
+            After reading data files, record extracted values with `rgt record <file>`.\n\
+            After computing derived values, record them with `rgt derive --parents <ids> --operation EXPRESSION --expression \"a - b\" --result <val>`.\n\
+            Derivations are verified before recording; wrong results are rejected.\n\
+            Use `rgt status` to check provenance graph state.\n\
+            Run `rgt --help` for all available commands.\n";
 
         if force || !rules_file.exists() {
             fs::write(&rules_file, rules_content)?;
