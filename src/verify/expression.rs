@@ -6,6 +6,16 @@ fn approx_eq(a: f64, b: f64) -> bool {
     abs < 1e-9 || abs / b.abs().max(1e-10) < 1e-12
 }
 
+/// Verifies that an arithmetic expression evaluated against parent values matches a claimed result.
+///
+/// # Arguments
+/// - `parents`: Parent node values bound to variables `a`, `b`, `c`, ... in order.
+/// - `expression`: Formula string (e.g., `"(a + b) * c / 100"`). Supports `+`, `-`, `*`, `/`, `%`, `^`, parentheses.
+/// - `result`: The caller-claimed numeric result.
+///
+/// # Returns
+/// `Ok(())` if the evaluated expression matches `result` within float tolerance.
+/// `Err(message)` on evaluation failure (unknown variable, division by zero) or mismatch.
 pub fn verify_expression(
     parents: &[ValueData],
     expression: &str,

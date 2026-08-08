@@ -9,6 +9,12 @@ pub struct DetectedTool {
     pub is_configured: bool,
 }
 
+/// Detects installed AI coding tools and configures their hooks (Claude Code,
+/// Cursor, Windsurf, Codex CLI). Supports global installs, `--force` overwrite,
+/// and per-agent targeting.
+///
+/// # Returns
+/// A list of human-readable strings describing each configured agent+config file.
 pub fn detect_and_configure_hooks(
     global: bool,
     force: bool,

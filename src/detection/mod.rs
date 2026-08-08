@@ -16,6 +16,10 @@ pub enum DetectionResult {
     FileNotFound,
 }
 
+/// Evaluates whether a file has changed using two-tier detection.
+///
+/// Tier 1 compares mtime + size; if unchanged, returns `Unchanged` without hashing.
+/// Tier 2 computes a BLAKE3 hash only when Tier 1 indicates a potential change.
 pub fn evaluate_file_change<P: AsRef<Path>>(
     path: P,
     stored_mtime_nsec: i64,

@@ -3,6 +3,8 @@ use crate::store::queries::{list_all_nodes, list_stale_nodes};
 use crate::store::DbStore;
 use serde_json::json;
 
+/// Executes `rgt status`: evaluates file changes, builds the invalidation cascade,
+/// and prints a summary of total/active/stale nodes (text or JSON).
 pub fn execute_status(_stale_only: bool, json_output: bool) -> Result<(), String> {
     let db = DbStore::open_in_project(".").map_err(|e| format!("Failed to open DB: {}", e))?;
 
