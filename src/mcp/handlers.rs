@@ -10,6 +10,16 @@ use serde_json::json;
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 
+/// Handles the MCP `record_value` tool: records a root number or date read from a source file.
+///
+/// # Arguments (from `params`)
+/// - `file_path`: Source file the value was read from.
+/// - `value_kind`: `NUMBER` or `DATE`.
+/// - `number_value` / `date_value`: The value to record.
+/// - `line_number`: Optional source line.
+///
+/// # Returns
+/// JSON with `node_id`, `is_stale`, and `value_kind` on success.
 pub fn handle_record_value(params: &serde_json::Value) -> Result<serde_json::Value, String> {
     let file_path = params
         .get("file_path")
@@ -83,6 +93,17 @@ pub fn handle_record_value(params: &serde_json::Value) -> Result<serde_json::Val
     }))
 }
 
+/// Handles the MCP `record_derivation` tool: records a derived value linked to parent nodes.
+///
+/// # Arguments (from `params`)
+/// - `parent_node_ids`: Parent node IDs in variable order (`parent[0]`=a, `parent[1]`=b, ...).
+/// - `operation_type`: `EXPRESSION` or `DATE_DIFF` (unknown types pass through unverified).
+/// - `value_kind`: `NUMBER`, `DATE`, or `DURATION`.
+/// - `number_value` / `date_value` / `duration_seconds`: The claimed result.
+/// - `expression`: Formula string for `EXPRESSION` operations.
+///
+/// # Returns
+/// JSON with `node_id`, `is_stale`, `parent_count`, and `verified` on success.
 pub fn handle_record_derivation(params: &serde_json::Value) -> Result<serde_json::Value, String> {
     let parents = params
         .get("parent_node_ids")
@@ -183,6 +204,16 @@ pub fn handle_record_derivation(params: &serde_json::Value) -> Result<serde_json
     }))
 }
 
+/// Handles the MCP `query_provenance` tool: queries the complete ancestry of a node.
+///
+/// Uses breadth-first traversal with a cycle guard to return the full lineage
+/// including node types and total ancestor count.
+///
+/// # Arguments (from `params`)
+/// - `node_id`: Target node to trace.
+///
+/// # Returns
+/// JSON with the node and its `lineage_steps`, `total_ancestors`, and `is_stale`.
 pub fn handle_query_provenance(params: &serde_json::Value) -> Result<serde_json::Value, String> {
     let node_id = params
         .get("node_id")
@@ -249,6 +280,7 @@ pub fn handle_query_provenance(params: &serde_json::Value) -> Result<serde_json:
     }))
 }
 
+/// Handles the MCP `list_stale_values` tool: lists all nodes currently marked stale.
 pub fn handle_list_stale_values() -> Result<serde_json::Value, String> {
     let db = DbStore::open_in_project(".").map_err(|e| e.to_string())?;
     let stale_nodes = list_stale_nodes(db.conn()).map_err(|e| e.to_string())?;
