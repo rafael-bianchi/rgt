@@ -19,5 +19,11 @@ pub fn execute_init(global: bool, force: bool, agent: Option<&str>) -> Result<()
         }
     }
 
+    println!();
+    println!("Verify derived calculations: rgt verify --parents <ids> --operation EXPRESSION --expression \"a + b\" --result <val>");
+    println!("  Variables: parent[0]=a, parent[1]=b, parent[2]=c, ...");
+    println!("  Supported operations: EXPRESSION, DATE_DIFF");
+    println!("  Exit codes: 0=match, 1=mismatch (retry with correct result), 2=invalid input");
+
     Ok(())
 }
