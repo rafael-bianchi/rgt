@@ -2,7 +2,7 @@ mod cli;
 mod detection;
 mod graph;
 mod hooks;
-mod mcp;
+mod query;
 mod store;
 mod types;
 mod updater;
@@ -64,8 +64,6 @@ enum Commands {
         /// Hook event type: pre or post
         event: String,
     },
-    /// Start the Model Context Protocol stdio RPC server
-    Mcp,
     /// Check for and install binary updates from GitHub Releases
     Update {
         /// Only check if an update is available (no download)
@@ -116,13 +114,6 @@ async fn main() {
         Commands::Hook { event } => {
             if let Err(e) = hooks::handle_passive_hook_event(&event) {
                 eprintln!("Hook warning: {}", e);
-            }
-            Ok(())
-        }
-        Commands::Mcp => {
-            if let Err(e) = mcp::run_mcp_server().await {
-                eprintln!("MCP server error: {}", e);
-                std::process::exit(1);
             }
             Ok(())
         }
