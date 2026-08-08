@@ -53,18 +53,6 @@ name = "test_hooks_contract"
 path = "tests/contract/test_hooks_contract.rs"
 
 [[test]]
-name = "test_mcp_contract"
-path = "tests/contract/test_mcp_contract.rs"
-
-[[test]]
-name = "test_file_invalidation"
-path = "tests/integration/test_file_invalidation.rs"
-
-[[test]]
-name = "test_derivation_chain"
-path = "tests/integration/test_derivation_chain.rs"
-
-[[test]]
 name = "test_quickstart"
 path = "tests/integration/test_quickstart.rs"
 

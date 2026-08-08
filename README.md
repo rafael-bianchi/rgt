@@ -13,7 +13,7 @@
 - **Provenance DAG**: `petgraph` reverse-edge graph tracks how every value was derived. Invalidation cascades update only affected subgraph.
 - **Rich Value Types**: Native `Number`, `Date`, and `Duration` types with first-class date arithmetic.
 - **Derivation Verification**: `rgt verify` re-computes derived values using expression evaluation (`a + b * c`) and date arithmetic (`date2 - date1`), rejecting incorrect calculations before they enter the graph.
-- **Dual Integration**: Passive hooks (`PreToolUse`/`PostToolUse`) + active MCP server.
+- **Dual Integration**: Passive hooks (`PreToolUse`/`PostToolUse`) + active CLI subcommands (`rgt query`, `rgt status`, `rgt verify`, `rgt graph`).
 - **One-Command Setup**: `rgt init -g` auto-detects AI coding tools and configures hooks.
 - **Self-Update**: `rgt update` performs atomic in-place binary upgrades from GitHub Releases.
 
@@ -47,7 +47,7 @@ rgt init -g --agent claude-code  # configure a specific agent only
 
 ### Record and Verify Values
 
-RGT exposes tools via an MCP server. AI agents call these directly:
+RGT operates through passive hooks that call CLI subcommands. AI agent hooks invoke these commands automatically:
 
 ```
 record_value       # record a root number or date from a source file
@@ -64,7 +64,7 @@ list_stale_values  # find values whose sources have changed
 # 1. Initialize
 rgt init
 
-# 2. Record two numbers via MCP (agent does this)
+# 2. Agent records values via hooks (automatic)
 # 3. Agent computes 100 + 200 = 300, hooks call:
 rgt verify --parents node_a,node_b --operation EXPRESSION --expression "a + b" --result 300
 # exit 0 — verified
@@ -119,10 +119,6 @@ Export the dependency graph as text, Mermaid diagram, or Graphviz DOT format.
 
 Execute a passive hook (reads tool event JSON from stdin). Used by agent hook scripts.
 
-### `rgt mcp`
-
-Start the Model Context Protocol stdio RPC server for AI agent integration.
-
 ### `rgt update [--check] [-y] [--version <tag>]`
 
 Check for and install binary updates from GitHub Releases.
@@ -147,19 +143,6 @@ When a source file changes, its root nodes become **stale**. Staleness cascades 
 ### Verification
 
 Every derivation is **trust-but-verify**. When an agent records `revenue = price * quantity`, RGT reads `price` and `quantity` from the database, re-computes the product, and confirms it matches. If the agent made an arithmetic error, the derivation is rejected before it enters the graph.
-
----
-
-## MCP Server
-
-Start the server with `rgt mcp`. Exposed tools:
-
-| Tool | Description |
-|---|---|
-| `record_value` | Record a root number or date from a source file |
-| `record_derivation` | Record a derived calculation from parent nodes (verified server-side) |
-| `query_provenance` | Query the complete ancestry of a node |
-| `list_stale_values` | List all stale nodes in the graph |
 
 ---
 

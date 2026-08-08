@@ -5,7 +5,7 @@
 ```
 src/
 ├── cli/           # CLI subcommands: init, status, query, graph, update, verify
-├── mcp/           # MCP server: handlers, protocol, mod
+├── query/         # Query module: provenance, stale listing
 ├── store/         # SQLite: db connection, queries, schema
 ├── types/         # Data types: node, edge, value
 ├── graph/         # DAG: engine (petgraph), invalidation
