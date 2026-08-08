@@ -1,6 +1,8 @@
 use crate::mcp::handlers::handle_query_provenance;
 use serde_json::json;
 
+/// Executes `rgt query <node_id>`: queries the derivation lineage for a node and
+/// prints it as text or JSON.
 pub fn execute_query(node_id: &str, json_output: bool) -> Result<(), String> {
     let params = json!({ "node_id": node_id });
     let result = handle_query_provenance(&params)?;

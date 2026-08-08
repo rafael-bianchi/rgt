@@ -190,6 +190,7 @@ All design decisions must comply with the 7 principles in `.specify/memory/const
 | `rgt hook <pre\|post>` | Execute passive hook (reads stdin for tool event JSON) |
 | `rgt mcp` | Start MCP stdio RPC server |
 | `rgt update [--check] [-y] [--version <tag>]` | Self-update from GitHub Releases |
+| `rgt verify --parents <ids> --operation <op> --result <val> [--expression <expr>]` | Verify a derived value against parent nodes (EXPRESSION/DATE_DIFF); exit 0=match, 1=mismatch, 2=invalid |
 
 ## MCP Interface
 

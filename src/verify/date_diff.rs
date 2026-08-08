@@ -1,5 +1,14 @@
 use crate::types::ValueData;
 
+/// Verifies that `date2 - date1` (from two Date parents) equals the claimed result.
+///
+/// # Arguments
+/// - `parents`: Exactly two `ValueData::Date` nodes (`parent[0]` = date1, `parent[1]` = date2).
+/// - `result_seconds`: The caller-claimed duration in seconds.
+///
+/// # Returns
+/// `Ok(())` if the computed difference matches. `Err(message)` if the parent count is
+/// wrong, either parent is not a Date, or the duration does not match.
 pub fn verify_date_diff(parents: &[ValueData], result_seconds: i64) -> Result<(), String> {
     if parents.len() != 2 {
         return Err(format!(

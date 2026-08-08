@@ -8,19 +8,20 @@
 
 ## Key Features
 
-- **Zero-Dependency Single Binary**: Pure Rust implementation with bundled SQLite (`rusqlite`), cross-compiled for macOS, Linux, and Windows.
-- **Speed-First Two-Tier Detection**: Tier 1 (`mtime` + file size) checks complete in **<1ms per file**, with BLAKE3 cryptographic hashing for Tier 2 content verification.
-- **Graph Correctness & Minimal Invalidation**: `petgraph` DAG engine with reverse-edge traversal so invalidation cascades update only the affected downstream subgraph.
-- **First-Class Temporal Derivations**: Native `Number`, `Date`, and `Duration` types powered by `chrono`.
-- **Dual Integration Surface**: Passive background execution hooks (`PreToolUse`/`PostToolUse`) + active Model Context Protocol (MCP) stdio RPC server.
-- **One-Command Setup**: `rgt init -g` auto-detects installed AI coding tools and writes hook configurations.
-- **Derivation Verification**: `rgt verify` re-computes derived values using expression evaluation (`a + b * c`) and date arithmetic (`date2 - date1`), rejecting incorrect calculations before they enter the graph. AI agents never silently trust a wrong result.
+- **Zero-Dependency Single Binary**: Pure Rust with bundled SQLite, cross-compiled for macOS, Linux, and Windows.
+- **Two-Tier File Detection**: Tier 1 (`mtime` + `size`) < 1ms per file; Tier 2 (BLAKE3) only on change.
+- **Provenance DAG**: `petgraph` reverse-edge graph tracks how every value was derived. Invalidation cascades update only affected subgraph.
+- **Rich Value Types**: Native `Number`, `Date`, and `Duration` types with first-class date arithmetic.
+- **Derivation Verification**: `rgt verify` re-computes derived values using expression evaluation (`a + b * c`) and date arithmetic (`date2 - date1`), rejecting incorrect calculations before they enter the graph.
+- **Dual Integration**: Passive hooks (`PreToolUse`/`PostToolUse`) + active MCP server.
+- **One-Command Setup**: `rgt init -g` auto-detects AI coding tools and configures hooks.
+- **Self-Update**: `rgt update` performs atomic in-place binary upgrades from GitHub Releases.
 
 ---
 
 ## Quickstart
 
-### 1. Installation
+### Installation
 
 **Shell (macOS/Linux):**
 ```bash
@@ -32,65 +33,133 @@ curl -fsSL https://raw.githubusercontent.com/rafael-bianchi/rgt/main/install.sh 
 brew install rafael-bianchi/rgt/rgt
 ```
 
-**Cargo:**
+**Cargo (from Git):**
 ```bash
 cargo install --git https://github.com/rafael-bianchi/rgt
 ```
 
-**From Source:**
+### Initialize
+
 ```bash
-cargo build --release
+rgt init -g       # auto-configure hooks for all detected AI tools
+rgt init -g --agent claude-code  # configure a specific agent only
 ```
 
-### 2. Initialization
+### Record and Verify Values
 
-```bash
-# Initialize RGT in project and auto-configure AI agent hooks
-rgt init -g
+RGT exposes tools via an MCP server. AI agents call these directly:
+
+```
+record_value       # record a root number or date from a source file
+record_derivation  # record a derived calculation linked to parent nodes
+query_provenance   # trace a value back to its source files
+list_stale_values  # find values whose sources have changed
 ```
 
-### 3. Inspecting Graph Status
+**Verification happens automatically**: when the agent calls `record_derivation`, the hook calls `rgt verify` to re-compute the result from parent values. Wrong values are rejected before storage.
+
+### Example: End-to-End Flow
 
 ```bash
-# Check node staleness summary
-rgt status
+# 1. Initialize
+rgt init
 
-# Output status as JSON
-rgt status --json
-```
+# 2. Record two numbers via MCP (agent does this)
+# 3. Agent computes 100 + 200 = 300, hooks call:
+rgt verify --parents node_a,node_b --operation EXPRESSION --expression "a + b" --result 300
+# exit 0 — verified
 
-### 4. Querying Value Lineage ("Why is this value X?")
+# 4. If the agent gets it wrong:
+rgt verify --parents node_a,node_b --operation EXPRESSION --expression "a + b" --result 500
+# Error: verification failed for EXPRESSION "a + b"
+#   expected: 300, got: 500
+#   hint: retry with the correct result
+# exit 1 — rejected
 
-```bash
-# Query derivation tree for a node ID
+# 5. Date arithmetic:
+rgt verify --parents d1,d2 --operation DATE_DIFF --result 864000
+# exit 0 (10 days verified)
+
+# 6. Query provenance:
 rgt query node_drv_a1b2c3d4 --json
-```
 
-### 5. Exporting Dependency Graph
+# 7. Check graph status:
+rgt status
+rgt status --stale-only --json
 
-```bash
-# Export as Mermaid diagram
+# 8. Export graph:
 rgt graph --format mermaid
-
-# Export as Graphviz DOT format
-rgt graph --format dot
 ```
 
 ---
 
-## MCP Server Integration
+## CLI Reference
 
-Start the Model Context Protocol stdio RPC server mode:
+### `rgt init [-g] [--force] [--agent <name>]`
 
-```bash
-rgt mcp
-```
+Initialize the `.rgt/store.db` database and configure AI agent hooks. `-g` installs global hooks. `--agent` targets `claude-code`, `cursor`, `windsurf`, or `codex`.
 
-Exposed MCP Tools:
-- `record_value`: Register a root number or date read from a source file.
-- `record_derivation`: Register a derived value or date-diff calculation linked to parent node IDs.
-- `query_provenance`: Retrieve lineage tree and root source file origins for a target value ID.
-- `list_stale_values`: List all currently invalid or stale value nodes.
+### `rgt verify --parents <ids> --operation <op> --result <val> [--expression <expr>]`
+
+Re-compute a derived value from parent nodes and compare against the claimed result. Exit codes: `0` (match/unknown op), `1` (mismatch), `2` (invalid input). Operations: `EXPRESSION` and `DATE_DIFF`. Variables: `parent[0]=a, parent[1]=b, ...`.
+
+### `rgt status [--stale-only] [--json]`
+
+Inspect the provenance graph: total, active, and stale node counts. `--stale-only` filters to stale nodes only.
+
+### `rgt query <node_id> [--json]`
+
+Query the complete derivation lineage for a node ID. Traces the value back to its source files.
+
+### `rgt graph [-f text|mermaid|dot]`
+
+Export the dependency graph as text, Mermaid diagram, or Graphviz DOT format.
+
+### `rgt hook <pre|post>`
+
+Execute a passive hook (reads tool event JSON from stdin). Used by agent hook scripts.
+
+### `rgt mcp`
+
+Start the Model Context Protocol stdio RPC server for AI agent integration.
+
+### `rgt update [--check] [-y] [--version <tag>]`
+
+Check for and install binary updates from GitHub Releases.
+
+---
+
+## Concepts
+
+### Provenance Graph
+
+RGT models values as nodes in a directed acyclic graph (DAG). Each node knows its parents — the source files or prior calculations it depends on.
+
+| Node Type | Created By | Example |
+|---|---|---|
+| Root | `record_value` | A number read from a config file |
+| Derived | `record_derivation` | `revenue = price * quantity` |
+
+### Staleness
+
+When a source file changes, its root nodes become **stale**. Staleness cascades downstream: every derived node that depends on a stale node is also stale. `rgt status` shows the staleness state. `rgt query` traces the dependency chain to explain *why* a value is stale.
+
+### Verification
+
+Every derivation is **trust-but-verify**. When an agent records `revenue = price * quantity`, RGT reads `price` and `quantity` from the database, re-computes the product, and confirms it matches. If the agent made an arithmetic error, the derivation is rejected before it enters the graph.
+
+---
+
+## MCP Server
+
+Start the server with `rgt mcp`. Exposed tools:
+
+| Tool | Description |
+|---|---|
+| `record_value` | Record a root number or date from a source file |
+| `record_derivation` | Record a derived calculation from parent nodes (verified server-side) |
+| `query_provenance` | Query the complete ancestry of a node |
+| `list_stale_values` | List all stale nodes in the graph |
 
 ---
 
