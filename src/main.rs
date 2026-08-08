@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "rgt")]
-#[command(about = "Rust Graph Tracker: Numeric and date provenance tracking for LLM coding agents", long_about = None)]
+#[command(about = "Rust Graph Tracker: Numeric and date provenance tracking with expression evaluation and derivation verification for LLM coding agents", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -80,6 +80,24 @@ enum Commands {
         #[arg(long)]
         version: Option<String>,
     },
+    /// Verify that a derived value matches its parent nodes
+    Verify {
+        /// Comma-separated parent node IDs in variable order (parent[0]=a, parent[1]=b, ...)
+        #[arg(long)]
+        parents: String,
+
+        /// Operation type: EXPRESSION or DATE_DIFF
+        #[arg(long)]
+        operation: String,
+
+        /// Formula string for EXPRESSION (e.g., "(a + b) * c / 100")
+        #[arg(long)]
+        expression: Option<String>,
+
+        /// Expected numeric result to verify
+        #[arg(long)]
+        result: f64,
+    },
 }
 
 #[tokio::main]
@@ -113,6 +131,15 @@ async fn main() {
             yes,
             version,
         } => cli::execute_update(check, yes, version),
+        Commands::Verify {
+            parents,
+            operation,
+            expression,
+            result,
+        } => {
+            rgt::verify::run_verify_cli(&parents, &operation, expression.as_deref(), result);
+            Ok(())
+        }
     };
 
     if let Err(err_msg) = result {
