@@ -6,3 +6,4 @@ pub mod mcp;
 pub mod store;
 pub mod types;
 pub mod updater;
+pub mod verify;
