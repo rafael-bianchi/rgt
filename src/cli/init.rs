@@ -1,6 +1,8 @@
 use crate::hooks::installer::detect_and_configure_hooks;
 use crate::store::DbStore;
 
+/// Executes `rgt init`: initializes the `.rgt/store.db` database and configures
+/// AI agent hooks (global, forced, or per-agent via `--agent`).
 pub fn execute_init(global: bool, force: bool, agent: Option<&str>) -> Result<(), String> {
     let _db = DbStore::open_in_project(".").map_err(|e| format!("Database init failed: {}", e))?;
     println!("✓ Initialized RGT database at .rgt/store.db");
