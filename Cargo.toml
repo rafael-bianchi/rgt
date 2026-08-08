@@ -69,6 +69,14 @@ name = "test_update_contract"
 path = "tests/contract/test_update_contract.rs"
 
 [[test]]
+name = "test_record"
+path = "tests/unit/test_record.rs"
+
+[[test]]
+name = "test_cli_record_derive"
+path = "tests/contract/test_cli_record_derive_contract.rs"
+
+[[test]]
 name = "test_distribution_quickstart"
 path = "tests/integration/test_distribution_quickstart.rs"
 
