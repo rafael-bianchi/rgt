@@ -2,7 +2,7 @@
 
 ## Project Identity
 
-**RGT (Rust Graph Tracker)** gives AI coding agents (Claude Code, Cursor, Codex CLI, Windsurf) a persistent, queryable memory of every number and date they read from source files or derive through calculations, ensuring they never silently reason from stale data.
+**RGT (Rust Graph Tracker)** gives AI coding agents (Claude Code, Cursor, Codex CLI, Windsurf) a persistent, queryable memory of every number and date they read from source files or derive through calculations — then **verifies each derivation is mathematically correct** — ensuring they never silently reason from stale or incorrect data.
 
 - **Repository**: https://github.com/rafael-bianchi/rgt
 - **License**: MIT OR Apache-2.0

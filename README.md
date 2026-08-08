@@ -2,7 +2,7 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
-**RGT (Rust Graph Tracker)** gives AI coding agents (Claude Code, Cursor, Codex CLI, Windsurf) a persistent, queryable memory of every number and date they read from source files or derive through calculations, ensuring they never silently reason from stale data.
+**RGT (Rust Graph Tracker)** gives AI coding agents (Claude Code, Cursor, Codex CLI, Windsurf) a persistent, queryable memory of every number and date they read from source files or derive through calculations — then **verifies each derivation is mathematically correct** — ensuring they never silently reason from stale or incorrect data.
 
 ---
 
@@ -14,7 +14,7 @@
 - **First-Class Temporal Derivations**: Native `Number`, `Date`, and `Duration` types powered by `chrono`.
 - **Dual Integration Surface**: Passive background execution hooks (`PreToolUse`/`PostToolUse`) + active Model Context Protocol (MCP) stdio RPC server.
 - **One-Command Setup**: `rgt init -g` auto-detects installed AI coding tools and writes hook configurations.
-- **Self-Update Mechanism**: `rgt update` checks GitHub Releases and performs atomic in-place binary upgrades with SHA-256 verification.
+- **Derivation Verification**: `rgt verify` re-computes derived values using expression evaluation (`a + b * c`) and date arithmetic (`date2 - date1`), rejecting incorrect calculations before they enter the graph. AI agents never silently trust a wrong result.
 
 ---
 

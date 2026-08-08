@@ -36,6 +36,7 @@ tar = "0.4"
 zip = "2.2"
 walkdir = "2.5"
 tempfile = "3.10"
+evalexpr = "13.1.0"
 
 [dev-dependencies]
 

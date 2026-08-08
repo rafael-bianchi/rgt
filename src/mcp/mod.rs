@@ -70,7 +70,7 @@ pub async fn run_mcp_server() -> io::Result<()> {
                                     "date_value": { "type": "string" },
                                     "duration_seconds": { "type": "integer" },
                                     "operation_type": { "type": "string" },
-                                    "expression": { "type": "string" }
+                                    "expression": { "type": "string" },
                                 },
                                 "required": ["parent_node_ids", "value_kind", "operation_type"]
                             }
