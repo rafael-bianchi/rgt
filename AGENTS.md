@@ -19,7 +19,7 @@
 | Hashing | `blake3` (Tier 2 change detection) |
 | Date/time | `chrono` (DateTime<Utc>, Duration, `serde` feature) |
 | CLI | `clap` (derive mode) |
-| MCP transport | JSON-RPC 2.0 over stdio, read line-by-line |
+| Eval expression | `evalexpr` (MIT) for arithmetic evaluation |
 | HTTP | `ureq` (sync, for self-update) |
 | Archiving | `flate2`, `tar`, `zip` (self-update extraction) |
 | Regex | `regex` (value extraction from source files) |
@@ -30,7 +30,7 @@
 ```
 src/
 ├── cli/           # CLI subcommands: init, status, query, graph, update
-├── mcp/           # MCP server: handlers, protocol, mod (dispatch)
+├── query/         # Query module: provenance (BFS), stale listing
 ├── store/         # SQLite: db (connection), queries, schema
 ├── types/         # Data types: node (TrackedNode, SourceDocument), edge, value (ValueData)
 ├── graph/         # DAG: engine (petgraph), invalidation (cascade)
@@ -43,7 +43,7 @@ src/
 
 ```
 tests/
-├── contract/      # Schema validation: hooks, mcp, update (3 files)
+├── contract/      # Schema validation: hooks, update (3 files)
 ├── integration/   # E2E flows: derivation_chain, file_invalidation, quickstart, distribution, installer (6 files)
 └── unit/          # Isolated logic: date_diff, invalidation (2 files)
 ```
@@ -176,7 +176,7 @@ All design decisions must comply with the 7 principles in `.specify/memory/const
 | III | Graph Correctness | `petgraph` reverse-edge DAG, O(k) invalidation, no full rescans |
 | IV | Rich Value Types | Native `Number`/`Date`/`Duration` via `chrono` |
 | V | Multi-Channel Distribution | Shell script, Homebrew, `cargo install`, `rgt init -g` |
-| VI | Dual Integration Surface | Passive hooks (fail-open) + active MCP server |
+| VI | Dual Integration Surface | Passive hooks (fail-open) + active CLI subcommands |
 | VII | Permissive OSS | MIT OR Apache-2.0, public GitHub |
 
 ## CLI Commands
@@ -188,22 +188,8 @@ All design decisions must comply with the 7 principles in `.specify/memory/const
 | `rgt query <node_id> [--json]` | Query complete derivation lineage for a value node |
 | `rgt graph [-f, --format text\|mermaid\|dot]` | Visualize provenance DAG |
 | `rgt hook <pre\|post>` | Execute passive hook (reads stdin for tool event JSON) |
-| `rgt mcp` | Start MCP stdio RPC server |
 | `rgt update [--check] [-y] [--version <tag>]` | Self-update from GitHub Releases |
 | `rgt verify --parents <ids> --operation <op> --result <val> [--expression <expr>]` | Verify a derived value against parent nodes (EXPRESSION/DATE_DIFF); exit 0=match, 1=mismatch, 2=invalid |
-
-## MCP Interface
-
-- **Protocol**: JSON-RPC 2.0, one JSON object per line over stdio
-- **Version**: `2024-11-05`
-- **Server**: `rgt-mcp-server` (capabilities: `tools`)
-
-| Tool | Params | Description |
-|---|---|---|
-| `record_value` | `file_path`, `value_kind` (NUMBER\|DATE), `number_value`/`date_value`, `line_number?` | Record a root value from a source file |
-| `record_derivation` | `parent_node_ids[]`, `value_kind` (NUMBER\|DATE\|DURATION), `number_value`/`date_value`/`duration_seconds`, `operation_type`, `expression?` | Record a derived value from parent nodes |
-| `query_provenance` | `node_id` | Query complete ancestor lineage (BFS with cycle guard) |
-| `list_stale_values` | (none) | List all nodes marked as stale |
 
 ## Speckit Workflow
 
@@ -221,7 +207,7 @@ Feature work follows the Speckit pipeline via `.kilo/commands/speckit.*.md`:
 | `plan.md` | plan | Technical context, constitution check, project structure |
 | `research.md` | plan | Architectural decisions, alternatives considered |
 | `data-model.md` | plan | Entities, schema, state transitions |
-| `contracts/` | plan | Interface schemas (MCP, CLI, hooks) |
+| `contracts/` | plan | Interface schemas (CLI, hooks) |
 | `quickstart.md` | plan | Validation scenarios |
 | `tasks.md` | tasks | Implementation tasks by user story |
 | `checklists/` | specify | Quality validation checklist |
