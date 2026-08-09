@@ -4,7 +4,10 @@ on:
   pull_request_target:
     types: [opened, edited]
 
-permissions: {}
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   check-target:
@@ -20,12 +23,21 @@ jobs:
           script: |
             const pr = context.payload.pull_request;
 
-            await github.rest.issues.addLabels({
+            const labels = await github.rest.issues.listLabelsOnIssue({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: pr.number,
-              labels: ['wrong-base']
             });
+
+            const hasWrongBase = labels.data.some(l => l.name === 'wrong-base');
+            if (!hasWrongBase) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['wrong-base']
+              });
+            }
 
             const body = `Automatic message from CI checks : It seems like this branch is targeting the wrong branch. Any contribution should target the \`develop\` branch.
 

@@ -1,6 +1,6 @@
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[allow(dead_code)]
 pub struct DetectedTool {
@@ -20,9 +20,22 @@ pub fn detect_and_configure_hooks(
     force: bool,
     agent: Option<&str>,
 ) -> io::Result<Vec<String>> {
-    let mut configured = Vec::new();
     let home = dirs::home_dir()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
+    detect_and_configure_hooks_in_home(&home, global, force, agent)
+}
+
+/// Same as [`detect_and_configure_hooks`], but resolves the home directory from an
+/// explicit path. Exposed for testability so tests can isolate global hook configs
+/// to a temp directory on any platform (the `dirs` crate resolves home via the
+/// Windows Shell API, which ignores environment variables).
+pub fn detect_and_configure_hooks_in_home(
+    home: &Path,
+    global: bool,
+    force: bool,
+    agent: Option<&str>,
+) -> io::Result<Vec<String>> {
+    let mut configured = Vec::new();
 
     let all_agents = agent.is_none();
 
