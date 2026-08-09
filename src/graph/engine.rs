@@ -9,6 +9,12 @@ pub struct GraphEngine {
     node_map: HashMap<String, NodeIndex>,
 }
 
+impl Default for GraphEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GraphEngine {
     pub fn new() -> Self {
         Self {
