@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use rgt::graph::GraphEngine;
+    use rgt::graph::engine::GraphEngine;
 
     #[test]
     fn test_reverse_edge_downstream_dependents() {
