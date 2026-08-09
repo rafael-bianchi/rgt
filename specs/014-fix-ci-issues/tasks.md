@@ -74,7 +74,7 @@
 - [x] T012 [P] Run `cargo clippy --all-targets` and fix any warnings introduced
 - [x] T013 Run the full test suite `cargo test` — all suites pass with no new failures
 - [x] T014 Run quickstart.md validation scenarios end-to-end (see `specs/014-fix-ci-issues/quickstart.md`)
-- [ ] T015 [P] Verify `test (windows-latest)` CI job is green on the fix PR via `gh pr checks` (after PR is pushed)
+- [x] T015 [P] Verify `test (windows-latest)` CI job is green on the fix PR via `gh pr checks` (after PR is pushed)
 - [x] T016 Note in `research.md` that SC-002 poison-tolerance is verified via the manual quickstart Scenario 1 check (a permanent automated poison test is impractical because it requires a deliberately-failing assertion, which is indistinguishable from a real regression in CI)
 
 **Checkpoint**: Local quality gates green; CI (including Windows) green on the fix PR.
