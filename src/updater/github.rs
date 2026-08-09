@@ -13,26 +13,12 @@ const GITHUB_API_RELEASES_TAG: &str =
 pub struct GitHubReleaseAsset {
     pub name: String,
     pub browser_download_url: String,
-    pub size: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitHubRelease {
     pub tag_name: String,
-    pub name: Option<String>,
-    pub draft: bool,
-    pub prerelease: bool,
-    pub published_at: Option<String>,
     pub assets: Vec<GitHubReleaseAsset>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct UpdateCheckResult {
-    pub current_version: String,
-    pub latest_version: String,
-    pub is_update_available: bool,
-    pub download_url: Option<String>,
-    pub checksum_url: Option<String>,
 }
 
 fn build_agent() -> ureq::Agent {
@@ -42,10 +28,15 @@ fn build_agent() -> ureq::Agent {
         .build()
 }
 
+/// Fetches the latest GitHub release for the rgt repository.
+///
+/// Accepts an optional `GITHUB_TOKEN` to avoid API rate limits (429).
+/// Returns a structured `GitHubRelease` or a human-readable error string.
 pub fn fetch_latest_release(token: Option<&str>) -> Result<GitHubRelease, String> {
     fetch_release_from_url(GITHUB_API_RELEASES_LATEST, token)
 }
 
+/// Fetches a GitHub release by exact tag name (e.g., `v0.2.0`).
 pub fn fetch_release_by_tag(tag: &str, token: Option<&str>) -> Result<GitHubRelease, String> {
     let url = format!("{}/{}", GITHUB_API_RELEASES_TAG, tag);
     fetch_release_from_url(&url, token)
@@ -81,6 +72,11 @@ fn fetch_release_from_url(url: &str, token: Option<&str>) -> Result<GitHubReleas
         .map_err(|e| format!("Failed to parse release JSON: {}", e))
 }
 
+/// Finds the platform-specific binary asset for a release.
+///
+/// Matches assets by the platform's expected target triple naming convention
+/// (e.g., `rgt-v0.2.0-aarch64-apple-darwin.tar.gz`). Returns `None` if no asset
+/// matches the platform.
 pub fn find_asset<'a>(
     release: &'a GitHubRelease,
     platform: &Platform,
@@ -89,30 +85,12 @@ pub fn find_asset<'a>(
     release.assets.iter().find(|a| a.name == expected_name)
 }
 
+/// Finds the `checksums.txt` asset in a release's asset list.
 pub fn find_checksum_asset(release: &GitHubRelease) -> Option<&GitHubReleaseAsset> {
     release.assets.iter().find(|a| a.name == "checksums.txt")
 }
 
-pub fn check_update(
-    current_version: &str,
-    token: Option<&str>,
-) -> Result<UpdateCheckResult, String> {
-    let release = fetch_latest_release(token)?;
-    let platform = Platform::detect();
-
-    let latest = release.tag_name.clone();
-    let current = current_version.to_string();
-    let is_update_available = latest != current;
-
-    Ok(UpdateCheckResult {
-        current_version: current,
-        latest_version: latest,
-        is_update_available,
-        download_url: find_asset(&release, &platform).map(|a| a.browser_download_url.clone()),
-        checksum_url: find_checksum_asset(&release).map(|a| a.browser_download_url.clone()),
-    })
-}
-
+/// Downloads a file from the given URL to the destination path.
 pub fn download_asset(url: &str, dest: &std::path::Path) -> Result<(), String> {
     let agent = build_agent();
     let response = agent
@@ -128,6 +106,11 @@ pub fn download_asset(url: &str, dest: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Verifies a downloaded asset against the release's `checksums.txt`.
+///
+/// Fetches the checksum file, finds the entry matching `asset_name`, and verifies
+/// the SHA-256 of `asset_path`. Returns `Ok(true)` on match, `Ok(false)` on mismatch,
+/// or `Err` on fetch/parse errors.
 pub fn verify_asset_checksum(
     asset_path: &std::path::Path,
     asset_name: &str,
@@ -160,20 +143,14 @@ mod tests {
     fn test_find_asset_matches_by_name() {
         let release = GitHubRelease {
             tag_name: "v0.1.0".to_string(),
-            name: Some("Release v0.1.0".to_string()),
-            draft: false,
-            prerelease: false,
-            published_at: Some("2026-01-01T00:00:00Z".to_string()),
             assets: vec![
                 GitHubReleaseAsset {
                     name: "rgt-v0.1.0-aarch64-apple-darwin.tar.gz".to_string(),
                     browser_download_url: "https://example.com/dl1".to_string(),
-                    size: 5000000,
                 },
                 GitHubReleaseAsset {
                     name: "rgt-v0.1.0-x86_64-unknown-linux-gnu.tar.gz".to_string(),
                     browser_download_url: "https://example.com/dl2".to_string(),
-                    size: 6000000,
                 },
             ],
         };
@@ -192,14 +169,9 @@ mod tests {
     fn test_find_asset_returns_none_for_missing_platform() {
         let release = GitHubRelease {
             tag_name: "v0.1.0".to_string(),
-            name: None,
-            draft: false,
-            prerelease: false,
-            published_at: None,
             assets: vec![GitHubReleaseAsset {
                 name: "rgt-v0.1.0-aarch64-apple-darwin.tar.gz".to_string(),
                 browser_download_url: "https://example.com/dl1".to_string(),
-                size: 5000000,
             }],
         };
 
@@ -216,20 +188,14 @@ mod tests {
     fn test_find_checksum_asset() {
         let release = GitHubRelease {
             tag_name: "v0.1.0".to_string(),
-            name: None,
-            draft: false,
-            prerelease: false,
-            published_at: None,
             assets: vec![
                 GitHubReleaseAsset {
                     name: "checksums.txt".to_string(),
                     browser_download_url: "https://example.com/checksums.txt".to_string(),
-                    size: 1024,
                 },
                 GitHubReleaseAsset {
                     name: "rgt-v0.1.0-x86_64-linux.tar.gz".to_string(),
                     browser_download_url: "https://example.com/dl".to_string(),
-                    size: 5000000,
                 },
             ],
         };

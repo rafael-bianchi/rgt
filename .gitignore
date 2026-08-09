@@ -21,3 +21,9 @@ release/
 # OS & Editor
 .DS_Store
 Thumbs.db
+
+# Development tooling
+.kilo/
+.kilocode/
+.specify/
+.agents/

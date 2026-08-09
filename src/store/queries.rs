@@ -2,6 +2,7 @@ use crate::types::{DerivationEdge, NodeType, SourceDocument, TrackedNode, ValueD
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, Connection, Result};
 
+/// Inserts or updates a source document row by file path. Returns the upserted document.
 pub fn upsert_source_document(
     conn: &Connection,
     file_path: &str,
@@ -25,6 +26,7 @@ pub fn upsert_source_document(
         .ok_or_else(|| rusqlite::Error::QueryReturnedNoRows)
 }
 
+/// Fetches a source document by file path.
 pub fn get_source_document_by_path(
     conn: &Connection,
     file_path: &str,
@@ -54,6 +56,7 @@ pub fn get_source_document_by_path(
     }
 }
 
+/// Inserts a tracked node (root or derived) via idempotent upsert by node ID.
 pub fn insert_tracked_node(conn: &Connection, node: &TrackedNode) -> Result<()> {
     let (num_val, date_val, dur_val) = match &node.value {
         ValueData::Number(n) => (Some(*n), None, None),
@@ -89,6 +92,7 @@ pub fn insert_tracked_node(conn: &Connection, node: &TrackedNode) -> Result<()> 
     Ok(())
 }
 
+/// Fetches a tracked node by ID, if it exists.
 pub fn get_tracked_node(conn: &Connection, id: &str) -> Result<Option<TrackedNode>> {
     let mut stmt = conn.prepare(
         "SELECT id, node_type, value_kind, number_val, date_val, duration_secs,
@@ -142,6 +146,7 @@ pub fn get_tracked_node(conn: &Connection, id: &str) -> Result<Option<TrackedNod
     }
 }
 
+/// Inserts a derivation edge between a parent node and a derived node.
 pub fn insert_derivation_edge(
     conn: &Connection,
     parent_id: &str,
@@ -158,6 +163,7 @@ pub fn insert_derivation_edge(
     Ok(())
 }
 
+/// Lists the direct children (dependent nodes) of a parent node.
 pub fn get_child_edges(conn: &Connection, parent_id: &str) -> Result<Vec<DerivationEdge>> {
     let mut stmt = conn.prepare(
         "SELECT id, parent_node_id, child_node_id, operation_type, expression
@@ -181,6 +187,7 @@ pub fn get_child_edges(conn: &Connection, parent_id: &str) -> Result<Vec<Derivat
     Ok(edges)
 }
 
+/// Lists the direct parents (dependencies) of a derived node.
 pub fn get_parent_edges(conn: &Connection, child_id: &str) -> Result<Vec<DerivationEdge>> {
     let mut stmt = conn.prepare(
         "SELECT id, parent_node_id, child_node_id, operation_type, expression
@@ -204,6 +211,7 @@ pub fn get_parent_edges(conn: &Connection, child_id: &str) -> Result<Vec<Derivat
     Ok(edges)
 }
 
+/// Marks a node as stale with the given reason.
 pub fn mark_node_stale(conn: &Connection, node_id: &str, reason: &str) -> Result<()> {
     let now = Utc::now().to_rfc3339();
     conn.execute(
@@ -213,6 +221,7 @@ pub fn mark_node_stale(conn: &Connection, node_id: &str, reason: &str) -> Result
     Ok(())
 }
 
+/// Lists all nodes currently marked stale.
 pub fn list_stale_nodes(conn: &Connection) -> Result<Vec<TrackedNode>> {
     let mut stmt = conn.prepare("SELECT id FROM tracked_nodes WHERE is_stale = 1")?;
     let rows = stmt.query_map([], |row| {
@@ -230,6 +239,7 @@ pub fn list_stale_nodes(conn: &Connection) -> Result<Vec<TrackedNode>> {
     Ok(nodes)
 }
 
+/// Lists all tracked nodes in the graph.
 pub fn list_all_nodes(conn: &Connection) -> Result<Vec<TrackedNode>> {
     let mut stmt = conn.prepare("SELECT id FROM tracked_nodes")?;
     let rows = stmt.query_map([], |row| {
@@ -247,6 +257,7 @@ pub fn list_all_nodes(conn: &Connection) -> Result<Vec<TrackedNode>> {
     Ok(nodes)
 }
 
+/// Lists all nodes that were read from a given source document.
 pub fn list_nodes_by_source_doc(conn: &Connection, source_doc_id: i64) -> Result<Vec<TrackedNode>> {
     let mut stmt = conn.prepare("SELECT id FROM tracked_nodes WHERE source_doc_id = ?1")?;
     let rows = stmt.query_map(params![source_doc_id], |row| {

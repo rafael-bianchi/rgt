@@ -1,6 +1,8 @@
 use crate::store::queries::{get_child_edges, list_all_nodes};
 use crate::store::DbStore;
 
+/// Executes `rgt graph [-f text|mermaid|dot]`: exports the provenance DAG in
+/// the requested format.
 pub fn execute_graph(format: &str) -> Result<(), String> {
     let db = DbStore::open_in_project(".").map_err(|e| format!("Failed to open DB: {}", e))?;
     let conn = db.conn();

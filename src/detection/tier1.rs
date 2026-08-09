@@ -7,6 +7,9 @@ pub struct MetadataSnapshot {
     pub file_size: u64,
 }
 
+/// Captures a file's metadata snapshot (mtime in nanoseconds + size).
+///
+/// Uses nanosecond mtime on Unix; falls back to `modified()` duration on other platforms.
 pub fn get_metadata_snapshot<P: AsRef<Path>>(path: P) -> io::Result<MetadataSnapshot> {
     let meta = fs::metadata(path)?;
 
@@ -31,6 +34,7 @@ pub fn get_metadata_snapshot<P: AsRef<Path>>(path: P) -> io::Result<MetadataSnap
     })
 }
 
+/// Tier 1 change check: returns `true` if mtime or size differs from the stored values.
 pub fn tier1_check_changed(
     current: &MetadataSnapshot,
     stored_mtime_nsec: i64,

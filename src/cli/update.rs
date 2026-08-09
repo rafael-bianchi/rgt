@@ -2,6 +2,8 @@ use crate::updater::{atomic::AtomicReplace, github, platform::Platform};
 use std::env;
 use std::path::PathBuf;
 
+/// Executes `rgt update`: checks GitHub Releases for a newer version and performs
+/// an atomic in-place binary upgrade (or just checks with `--check`).
 pub fn execute_update(check_only: bool, yes: bool, version: Option<String>) -> Result<(), String> {
     let current_version = env!("CARGO_PKG_VERSION");
     let token = env::var("GITHUB_TOKEN").ok();

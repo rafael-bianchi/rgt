@@ -445,6 +445,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "evalexpr"
+version = "13.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25929004897f2bbab309121a60400d36992f6d911d09baa6c172f6cc55706601"
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1082,12 +1088,13 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rgt"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "chrono",
  "clap",
  "dirs",
+ "evalexpr",
  "flate2",
  "petgraph",
  "regex",
