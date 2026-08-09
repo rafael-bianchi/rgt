@@ -92,7 +92,7 @@ mod tests {
         assert!(
             !hooks_path.exists() || {
                 let hooks = read_json(&hooks_path);
-                !hooks.get("rgt_hook").is_some()
+                hooks.get("rgt_hook").is_none()
             }
         );
     }
