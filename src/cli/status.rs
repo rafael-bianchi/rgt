@@ -1,4 +1,4 @@
-use crate::graph::InvalidationCascade;
+use crate::graph::invalidation::InvalidationCascade;
 use crate::store::queries::{list_all_nodes, list_stale_nodes};
 use crate::store::DbStore;
 use serde_json::json;

@@ -37,22 +37,19 @@ mod tests {
         let output = Command::new("cargo")
             .args(["run", "--", "update", "--check"])
             .output();
-        match output {
-            Ok(out) => {
-                let combined = format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&out.stdout),
-                    String::from_utf8_lossy(&out.stderr)
-                );
-                assert!(
-                    combined.contains("up to date")
-                        || combined.contains("available")
-                        || combined.contains("rate limit")
-                        || combined.contains("Failed")
-                        || combined.contains("error")
-                );
-            }
-            Err(_) => {}
+        if let Ok(out) = output {
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                combined.contains("up to date")
+                    || combined.contains("available")
+                    || combined.contains("rate limit")
+                    || combined.contains("Failed")
+                    || combined.contains("error")
+            );
         }
     }
 

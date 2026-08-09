@@ -1,4 +1,4 @@
-use crate::store::queries::{get_parent_edges, get_tracked_node, list_stale_nodes};
+use crate::store::queries::{get_parent_edges, get_tracked_node};
 use crate::store::DbStore;
 use serde_json::json;
 use std::collections::{HashSet, VecDeque};
@@ -65,25 +65,5 @@ pub fn query_provenance(node_id: &str) -> Result<serde_json::Value, String> {
         "is_stale": is_stale,
         "total_ancestors": total_ancestors,
         "lineage_steps": lineage_steps
-    }))
-}
-
-/// Lists all nodes currently marked stale in the graph.
-pub fn list_stale_nodes_json() -> Result<serde_json::Value, String> {
-    let db = DbStore::open_in_project(".").map_err(|e| e.to_string())?;
-    let stale_nodes = list_stale_nodes(db.conn()).map_err(|e| e.to_string())?;
-
-    let mut list = Vec::new();
-    for node in stale_nodes {
-        list.push(json!({
-            "node_id": node.id,
-            "value_kind": node.value_kind.to_string(),
-            "value": node.value.to_string_repr(),
-            "stale_reason": node.stale_reason,
-        }));
-    }
-
-    Ok(json!({
-        "stale_nodes": list
     }))
 }

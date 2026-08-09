@@ -32,9 +32,9 @@ pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
     let hash =
         compute_blake3_hash(path_obj).map_err(|e| format!("failed to compute hash: {}", e))?;
 
-    let db =
+    let mut db =
         DbStore::open_in_project(".").map_err(|e| format!("failed to open database: {}", e))?;
-    let conn = db.conn();
+    let conn = db.conn_mut();
 
     let doc = upsert_source_document(conn, file, meta.mtime_nsec, meta.file_size, &hash)
         .map_err(|e| format!("failed to upsert source document: {}", e))?;
@@ -49,6 +49,10 @@ pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
 
     let count = extracted.len();
     let now = Utc::now();
+
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("failed to begin transaction: {}", e))?;
 
     for ext in &extracted {
         let node_id = TrackedNode::generate_root_id(file, ext.line_number, &ext.value);
@@ -65,8 +69,11 @@ pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
             updated_at: now,
         };
 
-        insert_tracked_node(conn, &node).map_err(|e| format!("failed to insert node: {}", e))?;
+        insert_tracked_node(&tx, &node).map_err(|e| format!("failed to insert node: {}", e))?;
     }
+
+    tx.commit()
+        .map_err(|e| format!("failed to commit transaction: {}", e))?;
 
     if skipped {
         eprintln!(
