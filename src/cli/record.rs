@@ -69,8 +69,7 @@ pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
             updated_at: now,
         };
 
-        insert_tracked_node(&tx, &node)
-            .map_err(|e| format!("failed to insert node: {}", e))?;
+        insert_tracked_node(&tx, &node).map_err(|e| format!("failed to insert node: {}", e))?;
     }
 
     tx.commit()
