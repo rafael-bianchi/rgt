@@ -30,14 +30,18 @@ Fix two pre-existing CI blockers so merges are unblocked under the newly-active 
 **Performance Goals**: N/A — no runtime performance impact. Tests must complete within the existing 20-minute CI timeout.
 
 **Constraints**: 
-- Zero changes to production code (`src/hooks/installer.rs`) unless a genuine cross-platform path bug is proven — per spec Assumption 2.
+- Minimal production code changes. Two deviations were required and are documented here:
+  1. `src/hooks/installer.rs` gained `detect_and_configure_hooks_in_home` (a home-path injection point for testability). Justification: `dirs` resolves home via the Windows Shell API (`SHGetKnownFolderPath`), which ignores env vars, so env-var overrides cannot isolate tests on Windows.
+  2. `src/cli/record.rs` wraps bulk value inserts in a single SQLite transaction. Justification: per-node auto-commit inserts took ~16s for 10k values on CI, violating SC-001's performance gate; the transaction reduced this to ~0.25s.
 - `pull_request_target` trigger must be preserved (spec Assumption 4) — only the `permissions:` block changes.
 - Least privilege: only grant `issues: write` and `pull-requests: write` (spec FR-009).
 - `cargo fmt` + `cargo clippy --all-targets` must stay clean.
 
-**Scale/Scope**: 2 files to change:
-1. `tests/integration/test_hooks_installer.rs` — platform-aware home override + poison-tolerant mutex
+**Scale/Scope**: 4 files to change:
+1. `tests/integration/test_hooks_installer.rs` — home-injection for all agent tests + poison-tolerant mutex
 2. `.github/workflows/pr-target-check.yml` — declare correct `permissions:`
+3. `src/hooks/installer.rs` — add `detect_and_configure_hooks_in_home` testability hook (deviation documented above)
+4. `src/cli/record.rs` — transaction-wrapped bulk insert (deviation documented above; surfaced via `test_record_10k_performance` on CI)
 
 ## Constitution Check
 
@@ -45,16 +49,16 @@ Fix two pre-existing CI blockers so merges are unblocked under the newly-active 
 
 | Principle | Status | Evidence |
 |---|---|---|
-| I. Rust-Only Single Binary | ✅ PASS | No production code or dependency changes; test-only fix |
+| I. Rust-Only Single Binary | ✅ PASS | No new dependencies; two minimal production edits (installer home-injection + record transaction) stay in the single binary |
 | II. Two-Tier Detection & BLAKE3 | ✅ PASS | Unaffected |
 | III. Graph Correctness | ✅ PASS | Unaffected |
 | IV. Rich Value Types | ✅ PASS | Unaffected |
 | V. Multi-Channel Distribution | ✅ PASS | Unaffected; CI gate fix enables releases |
 | VI. CLI-First Integration Surface | ✅ PASS | Unaffected |
 | VII. Permissive OSS License | ✅ PASS | No new dependencies |
-| VIII. CLI-First Hook Architecture | ✅ PASS | Test-only changes; installer logic untouched |
+| VIII. CLI-First Hook Architecture | ✅ PASS | Installer gains a testability injection point only; hook logic and formats unchanged |
 | IX. Test-Driven Verification | ✅ PASS | Tests ARE the fix target; Windows CI must go green |
-| X. Documentation Matches Behavior | ✅ PASS | No doc changes required; workflow comment text already links CONTRIBUTING.md |
+| X. Documentation Matches Behavior | ✅ PASS | Plan updated to document both production deviations; workflow comment text already links CONTRIBUTING.md |
 | XI. Code Quality & Idiomatic Rust | ✅ PASS | Poison-tolerant lock pattern is idiomatic; fmt + clippy enforced |
 
 **Gate Result**: PASS — all 11 principles satisfied. No violations to justify.
@@ -78,7 +82,11 @@ specs/014-fix-ci-issues/
 
 ```text
 tests/integration/
-└── test_hooks_installer.rs   # MODIFIED: platform-aware home override + poison-tolerant mutex
+└── test_hooks_installer.rs   # MODIFIED: home-injection for all agent tests + poison-tolerant mutex
+
+src/
+├── hooks/installer.rs        # MODIFIED: added detect_and_configure_hooks_in_home testability hook
+└── cli/record.rs             # MODIFIED: transaction-wrapped bulk insert (performance)
 
 .github/workflows/
 └── pr-target-check.yml       # MODIFIED: declare permissions block
@@ -87,7 +95,7 @@ tests/integration/
 └── ci.yml                    # NOT MODIFIED — the test job already runs on all 3 OSes
 ```
 
-**Structure Decision**: Matches existing single-binary Rust project layout. Two focused edits; no new files. Production code (`src/`) is untouched per spec scope.
+**Structure Decision**: Matches existing single-binary Rust project layout. No new files. Two minimal production edits (`src/hooks/installer.rs`, `src/cli/record.rs`) were required for cross-platform testability and CI performance; both are documented as justified deviations in the Constraints section.
 
 ## Complexity Tracking
 

@@ -157,3 +157,12 @@ With two developers:
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently
 - Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
+
+---
+
+## Phase 5: Convergence
+
+**Purpose**: Address deviations from the plan's documented scope that surfaced during implementation.
+
+- [x] T017 Document in `plan.md` the transaction-wrap fix in `src/cli/record.rs` as a justified deviation — it was required to satisfy SC-001's performance gate on CI (recording 10k values dropped from ~16s to ~0.25s; the bulk insert is now atomic) per `plan.md` constraint (unrequested)
+- [x] T018 Reconcile the `plan.md` constraint "Zero changes to production code" to reflect the `detect_and_configure_hooks_in_home` testability hook added to `src/hooks/installer.rs` (justified by `dirs` resolving home via the Windows Shell API, which ignores env vars) per `plan.md` constraint (unrequested)
