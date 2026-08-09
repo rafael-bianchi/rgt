@@ -156,7 +156,7 @@ async fn main() {
             expression,
             result,
         } => {
-            rgt::verify::run_verify_cli(&parents, &operation, expression.as_deref(), result);
+            crate::verify::run_verify_cli(&parents, &operation, expression.as_deref(), result);
             Ok(())
         }
         Commands::Record { file, stdin } => cli::execute_record(&file, stdin),

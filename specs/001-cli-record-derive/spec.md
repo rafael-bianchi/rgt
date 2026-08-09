@@ -106,7 +106,7 @@ When `rgt init --agent codex` runs, the AGENTS.md rules file includes clear inst
 
 ### Measurable Outcomes
 
-- **SC-001**: A developer can record values from a data file and see them in `rgt status` within 1 second of running `rgt record`.
+- **SC-001**: A developer can record values from a data file and see them in `rgt status` within 1 second of running `rgt record`. Bulk inserts are wrapped in a single transaction; the CI regression threshold is 8 seconds — set to catch a per-node auto-commit regression (~16s on CI) with headroom for shared-runner variance (~2.8s observed on Windows CI).
 - **SC-002**: An incorrect derivation is rejected 100% of the time with a clear error message — no false positives (incorrect values inserted) or false negatives (correct values rejected).
 - **SC-003**: `rgt derive` reuses the existing expression and date-diff verification logic rather than duplicating it, ensuring consistent behavior between the passive hook path and the active CLI path.
 - **SC-004**: An AI coding agent can perform a complete provenance workflow (record roots, verify and record a derivation, check staleness after modification) without any automatic hook interception, using only `rgt record`, `rgt derive`, and `rgt status`.
