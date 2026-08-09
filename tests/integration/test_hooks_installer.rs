@@ -7,8 +7,15 @@ mod tests {
 
     static CWD_MUTEX: Mutex<()> = Mutex::new(());
 
+    fn set_home(dir: &std::path::Path) {
+        #[cfg(target_os = "windows")]
+        std::env::set_var("USERPROFILE", dir);
+        #[cfg(not(target_os = "windows"))]
+        std::env::set_var("HOME", dir);
+    }
+
     fn set_cwd(dir: &std::path::Path) -> std::sync::MutexGuard<'static, ()> {
-        let guard = CWD_MUTEX.lock().unwrap();
+        let guard = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_current_dir(dir).unwrap();
         guard
     }
@@ -23,7 +30,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        std::env::set_var("HOME", dir.path().to_str().unwrap());
+        set_home(dir.path());
         let result = detect_and_configure_hooks(true, true, Some("claude-code")).unwrap();
         assert_eq!(result.len(), 1);
         assert!(result[0].contains("Claude Code"));
@@ -54,7 +61,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        std::env::set_var("HOME", dir.path().to_str().unwrap());
+        set_home(dir.path());
         let result = detect_and_configure_hooks(true, true, Some("cursor")).unwrap();
         assert_eq!(result.len(), 1);
         assert!(result[0].contains("Cursor"));
@@ -76,7 +83,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        std::env::set_var("HOME", dir.path().to_str().unwrap());
+        set_home(dir.path());
         let result = detect_and_configure_hooks(true, true, Some("codex")).unwrap();
         assert_eq!(result.len(), 1);
         assert!(result[0].contains("Codex CLI"));
@@ -101,7 +108,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        std::env::set_var("HOME", dir.path().to_str().unwrap());
+        set_home(dir.path());
         let result = detect_and_configure_hooks(true, true, Some("windsurf")).unwrap();
         assert_eq!(result.len(), 1);
         assert!(result[0].contains("Windsurf"));
@@ -117,7 +124,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        std::env::set_var("HOME", dir.path().to_str().unwrap());
+        set_home(dir.path());
         let result = detect_and_configure_hooks(true, true, None).unwrap();
         assert_eq!(result.len(), 4);
     }
@@ -127,7 +134,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        std::env::set_var("HOME", dir.path().to_str().unwrap());
+        set_home(dir.path());
 
         // First run: creates hook config
         let result = detect_and_configure_hooks(true, true, Some("claude-code")).unwrap();
@@ -143,7 +150,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        std::env::set_var("HOME", dir.path().to_str().unwrap());
+        set_home(dir.path());
         let result = detect_and_configure_hooks(true, true, Some("nonexistent")).unwrap();
         assert!(result.is_empty());
     }
