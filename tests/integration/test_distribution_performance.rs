@@ -31,19 +31,16 @@ mod tests {
             .output();
         let elapsed = start.elapsed();
 
-        match output {
-            Ok(out) => {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                if stderr.contains("rate limit") || stderr.contains("error") {
-                    return;
-                }
-                assert!(
-                    elapsed.as_secs_f64() < 30.0,
-                    "SC-005: Update check took {:.1}s (including cargo build), expected <30s w/ build",
-                    elapsed.as_secs_f64()
-                );
+        if let Ok(out) = output {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if stderr.contains("rate limit") || stderr.contains("error") {
+                return;
             }
-            Err(_) => {}
+            assert!(
+                elapsed.as_secs_f64() < 30.0,
+                "SC-005: Update check took {:.1}s (including cargo build), expected <30s w/ build",
+                elapsed.as_secs_f64()
+            );
         }
     }
 
