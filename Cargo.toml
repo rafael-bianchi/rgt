@@ -1,6 +1,6 @@
 [package]
 name = "rgt"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["RGT Contributors"]
 description = "Rust Graph Tracker: Numeric and date provenance tracking for LLM coding agents"
@@ -36,6 +36,7 @@ tar = "0.4"
 zip = "2.2"
 walkdir = "2.5"
 tempfile = "3.10"
+evalexpr = "13.1.0"
 
 [dev-dependencies]
 
@@ -52,18 +53,6 @@ name = "test_hooks_contract"
 path = "tests/contract/test_hooks_contract.rs"
 
 [[test]]
-name = "test_mcp_contract"
-path = "tests/contract/test_mcp_contract.rs"
-
-[[test]]
-name = "test_file_invalidation"
-path = "tests/integration/test_file_invalidation.rs"
-
-[[test]]
-name = "test_derivation_chain"
-path = "tests/integration/test_derivation_chain.rs"
-
-[[test]]
 name = "test_quickstart"
 path = "tests/integration/test_quickstart.rs"
 
@@ -72,8 +61,20 @@ name = "test_installer_script"
 path = "tests/integration/test_installer_script.rs"
 
 [[test]]
+name = "test_hooks_installer"
+path = "tests/integration/test_hooks_installer.rs"
+
+[[test]]
 name = "test_update_contract"
 path = "tests/contract/test_update_contract.rs"
+
+[[test]]
+name = "test_record"
+path = "tests/unit/test_record.rs"
+
+[[test]]
+name = "test_cli_record_derive"
+path = "tests/contract/test_cli_record_derive_contract.rs"
 
 [[test]]
 name = "test_distribution_quickstart"

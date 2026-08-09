@@ -1,5 +1,6 @@
 use rusqlite::{Connection, Result};
 
+/// Initializes the SQLite schema (WAL mode, tables, indexes) idempotently.
 pub fn initialize_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "

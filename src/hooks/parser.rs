@@ -27,10 +27,14 @@ pub struct ExtractedValue {
     pub line_number: Option<u32>,
 }
 
+/// Parses a hook event JSON payload from stdin into a structured `HookPayload`.
 pub fn parse_hook_payload(json_str: &str) -> Result<HookPayload, serde_json::Error> {
     serde_json::from_str(json_str)
 }
 
+/// Extracts numeric values and ISO-8601 dates from text content, line by line.
+///
+/// Returns the extracted values with their source line numbers (1-based).
 pub fn extract_values_from_content(content: &str) -> Vec<ExtractedValue> {
     let mut results = Vec::new();
     let iso_date_regex =

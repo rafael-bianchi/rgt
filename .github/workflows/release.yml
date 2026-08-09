@@ -84,7 +84,12 @@ jobs:
 
       - name: Strip binary (Unix)
         if: matrix.suffix == 'tar.gz'
-        run: strip target/${{ matrix.target }}/release/rgt
+        run: |
+          if [ "${{ matrix.cross || '' }}" = "true" ]; then
+            aarch64-linux-gnu-strip target/${{ matrix.target }}/release/rgt
+          else
+            strip target/${{ matrix.target }}/release/rgt
+          fi
 
       - name: Package archive (tar.gz)
         if: matrix.suffix == 'tar.gz'
@@ -208,7 +213,12 @@ jobs:
     needs: release
     if: ${{ !inputs.prerelease }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Get version
         id: version
         run: |
@@ -217,14 +227,49 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Dispatch Homebrew tap update
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          repository: rafael-bianchi/homebrew-tap
-          event-type: rgt-release
-          client-payload: |
-            {
-              "version": "${{ steps.version.outputs.version }}",
-              "tag": "${{ steps.version.outputs.tag }}"
-            }
+      - name: Compute SHA256 for aarch64-apple-darwin
+        id: sha256_aarch64_darwin
+        run: |
+          URL="https://github.com/rafael-bianchi/rgt/releases/download/${{ steps.version.outputs.tag }}/rgt-${{ steps.version.outputs.tag }}-aarch64-apple-darwin.tar.gz"
+          curl -fsSL "$URL" -o /tmp/rgt-aarch64-darwin.tar.gz
+          SHA=$(sha256sum /tmp/rgt-aarch64-darwin.tar.gz | cut -d' ' -f1)
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+
+      - name: Compute SHA256 for x86_64-apple-darwin
+        id: sha256_x86_64_darwin
+        run: |
+          URL="https://github.com/rafael-bianchi/rgt/releases/download/${{ steps.version.outputs.tag }}/rgt-${{ steps.version.outputs.tag }}-x86_64-apple-darwin.tar.gz"
+          curl -fsSL "$URL" -o /tmp/rgt-x86_64-darwin.tar.gz
+          SHA=$(sha256sum /tmp/rgt-x86_64-darwin.tar.gz | cut -d' ' -f1)
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+
+      - name: Compute SHA256 for x86_64-unknown-linux-musl
+        id: sha256_x86_64_linux
+        run: |
+          URL="https://github.com/rafael-bianchi/rgt/releases/download/${{ steps.version.outputs.tag }}/rgt-${{ steps.version.outputs.tag }}-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSL "$URL" -o /tmp/rgt-x86_64-linux.tar.gz
+          SHA=$(sha256sum /tmp/rgt-x86_64-linux.tar.gz | cut -d' ' -f1)
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+
+      - name: Compute SHA256 for aarch64-unknown-linux-gnu
+        id: sha256_aarch64_linux
+        run: |
+          URL="https://github.com/rafael-bianchi/rgt/releases/download/${{ steps.version.outputs.tag }}/rgt-${{ steps.version.outputs.tag }}-aarch64-unknown-linux-gnu.tar.gz"
+          curl -fsSL "$URL" -o /tmp/rgt-aarch64-linux.tar.gz
+          SHA=$(sha256sum /tmp/rgt-aarch64-linux.tar.gz | cut -d' ' -f1)
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+
+      - name: Update Formula/rgt.rb with SHA256 values
+        run: |
+          sed -i "s/REPLACE_WITH_SHA256_AARCH64_DARWIN/${{ steps.sha256_aarch64_darwin.outputs.sha }}/" Formula/rgt.rb
+          sed -i "s/REPLACE_WITH_SHA256_X86_64_DARWIN/${{ steps.sha256_x86_64_darwin.outputs.sha }}/" Formula/rgt.rb
+          sed -i "s/REPLACE_WITH_SHA256_X86_64_LINUX/${{ steps.sha256_x86_64_linux.outputs.sha }}/" Formula/rgt.rb
+          sed -i "s/REPLACE_WITH_SHA256_AARCH64_LINUX/${{ steps.sha256_aarch64_linux.outputs.sha }}/" Formula/rgt.rb
+
+      - name: Commit updated formula
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/rgt.rb
+          git commit -m "chore: update Homebrew SHA256s for ${{ steps.version.outputs.tag }}" || echo "No changes to commit"
+          git push
