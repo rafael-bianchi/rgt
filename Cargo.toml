@@ -1,6 +1,6 @@
 [package]
 name = "rgt"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["RGT Contributors"]
 description = "Rust Graph Tracker: Numeric and date provenance tracking for LLM coding agents"

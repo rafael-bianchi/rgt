@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/rafael-bianchi/rgt/compare/v0.2.0...v0.3.0) (2026-08-09)
+
+
+### Features
+
+* add derivation verification CLI subcommand ([d71f8bf](https://github.com/rafael-bianchi/rgt/commit/d71f8bfd43365767263690a817c6427da0e54ce9))
+* add derivation verification CLI subcommand ([e8b60db](https://github.com/rafael-bianchi/rgt/commit/e8b60db1063b0eee21d4230ae86a0ac2e33600a7))
+* add rgt record and rgt derive CLI subcommands ([79764d8](https://github.com/rafael-bianchi/rgt/commit/79764d88bd326abdc2f5594295b9ebe707ebcdd6))
+* remove MCP server, replace with CLI-only active surface ([bb3c1ff](https://github.com/rafael-bianchi/rgt/commit/bb3c1ff4fc07abecb4d3c952fe29289eb05e0343))
+* remove MCP server, replace with CLI-only active surface (RTK alignment) ([aaa4c73](https://github.com/rafael-bianchi/rgt/commit/aaa4c73e032349e9f52859a0c72fb02ab5cbd479))
+
 ## 0.2.0 (2026-08-03)
 
 
