@@ -9,6 +9,10 @@ pub struct ChecksumEntry {
     pub filename: String,
 }
 
+/// Parses a `checksums.txt` file into structured entries.
+///
+/// Each line is expected in `<64-hex-hash>  <filename>` format. Malformed or
+/// empty lines are skipped.
 pub fn parse_checksums(content: &str) -> Vec<ChecksumEntry> {
     content
         .lines()
@@ -29,6 +33,7 @@ pub fn parse_checksums(content: &str) -> Vec<ChecksumEntry> {
         .collect()
 }
 
+/// Finds a checksum entry by filename.
 pub fn find_checksum<'a>(
     entries: &'a [ChecksumEntry],
     filename: &str,
@@ -36,6 +41,7 @@ pub fn find_checksum<'a>(
     entries.iter().find(|e| e.filename == filename)
 }
 
+/// Computes the SHA-256 hex digest of a file's contents.
 pub fn compute_sha256(path: &Path) -> io::Result<String> {
     let data = fs::read(path)?;
     let mut hasher = Sha256::new();
@@ -44,6 +50,7 @@ pub fn compute_sha256(path: &Path) -> io::Result<String> {
     Ok(format!("{:x}", result))
 }
 
+/// Verifies that a file's SHA-256 digest matches the expected hash (case-insensitive).
 pub fn verify_checksum(path: &Path, expected_hash: &str) -> io::Result<bool> {
     let actual = compute_sha256(path)?;
     Ok(actual == expected_hash.to_lowercase())

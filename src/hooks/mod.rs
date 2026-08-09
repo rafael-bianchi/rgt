@@ -10,6 +10,9 @@ use chrono::Utc;
 use std::io::{self, Read};
 use std::path::Path;
 
+/// Processes a passive hook event (PreToolUse/PostToolUse) by reading tool event
+/// JSON from stdin, extracting numeric/date values from the payload, and recording
+/// them to the provenance graph. Fails open (never blocks the agent).
 pub fn handle_passive_hook_event(_event_type: &str) -> io::Result<()> {
     let mut stdin_str = String::new();
     io::stdin().read_to_string(&mut stdin_str)?;
