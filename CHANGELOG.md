@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/rafael-bianchi/rgt/compare/v0.3.0...v0.3.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* promote develop to main via release-please ([86f5db2](https://github.com/rafael-bianchi/rgt/commit/86f5db25a4d71b538efe6abf91765e04153dc00d))
+* promote develop to main via release-please ([820cab3](https://github.com/rafael-bianchi/rgt/commit/820cab3c7ace7d82d4c67d9897f71b8f0ff5a4e8))
+
 ## [0.3.0](https://github.com/rafael-bianchi/rgt/compare/v0.2.0...v0.3.0) (2026-08-09)
 
 
