@@ -17,8 +17,7 @@ jobs:
   pre-release:
     name: Pre-release
     if: >-
-      github.ref == 'refs/heads/develop'
-      || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')
+      github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
