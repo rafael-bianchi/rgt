@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.2](https://github.com/rafael-bianchi/rgt/compare/v0.3.1...v0.3.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* correct CD release automation to promote develop to main ([fb24e42](https://github.com/rafael-bianchi/rgt/commit/fb24e42d63adccf6e110077f523e4593a7a83b90))
+* correct CD release automation to promote develop to main ([59ef5da](https://github.com/rafael-bianchi/rgt/commit/59ef5da28e9c4bb1b100fda02151e0acd7b10139))
+
 ## [0.3.1](https://github.com/rafael-bianchi/rgt/compare/v0.3.0...v0.3.1) (2026-08-09)
 
 
