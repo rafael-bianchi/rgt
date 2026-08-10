@@ -13,6 +13,9 @@ const GITHUB_API_RELEASES_TAG: &str =
 pub struct GitHubReleaseAsset {
     pub name: String,
     pub browser_download_url: String,
+    /// API asset URL (e.g. `https://api.github.com/repos/OWNER/REPO/releases/assets/{id}`).
+    /// Required for authenticated downloads from private repositories.
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -91,13 +94,32 @@ pub fn find_checksum_asset(release: &GitHubRelease) -> Option<&GitHubReleaseAsse
 }
 
 /// Downloads a file from the given URL to the destination path.
-pub fn download_asset(url: &str, dest: &std::path::Path) -> Result<(), String> {
+///
+/// When a token is supplied and an API asset URL is available, the download uses the
+/// API endpoint (with `Accept: application/octet-stream`), which works for private
+/// repositories. Otherwise it falls back to the browser download URL.
+pub fn download_asset(
+    url: &str,
+    api_url: Option<&str>,
+    dest: &std::path::Path,
+    token: Option<&str>,
+) -> Result<(), String> {
     let agent = build_agent();
-    let response = agent
-        .get(url)
-        .set("User-Agent", "rgt-updater/1.0")
-        .call()
-        .map_err(|e| format!("Download failed: {}", e))?;
+    let req = if let (Some(t), Some(api)) = (token, api_url) {
+        agent
+            .get(api)
+            .set("User-Agent", "rgt-updater/1.0")
+            .set("Accept", "application/octet-stream")
+            .set("Authorization", &format!("Bearer {}", t))
+    } else {
+        let mut r = agent.get(url).set("User-Agent", "rgt-updater/1.0");
+        if let Some(t) = token {
+            r = r.set("Authorization", &format!("Bearer {}", t));
+        }
+        r
+    };
+
+    let response = req.call().map_err(|e| format!("Download failed: {}", e))?;
 
     let mut reader = response.into_reader();
     let mut file = std::fs::File::create(dest).map_err(|e| format!("Cannot create file: {}", e))?;
@@ -115,11 +137,25 @@ pub fn verify_asset_checksum(
     asset_path: &std::path::Path,
     asset_name: &str,
     checksum_url: &str,
+    checksum_api_url: Option<&str>,
+    token: Option<&str>,
 ) -> Result<bool, String> {
     let agent = build_agent();
-    let response = agent
-        .get(checksum_url)
-        .set("User-Agent", "rgt-updater/1.0")
+    let req = if let (Some(t), Some(api)) = (token, checksum_api_url) {
+        agent
+            .get(api)
+            .set("User-Agent", "rgt-updater/1.0")
+            .set("Accept", "application/octet-stream")
+            .set("Authorization", &format!("Bearer {}", t))
+    } else {
+        let mut r = agent.get(checksum_url).set("User-Agent", "rgt-updater/1.0");
+        if let Some(t) = token {
+            r = r.set("Authorization", &format!("Bearer {}", t));
+        }
+        r
+    };
+
+    let response = req
         .call()
         .map_err(|e| format!("Checksum fetch failed: {}", e))?;
 
@@ -147,10 +183,12 @@ mod tests {
                 GitHubReleaseAsset {
                     name: "rgt-v0.1.0-aarch64-apple-darwin.tar.gz".to_string(),
                     browser_download_url: "https://example.com/dl1".to_string(),
+                    url: None,
                 },
                 GitHubReleaseAsset {
                     name: "rgt-v0.1.0-x86_64-unknown-linux-gnu.tar.gz".to_string(),
                     browser_download_url: "https://example.com/dl2".to_string(),
+                    url: None,
                 },
             ],
         };
@@ -172,6 +210,7 @@ mod tests {
             assets: vec![GitHubReleaseAsset {
                 name: "rgt-v0.1.0-aarch64-apple-darwin.tar.gz".to_string(),
                 browser_download_url: "https://example.com/dl1".to_string(),
+                url: None,
             }],
         };
 
@@ -192,10 +231,12 @@ mod tests {
                 GitHubReleaseAsset {
                     name: "checksums.txt".to_string(),
                     browser_download_url: "https://example.com/checksums.txt".to_string(),
+                    url: None,
                 },
                 GitHubReleaseAsset {
                     name: "rgt-v0.1.0-x86_64-linux.tar.gz".to_string(),
                     browser_download_url: "https://example.com/dl".to_string(),
+                    url: None,
                 },
             ],
         };

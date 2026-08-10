@@ -72,7 +72,12 @@ pub fn execute_update(check_only: bool, yes: bool, version: Option<String>) -> R
     let archive_path = tmp_dir.path().join(&asset.name);
 
     println!("Downloading {}...", asset.name);
-    github::download_asset(&asset.browser_download_url, &archive_path)?;
+    github::download_asset(
+        &asset.browser_download_url,
+        asset.url.as_deref(),
+        &archive_path,
+        token.as_deref(),
+    )?;
 
     if let Some(checksum_asset) = github::find_checksum_asset(&release) {
         println!("Verifying SHA-256 checksum...");
@@ -80,6 +85,8 @@ pub fn execute_update(check_only: bool, yes: bool, version: Option<String>) -> R
             &archive_path,
             &asset.name,
             &checksum_asset.browser_download_url,
+            checksum_asset.url.as_deref(),
+            token.as_deref(),
         )?;
         if !valid {
             return Err("Checksum verification FAILED. Aborting update.".to_string());

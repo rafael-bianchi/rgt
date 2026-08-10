@@ -8,9 +8,6 @@ class Rgt < Formula
     if Hardware::CPU.arm?
       url "#{homepage}/releases/download/v#{version}/rgt-v#{version}-aarch64-apple-darwin.tar.gz"
       sha256 "REPLACE_WITH_SHA256_AARCH64_DARWIN"
-    else
-      url "#{homepage}/releases/download/v#{version}/rgt-v#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "REPLACE_WITH_SHA256_X86_64_DARWIN"
     end
   end
 
