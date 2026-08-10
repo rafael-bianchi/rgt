@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.1](https://github.com/rafael-bianchi/rgt/compare/v0.3.0...v0.3.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* correct CD release automation to promote develop to main ([fb24e42](https://github.com/rafael-bianchi/rgt/commit/fb24e42d63adccf6e110077f523e4593a7a83b90))
+* correct CD release automation to promote develop to main ([59ef5da](https://github.com/rafael-bianchi/rgt/commit/59ef5da28e9c4bb1b100fda02151e0acd7b10139))
+* inject home dir into hook installer for cross-platform tests ([3bd3a47](https://github.com/rafael-bianchi/rgt/commit/3bd3a47f6706457f8c56eb1f910343fad40e49c8))
+* promote develop to main via release-please ([86f5db2](https://github.com/rafael-bianchi/rgt/commit/86f5db25a4d71b538efe6abf91765e04153dc00d))
+* promote develop to main via release-please ([820cab3](https://github.com/rafael-bianchi/rgt/commit/820cab3c7ace7d82d4c67d9897f71b8f0ff5a4e8))
+* relax flaky performance test threshold for CI runners ([7514c5b](https://github.com/rafael-bianchi/rgt/commit/7514c5bddc674d7ff128de1403b43ad132d45893))
+* repair Windows hook installer tests and PR target check permissions ([fa340f1](https://github.com/rafael-bianchi/rgt/commit/fa340f19f0136b301f482b216ff06ea66af15531))
+* repair Windows hook installer tests and PR target check permissions ([417a9e4](https://github.com/rafael-bianchi/rgt/commit/417a9e4d84407a764f430b5455473fac22c695f4))
+* wrap rgt record bulk inserts in a single transaction ([0398a83](https://github.com/rafael-bianchi/rgt/commit/0398a831ca944cde331448933fff2bed1f9e029d))
+
 ## [0.3.0](https://github.com/rafael-bianchi/rgt/compare/v0.2.0...v0.3.0) (2026-08-09)
 
 
