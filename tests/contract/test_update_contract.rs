@@ -13,18 +13,22 @@ mod tests {
                 GitHubReleaseAsset {
                     name: "rgt-v0.2.0-aarch64-apple-darwin.tar.gz".to_string(),
                     browser_download_url: "https://example.com/mac-arm.tar.gz".to_string(),
+                    url: None,
                 },
                 GitHubReleaseAsset {
                     name: "rgt-v0.2.0-x86_64-unknown-linux-musl.tar.gz".to_string(),
                     browser_download_url: "https://example.com/linux-x64.tar.gz".to_string(),
+                    url: None,
                 },
                 GitHubReleaseAsset {
                     name: "rgt-v0.2.0-x86_64-pc-windows-msvc.zip".to_string(),
                     browser_download_url: "https://example.com/win-x64.zip".to_string(),
+                    url: None,
                 },
                 GitHubReleaseAsset {
                     name: "checksums.txt".to_string(),
                     browser_download_url: "https://example.com/checksums.txt".to_string(),
+                    url: None,
                 },
             ],
         };
@@ -78,10 +82,12 @@ mod tests {
                 GitHubReleaseAsset {
                     name: "checksums.txt".to_string(),
                     browser_download_url: "https://example.com/checksums.txt".to_string(),
+                    url: None,
                 },
                 GitHubReleaseAsset {
                     name: "rgt-v0.1.0-x86_64-linux.tar.gz".to_string(),
                     browser_download_url: "https://example.com/dl".to_string(),
+                    url: None,
                 },
             ],
         };
@@ -100,6 +106,7 @@ mod tests {
             assets: vec![GitHubReleaseAsset {
                 name: "rgt-v0.1.0-x86_64-linux.tar.gz".to_string(),
                 browser_download_url: "https://example.com/dl".to_string(),
+                url: None,
             }],
         };
 
