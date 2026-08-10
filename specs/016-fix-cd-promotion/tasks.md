@@ -57,8 +57,8 @@
 
 > **NOTE**: Live-workflow verification (quickstart Scenario 3-4).
 
-- [ ] T007 [US2] Verify auto-promotion: merge a release PR, wait for the CD run, confirm `git rev-list --count origin/main..origin/develop` == 0 and the `promote-to-main` job ran
-- [ ] T008 [US2] Verify no premature promotion: push a conventional commit without merging a release PR; confirm the `promote-to-main` job is skipped and main is unchanged
+- [x] T007 [US2] Verify auto-promotion: merge a release PR, wait for the CD run, confirm `git rev-list --count origin/main..origin/develop` == 0 and the `promote-to-main` job ran
+- [x] T008 [US2] Verify no premature promotion: push a conventional commit without merging a release PR; confirm the `promote-to-main` job is skipped and main is unchanged
 
 ### Implementation for User Story 2
 
@@ -93,10 +93,10 @@
 **Purpose**: Final validation of the end-to-end release cycle and consistency
 
 - [x] T014 Validate the modified `.github/workflows/cd.yml` YAML parses: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/cd.yml'))"` (or Ruby fallback)
-- [ ] T015 Verify CI is green on the fix PR (fmt, clippy, test on all 3 OSes, security, test presence)
-- [ ] T016 Run quickstart.md validation scenarios end-to-end (see `specs/016-fix-cd-promotion/quickstart.md`) — a full release cycle completes with zero manual intervention
-- [ ] T017 [P] Confirm `main` and `develop` are in sync (`git rev-list --count origin/main..origin/develop` == 0) after the validation cycle
-- [ ] T018 Document the final flow state in `specs/016-fix-cd-promotion/research.md` (confirm SC-003: release-please log shows commits > 0)
+- [x] T015 Verify CI is green on the fix PR (fmt, clippy, test on all 3 OSes, security, test presence)
+- [x] T016 Run quickstart.md validation scenarios end-to-end (see `specs/016-fix-cd-promotion/quickstart.md`) — a full release cycle completes with zero manual intervention
+- [x] T017 [P] Confirm `main` and `develop` are in sync (`git rev-list --count origin/main..origin/develop` == 0) after the validation cycle
+- [x] T018 Document the final flow state in `specs/016-fix-cd-promotion/research.md` (confirm SC-003: release-please log shows commits > 0)
 
 **Checkpoint**: Full release cycle validated; main/develop in sync; CI green.
 
