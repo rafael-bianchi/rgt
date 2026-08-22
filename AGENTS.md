@@ -4,6 +4,8 @@
 
 RGT tracks numeric and date provenance for AI coding agents.
 
+RGT configures provenance-capture hooks for all 13 RTK-supported agents: Claude Code (`claude-code`/`claude`), Cursor (`cursor`), Copilot (`copilot`), Gemini CLI (`gemini`), Mistral Vibe (`vibe`), OpenCode (`opencode`), Pi (`pi`), Hermes (`hermes`), Windsurf (`windsurf`), Codex CLI (`codex`), Cline/Roo Code (`cline`/`roo-code`), Antigravity (`antigravity`), and Kilo (`kilocode`/`kilo`). Hooks record data only and never rewrite or block tool commands.
+
 ### Recording Values
 After reading a data file containing numbers or dates, record its values:
 - `rgt record <file>` — extracts and tracks numeric/date values from file content

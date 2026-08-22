@@ -1,5 +1,22 @@
-use crate::hooks::installer::detect_and_configure_hooks;
+use crate::hooks::installer::{detect_and_configure_hooks, resolve_agent_name, valid_agent_names};
 use crate::store::DbStore;
+
+/// Resolves an `--agent` spelling (canonical or alias) to its canonical name.
+/// Unknown names produce an error message listing every valid `--agent` value
+/// (FR-001). The CLI maps this error to exit code 2 (invalid input).
+pub fn resolve_agent_arg(agent: Option<&str>) -> Result<Option<String>, String> {
+    match agent {
+        None => Ok(None),
+        Some(name) => match resolve_agent_name(name) {
+            Some(canonical) => Ok(Some(canonical)),
+            None => Err(format!(
+                "Unknown agent '{}'. Valid --agent values: {}",
+                name,
+                valid_agent_names().join(", ")
+            )),
+        },
+    }
+}
 
 /// Executes `rgt init`: initializes the `.rgt/store.db` database and configures
 /// AI agent hooks (global, forced, or per-agent via `--agent`).

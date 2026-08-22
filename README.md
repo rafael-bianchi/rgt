@@ -2,7 +2,7 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
-**RGT (Rust Graph Tracker)** gives AI coding agents (Claude Code, Cursor, Codex CLI, Windsurf) a persistent, queryable memory of every number and date they read from source files or derive through calculations — then **verifies each derivation is mathematically correct** — ensuring they never silently reason from stale or incorrect data.
+**RGT (Rust Graph Tracker)** gives AI coding agents (Claude Code, Copilot, Cursor, Gemini CLI, Cline/Roo Code, Windsurf, Codex CLI, OpenCode, Pi, Hermes, Mistral Vibe, Antigravity, Kilo) a persistent, queryable memory of every number and date they read from source files or derive through calculations — then **verifies each derivation is mathematically correct** — ensuring they never silently reason from stale or incorrect data.
 
 ---
 
@@ -14,8 +14,32 @@
 - **Rich Value Types**: Native `Number`, `Date`, and `Duration` types with first-class date arithmetic.
 - **Derivation Verification**: `rgt verify` re-computes derived values using expression evaluation (`a + b * c`) and date arithmetic (`date2 - date1`), rejecting incorrect calculations before they enter the graph. `rgt derive` combines verification with automatic recording.
 - **Dual Integration**: Passive hooks (`PreToolUse`/`PostToolUse`) for automatic background capture, plus active CLI subcommands (`rgt record`, `rgt derive`, `rgt status`, `rgt query`, `rgt verify`, `rgt graph`) for explicit invocation.
-- **One-Command Setup**: `rgt init -g` auto-detects AI coding tools and configures hooks.
+- **One-Command Setup**: `rgt init` auto-detects AI coding tools and configures hooks.
 - **Self-Update**: `rgt update` performs atomic in-place binary upgrades from GitHub Releases.
+
+---
+
+## Supported Agents
+
+RGT configures provenance-capture hooks for all 13 agents that RTK covers, using each agent's native mechanism:
+
+| Agent | `--agent` value | Mechanism |
+|---|---|---|
+| Claude Code | `claude-code` (alias `claude`) | Full tool hook |
+| Cursor | `cursor` | Full tool hook |
+| Copilot | `copilot` | Full tool hook (VS Code Chat) + Copilot CLI rules |
+| Gemini CLI | `gemini` | Full tool hook |
+| Mistral Vibe | `vibe` | Full tool hook |
+| OpenCode | `opencode` | Thin TypeScript plugin |
+| Pi | `pi` | Thin TypeScript extension |
+| Hermes | `hermes` | Thin Python plugin |
+| Windsurf | `windsurf` | Rules file (`.windsurfrules`) |
+| Codex CLI | `codex` | Rules file (`AGENTS.md`) |
+| Cline / Roo Code | `cline` (alias `roo-code`) | Rules file (`.clinerules`) |
+| Antigravity | `antigravity` | Rules file |
+| Kilo | `kilocode` (alias `kilo`) | Rules file |
+
+Hooks are **provenance-capture only**: they record data and never rewrite, filter, or block the agent's tool commands.
 
 ---
 
@@ -41,8 +65,8 @@ cargo install --git https://github.com/rafael-bianchi/rgt
 ### Initialize
 
 ```bash
-rgt init -g       # auto-configure hooks for all detected AI tools
-rgt init -g --agent claude-code  # configure a specific agent only
+rgt init                     # auto-detect and configure hooks for all installed agents
+rgt init --agent claude-code # configure a specific agent only (13 supported + aliases)
 ```
 
 ### Record and Verify Values
@@ -104,7 +128,7 @@ rgt graph --format mermaid
 
 ### `rgt init [-g] [--force] [--agent <name>]`
 
-Initialize the `.rgt/store.db` database and configure AI agent hooks. `-g` installs global hooks. `--agent` targets `claude-code`, `cursor`, `windsurf`, or `codex`.
+Initialize the `.rgt/store.db` database and configure AI agent hooks. `-g` installs global hooks. Without `--agent`, RGT detects every supported agent installed on the machine and configures all of them in one run. `--agent` targets a single agent by its canonical name (13 values: `claude-code`, `cursor`, `codex`, `windsurf`, `copilot`, `gemini`, `vibe`, `opencode`, `pi`, `hermes`, `cline`, `antigravity`, `kilocode`) or alias (`claude`, `roo-code`, `kilo`). Unknown names exit with code 2.
 
 ### `rgt verify --parents <ids> --operation <op> --result <val> [--expression <expr>]`
 
@@ -122,9 +146,9 @@ Query the complete derivation lineage for a node ID. Traces the value back to it
 
 Export the dependency graph as text, Mermaid diagram, or Graphviz DOT format.
 
-### `rgt hook <pre|post>`
+### `rgt hook <pre|post> [--agent <name>]`
 
-Execute a passive hook (reads tool event JSON from stdin). Used by agent hook scripts.
+Execute a passive hook (reads tool event JSON from stdin). `--agent` selects the agent's stdin dialect (e.g. `copilot`, `gemini`, `vibe`); omitted uses the Claude Code format. Always exits 0 and never alters the tool call.
 
 ### `rgt update [--check] [-y] [--version <tag>]`
 

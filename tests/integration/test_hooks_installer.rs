@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use rgt::hooks::installer::detect_and_configure_hooks_in_home;
+    use rgt::hooks::installer::{
+        detect_and_configure_hooks_in_home, detect_and_configure_hooks_with_config,
+    };
     use serde_json::Value;
     use std::sync::Mutex;
     use tempfile::tempdir;
@@ -114,12 +116,37 @@ mod tests {
     }
 
     #[test]
-    fn test_all_agents_without_flag() {
+    fn test_all_agents_without_flag_detects_installed() {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        let result = detect_and_configure_hooks_in_home(dir.path(), true, true, None).unwrap();
+        // Emulate the 4 existing agents as installed via their detection triggers.
+        std::fs::create_dir_all(dir.path().join(".claude")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".cursor")).unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "# Test\n").unwrap();
+        std::fs::write(dir.path().join(".windsurfrules"), "# Test\n").unwrap();
+        let config_dir = dir.path().join("config");
+
+        let result =
+            detect_and_configure_hooks_with_config(dir.path(), &config_dir, true, true, None)
+                .unwrap();
         assert_eq!(result.len(), 4);
+        assert!(result.iter().any(|r| r.contains("Claude Code")));
+        assert!(result.iter().any(|r| r.contains("Cursor")));
+        assert!(result.iter().any(|r| r.contains("Codex CLI")));
+        assert!(result.iter().any(|r| r.contains("Windsurf")));
+    }
+
+    #[test]
+    fn test_no_agents_installed_configures_nothing() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        let config_dir = dir.path().join("config");
+
+        let result =
+            detect_and_configure_hooks_with_config(dir.path(), &config_dir, true, true, None)
+                .unwrap();
+        assert!(result.is_empty());
     }
 
     #[test]

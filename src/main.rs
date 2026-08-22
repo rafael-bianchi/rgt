@@ -22,8 +22,10 @@ struct Cli {
 enum Commands {
     /// Initialize RGT project tracking and configure AI agent hooks
     Init {
-        /// Detect and configure global hooks for Claude Code, Cursor (full hook), Windsurf
-        /// (rules-file) and Codex CLI (rules-file)
+        /// Detect and configure global hooks. Agents: Claude Code, Cursor,
+        /// Copilot, Gemini, Mistral Vibe (full hook); OpenCode, Pi, Hermes
+        /// (plugin); Windsurf, Codex CLI, Cline/Roo Code, Antigravity, Kilo
+        /// (rules-file).
         #[arg(short = 'g', long)]
         global: bool,
 
@@ -31,7 +33,9 @@ enum Commands {
         #[arg(long)]
         force: bool,
 
-        /// Target a specific agent: claude-code, cursor (full hook), windsurf, codex (rules-file). Detects all if omitted.
+        /// Target a specific agent: claude-code, cursor, codex, windsurf,
+        /// copilot, gemini, vibe, opencode, pi, hermes, cline, antigravity,
+        /// kilocode (or aliases claude, roo-code, kilo). Detects all if omitted.
         #[arg(long)]
         agent: Option<String>,
     },
@@ -64,6 +68,12 @@ enum Commands {
     Hook {
         /// Hook event type: pre or post
         event: String,
+
+        /// Target agent stdin dialect: claude-code, cursor, codex, windsurf,
+        /// copilot, gemini, vibe, opencode, pi, hermes, cline, antigravity,
+        /// kilocode (or aliases claude, roo-code, kilo). Omitted = Claude Code format.
+        #[arg(long)]
+        agent: Option<String>,
     },
     /// Check for and install binary updates from GitHub Releases
     Update {
@@ -135,12 +145,18 @@ async fn main() {
             global,
             force,
             agent,
-        } => cli::execute_init(global, force, agent.as_deref()),
+        } => match cli::resolve_agent_arg(agent.as_deref()) {
+            Ok(resolved) => cli::execute_init(global, force, resolved.as_deref()),
+            Err(msg) => {
+                eprintln!("Error: {}", msg);
+                std::process::exit(2);
+            }
+        },
         Commands::Status { stale_only, json } => cli::execute_status(stale_only, json),
         Commands::Query { node_id, json } => cli::execute_query(&node_id, json),
         Commands::Graph { format } => cli::execute_graph(&format),
-        Commands::Hook { event } => {
-            if let Err(e) = hooks::handle_passive_hook_event(&event) {
+        Commands::Hook { event, agent } => {
+            if let Err(e) = hooks::handle_passive_hook_event(&event, agent.as_deref()) {
                 eprintln!("Hook warning: {}", e);
             }
             Ok(())
