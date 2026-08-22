@@ -66,4 +66,4 @@ Use Conventional Commits: `type: description (#N)`. Types: `feat`, `fix`, `docs`
 
 ## License
 
-MIT OR Apache-2.0. All contributions must be compatible with both licenses.
+Apache License, Version 2.0. All contributions must be compatible with it.

@@ -2,7 +2,7 @@ class Rgt < Formula
   desc "Rust Graph Tracker: Numeric and date provenance tracking for LLM coding agents"
   homepage "https://github.com/rafael-bianchi/rgt"
   version "0.1.0"
-  license "MIT OR Apache-2.0"
+  license "Apache-2.0"
 
   on_macos do
     if Hardware::CPU.arm?

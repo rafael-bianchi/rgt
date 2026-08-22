@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://github.com/rafael-bianchi/rgt/actions/workflows/ci.yml"><img src="https://github.com/rafael-bianchi/rgt/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/rafael-bianchi/rgt/releases"><img src="https://img.shields.io/github/v/release/rafael-bianchi/rgt" alt="Release"></a>
-  <a href="#license"><img src="https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
 
 <p align="center">
@@ -193,7 +193,6 @@ RGT stores its graph in `.rgt/store.db` (SQLite) in the project root, created by
 - **[AGENTS.md](AGENTS.md)** — instructions RGT installs for AI agents (how to record and derive)
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — contribution guide
 - **[CHANGELOG.md](CHANGELOG.md)** — release history
-- **[specs/](specs/)** — feature specifications, plans, and research
 
 ## Acknowledgments
 
@@ -205,4 +204,4 @@ Contributions welcome! Please open an issue or PR on [GitHub](https://github.com
 
 ## License
 
-Licensed under either of [MIT License](LICENSE-MIT) or [Apache License, Version 2.0](LICENSE-APACHE) at your option.
+Licensed under the [Apache License, Version 2.0](LICENSE).
