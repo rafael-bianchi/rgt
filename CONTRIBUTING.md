@@ -4,13 +4,13 @@
 
 ```
 src/
-├── cli/           # CLI subcommands: init, status, query, graph, update, verify
+├── cli/           # CLI subcommands: init, record, derive, status, query, graph, update
 ├── query/         # Query module: provenance, stale listing
 ├── store/         # SQLite: db connection, queries, schema
 ├── types/         # Data types: node, edge, value
 ├── graph/         # DAG: engine (petgraph), invalidation
 ├── detection/     # File change detection: tier1, tier2 (BLAKE3)
-├── hooks/         # Agent hook installer and parser
+├── hooks/         # Agent hook installer, parser, glue plugins, path resolution
 ├── updater/       # Self-update: github API, checksum, platform
 ├── verify/        # Derivation verification: expression, date_diff
 ├── lib.rs         # Library root
@@ -43,7 +43,7 @@ Individual test categories:
 ```bash
 cargo test --lib                          # unit tests
 cargo test --test test_hooks_installer    # hook installer integration
-cargo test --test test_derivation_chain   # derivation chain E2E
+cargo test --test test_cli_record_derive  # record/derive CLI contract
 cargo test verify                         # verification module
 ```
 

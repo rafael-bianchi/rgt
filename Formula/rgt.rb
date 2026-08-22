@@ -1,13 +1,13 @@
 class Rgt < Formula
   desc "Rust Graph Tracker: Numeric and date provenance tracking for LLM coding agents"
   homepage "https://github.com/rafael-bianchi/rgt"
-  version "0.1.0"
+  version "0.4.0"
   license "Apache-2.0"
 
   on_macos do
     if Hardware::CPU.arm?
       url "#{homepage}/releases/download/v#{version}/rgt-v#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "REPLACE_WITH_SHA256_AARCH64_DARWIN"
+      sha256 "73a18d319314ed64b09bcef45d47a67cbce3e2361cad72a29c1edf7f53f74b2f"
     end
   end
 
@@ -26,6 +26,6 @@ class Rgt < Formula
   end
 
   test do
-    assert_match "rgt", shell_output("#{bin}/rgt --version")
+    assert_match "Rust Graph Tracker", shell_output("#{bin}/rgt --help")
   end
 end

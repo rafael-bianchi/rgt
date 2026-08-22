@@ -85,6 +85,8 @@ Download from [releases](https://github.com/rafael-bianchi/rgt/releases):
 - Linux: `rgt-x86_64-unknown-linux-musl.tar.gz` / `rgt-aarch64-unknown-linux-gnu.tar.gz`
 - Windows: `rgt-x86_64-pc-windows-msvc.zip`
 
+> macOS and Linux binaries are published with each release; Windows binaries are produced by the release CI pipeline and appear once it runs for a tag.
+
 ### Self-Update
 
 ```bash
@@ -163,7 +165,7 @@ Operations: `EXPRESSION` (formulas like `a + b * c`) and `DATE_DIFF` (date arith
 
 ## Supported AI Tools
 
-RGT configures provenance-capture hooks for all 13 agents that [RTK](https://github.com/rtk-ai/rtk) covers, using each agent's native mechanism:
+RGT configures provenance-capture hooks for 13 AI coding tools, using each agent's native mechanism:
 
 | Tool | Install | Method |
 |------|---------|--------|
