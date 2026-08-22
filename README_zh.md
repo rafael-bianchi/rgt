@@ -27,11 +27,11 @@
 
 <p align="center">
   <a href="README.md">English</a> &bull;
-  <a href="README_fr.md">Francais</a> &bull;
+  <a href="README_fr.md">Français</a> &bull;
   <a href="README_zh.md">中文</a> &bull;
   <a href="README_ja.md">日本語</a> &bull;
   <a href="README_ko.md">한국어</a> &bull;
-  <a href="README_es.md">Espanol</a> &bull;
+  <a href="README_es.md">Español</a> &bull;
   <a href="README_pt.md">Português</a>
 </p>
 
@@ -46,15 +46,15 @@ RGT 为 AI 编程代理提供持久、可查询的记忆，记录它们从源文
 | 操作 | RGT 的作用 |
 |------|-----------|
 | `rgt record <file>` | 从文件中提取每个数字和日期，录入溯源图 |
-| `rgt status` | 报告总计、活跃和过期的节点，即哪些值仍然可信 |
+| `rgt status` | 报告节点总数以及有效和过期节点数，并指出哪些值仍然可信 |
 | `rgt query <id>` | 将某个值的谱系追溯到其源文件 |
-| `rgt derive` | 在**记录之前**，先针对父节点验证代理计算出的值 |
+| `rgt derive` | 在**记录之前**，先根据父节点的值验证代理计算出的结果 |
 | `rgt graph` | 导出依赖 DAG（文本、Mermaid 或 DOT 格式） |
 | `rgt hook` | 通过各代理原生的钩子/插件机制进行被动采集 |
 
 ## 为什么溯源追踪很重要
 
-RGT 不衡量节省，它防止静默错误。有两个失败模式驱动它：
+RGT 不衡量节省，它防止静默错误。它主要针对两类故障：
 
 1. **数据过期**：代理读取了文件，之后文件发生变化，但代理仍依据旧数字进行推理。RGT 将受影响的根节点标记为**过期**，并把过期状态级联到所有依赖它们的派生值上（`rgt status`）。
 2. **运算错误**：代理计算 `revenue = price * quantity` 时出错。RGT 会基于数据库中的父值重新计算表达式，并在不匹配的推导进入图之前**拒绝**它（退出码 1）。
@@ -95,7 +95,7 @@ cargo install --git https://github.com/rafael-bianchi/rgt
 - Linux：`rgt-x86_64-unknown-linux-musl.tar.gz` / `rgt-aarch64-unknown-linux-gnu.tar.gz`
 - Windows：`rgt-x86_64-pc-windows-msvc.zip`
 
-> macOS 和 Linux 二进制随每次 release 发布；Windows 二进制由 release CI 流水线生成，待其针对某个 tag 运行后出现。
+> macOS 和 Linux 二进制随每次 release 发布；Windows 二进制由 release CI 流水线生成，并在流水线针对相应 tag 运行后提供下载。
 
 ### 自我更新
 
@@ -107,14 +107,14 @@ rgt update --check  # 仅检查是否有新版本，不安装
 ### 验证安装
 
 ```bash
-rgt status   # 显示溯源图状态（全新仓库从 0 个节点开始）
+rgt status   # 显示溯源图状态（全新的存储从 0 个节点开始）
 ```
 
 ## 快速开始
 
 ```bash
 # 1. 为你的 AI 工具配置溯源钩子
-rgt init -g                 # 自动检测所有已安装的支持代理
+rgt init -g                 # 自动检测所有已安装且受支持的代理
 rgt init -g --agent copilot # 或指定一个：copilot, gemini, vibe, opencode, pi, hermes, ...
 rgt init --agent cline      # 项目级代理使用项目规则文件
 rgt init --agent codex      # Codex / Windsurf / Cline / Antigravity / Kilo 使用规则文件
@@ -140,9 +140,9 @@ rgt graph --format mermaid  # 导出依赖图
   rgt record 提取 {path, content}                       |
             |                                           v
             v                                     运算正确？
-  溯源图 ── rgt status ── 过期？ ── 否 ──> 值可信
+  溯源图 ── rgt status ── 过期？ ── 否 ──> 值可被信任
             |                    |
-            +------- 是 ----------> 节点 + 依赖项标记为过期
+            +------- 是 ----------> 该节点及其下游节点标记为过期
 ```
 
 三种策略保证图的可靠性：
@@ -208,9 +208,9 @@ RGT 将图存储在项目根目录的 `.rgt/store.db`（SQLite）中，由 `rgt 
 
 ## 致谢
 
-RGT 的灵感来自 [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk)，一个为 AI 编程代理压缩 shell 输出的高性能 CLI 代理。RGT 采用 RTK 的做法：单一二进制 + 原生、按代理定制的钩子集成，并覆盖其 13 个代理。RTK 过滤命令输出，而 RGT 追踪代理读取和推导内容的数字与日期溯源，并验证每个推导在数学上是否正确。
+RGT 的灵感来自 [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk)，一个为 AI 编程代理压缩 shell 输出的高性能 CLI 代理。RGT 采用 RTK 的做法：单一二进制 + 原生、按代理定制的钩子集成，并同样支持 13 种代理。RTK 过滤命令输出，而 RGT 追踪代理读取和推导内容的数字与日期溯源，并验证每个推导在数学上是否正确。
 
-RGT 借助 [DeepSeek](https://www.deepseek.com/) AI 编码工具构建。
+RGT 借助 [DeepSeek](https://www.deepseek.com/) AI 编程工具构建。
 
 ## 贡献
 

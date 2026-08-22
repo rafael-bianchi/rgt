@@ -27,11 +27,11 @@
 
 <p align="center">
   <a href="README.md">English</a> &bull;
-  <a href="README_fr.md">Francais</a> &bull;
+  <a href="README_fr.md">Français</a> &bull;
   <a href="README_zh.md">中文</a> &bull;
   <a href="README_ja.md">日本語</a> &bull;
   <a href="README_ko.md">한국어</a> &bull;
-  <a href="README_es.md">Espanol</a> &bull;
+  <a href="README_es.md">Español</a> &bull;
   <a href="README_pt.md">Português</a>
 </p>
 
@@ -46,18 +46,18 @@ RGT는 AI 코딩 에이전트가 소스 파일에서 읽거나 계산으로 유�
 | 작업 | RGT가 하는 일 |
 |------|---------------|
 | `rgt record <file>` | 파일에서 모든 숫자와 날짜를 추출하여 출처 그래프에 추가 |
-| `rgt status` | 전체, 활성, 오래된 노드를 보고. 어떤 값이 여전히 신뢰할 수 있는지 보여줌 |
-| `rgt derive` | 에이전트가 계산한 값을 부모 노드에 대해 검증한 **다음** 기록 |
+| `rgt status` | 전체·활성·오래된 노드 수를 보고하여 어떤 값이 여전히 신뢰할 수 있는지 보여 줌 |
+| `rgt derive` | 에이전트가 계산한 값을 **기록하기 전에** 부모 노드의 값을 기준으로 검증 |
 | `rgt query <id>` | 값의 계보를 소스 파일까지 거슬러 추적 |
 | `rgt graph` | 의존성 DAG 내보내기 (텍스트, Mermaid, DOT) |
-| `rgt hook` | 각 에이전트의 네이티브 훅/플러그인 메커니즘을 통한 수동적 캡처 |
+| `rgt hook` | 각 에이전트의 네이티브 훅/플러그인 메커니즘을 통한 자동 수집 |
 
 ## 출처 추적이 중요한 이유
 
-RGT는 절약을 측정하지 않습니다. 조용한 오류를 방지합니다. 두 가지 실패 모드가 그 동기입니다.
+RGT는 절약을 측정하지 않습니다. 드러나지 않는 오류를 방지합니다. 주로 두 가지 오류 유형을 다룹니다.
 
-1. **오래된 데이터**: 에이전트가 파일을 읽고, 이후 파일이 바뀌었는데도 에이전트는 옛 숫자로 추론을 계속합니다. RGT는 영향을 받는 루트 노드를 **오래됨**으로 표시하고, 그에 의존하는 모든 도출값으로 오래됨을 연쇄 전파합니다(`rgt status`).
-2. **잘못된 계산**: 에이전트가 `revenue = price * quantity`를 계산하며 틀립니다. RGT는 데이터베이스의 부모 값으로 식을 다시 계산하고, 일치하지 않는 도출을 그래프에 들어가기 전에 **거부**합니다(종료 코드 1).
+1. **오래된 데이터**: 에이전트가 파일을 읽고, 이후 파일이 바뀌었는데도 에이전트는 옛 숫자로 추론을 계속합니다. RGT는 영향을 받는 루트 노드를 **오래된 상태**로 표시하고, 그에 의존하는 모든 도출값에 이 상태를 전파합니다(`rgt status`).
+2. **잘못된 계산**: 에이전트가 `revenue = price * quantity` 계산을 잘못합니다. RGT는 데이터베이스의 부모 값으로 식을 다시 계산하고, 일치하지 않는 도출을 그래프에 들어가기 전에 **거부**합니다(종료 코드 1).
 
 훅은 **출처 캡처 전용**입니다. `(path, content)`를 기록할 뿐 에이전트의 도구 호출을 다시 쓰거나, 필터링하거나, 차단하지 않습니다.
 
@@ -80,7 +80,7 @@ curl -fsSL https://raw.githubusercontent.com/rafael-bianchi/rgt/main/install.sh 
 brew install rafael-bianchi/rgt/rgt
 ```
 
-> tap 공식(formula)은 각 GitHub 릴리스에서 갱신됩니다.
+> tap 공식(formula)은 GitHub 릴리스가 게시될 때마다 갱신됩니다.
 
 ### Cargo
 
@@ -95,7 +95,7 @@ cargo install --git https://github.com/rafael-bianchi/rgt
 - Linux: `rgt-x86_64-unknown-linux-musl.tar.gz` / `rgt-aarch64-unknown-linux-gnu.tar.gz`
 - Windows: `rgt-x86_64-pc-windows-msvc.zip`
 
-> macOS와 Linux 바이너리는 각 릴리스와 함께 게시됩니다. Windows 바이너리는 릴리스 CI 파이프라인이 태그에 대해 실행되면 나타납니다.
+> macOS와 Linux 바이너리는 각 릴리스와 함께 게시됩니다. Windows 바이너리는 릴리스 CI 파이프라인이 태그에 대해 실행된 후 게시됩니다.
 
 ### 자동 업데이트
 
@@ -136,37 +136,37 @@ rgt graph --format mermaid  # 의존성 그래프 내보내기
             v                                                  v
   rgt hook post (네이티브 훅/플러그인)              rgt derive --parents <ids>
             |                                                  |
-            v                                        (부모에 대해 검증)
+            v                                  (부모 값을 기준으로 검증)
   rgt record가 {path, content} 추출                          |
             |                                                  v
-            v                                             계산이 맞나?
-  출처 그래프 ── rgt status ── 오래됨? ── 아니오 ──> 값 신뢰
+            v                                        계산이 올바른가?
+  출처 그래프 ── rgt status ── 오래됨? ── 아니오 ──> 값을 신뢰
             |                                    |
-            +--------------- 예 ---------------->  노드 + 종속 항목 오래됨 표시
+            +--------------- 예 ---------------->  노드와 종속 노드를 오래된 상태로 표시
 ```
 
 그래프를 신뢰할 수 있게 만드는 세 가지 전략:
 
 1. **캡처**: 네이티브 훅/플러그인이 에이전트가 읽는 모든 파일을 `rgt record`로 보내므로, 에이전트가 신경 쓰지 않아도 값이 그래프에 들어갑니다.
-2. **검증**: 모든 `rgt derive`는 "신뢰하되 검증". RGT는 부모 값에서 결과를 다시 계산하고 잘못된 값을 삽입 전에 거부합니다.
-3. **오래됨**: 소스 파일이 바뀌면 그 노드(및 그로부터 도출된 모든 값)가 오래됨으로 표시되어 에이전트가 다시 읽도록 안내할 수 있습니다.
+2. **검증**: 모든 `rgt derive`는 "신뢰하되 검증한다"는 원칙을 따릅니다. RGT는 부모 값에서 결과를 다시 계산하고 잘못된 값을 삽입 전에 거부합니다.
+3. **최신성**: 소스 파일이 바뀌면 그 노드(및 그로부터 도출된 모든 값)가 오래된 상태로 표시되어 에이전트가 다시 읽도록 안내할 수 있습니다.
 
 ## 명령어
 
 ### 초기화 및 훅
 ```bash
 rgt init [-g] [--force] [--agent <name>]   # 훅 구성, 설치된 에이전트 감지
-rgt hook pre|post [--agent <name>]         # 에이전트 이벤트 JSON(stdin)에서 수동적으로 캡처
+rgt hook pre|post [--agent <name>]         # 에이전트 이벤트 JSON(stdin)에서 자동 수집
 ```
 
-### 출처
+### 출처 추적
 ```bash
 rgt record <file>                          # 파일에서 값을 추출하여 추적
 rgt derive --parents <ids> --operation <op> --expression <expr> --result <val>
                                            # 도출을 검증하고 기록
 rgt verify --parents <ids> --operation <op> --result <val>
                                            # 기록하지 않고 도출값 검증
-rgt status [--stale-only] [--json]         # 그래프 상태와 오래됨
+rgt status [--stale-only] [--json]         # 그래프 상태와 최신성
 rgt query <node_id> [--json]               # 값의 전체 계보
 rgt graph [-f text|mermaid|dot]            # 의존성 DAG 내보내기
 ```
@@ -175,7 +175,7 @@ rgt graph [-f text|mermaid|dot]            # 의존성 DAG 내보내기
 
 ## 지원 AI 도구
 
-RGT는 13개 AI 도구에 대해 각 에이전트의 네이티브 메커니즘으로 출처 캡처 훅을 구성합니다:
+RGT는 13개 AI 코딩 도구에 대해 각 에이전트의 네이티브 메커니즘으로 출처 캡처 훅을 구성합니다:
 
 | 도구 | 설치 | 방식 |
 |------|------|------|
@@ -196,7 +196,7 @@ RGT는 13개 AI 도구에 대해 각 에이전트의 네이티브 메커니즘�
 
 허용되는 `--agent` 값: `claude-code`, `cursor`, `codex`, `windsurf`, `copilot`, `gemini`, `vibe`, `opencode`, `pi`, `hermes`, `cline`, `antigravity`, `kilocode`, 그리고 별칭 `claude`, `roo-code`, `kilo`.
 
-## 데이터 및 저장
+## 데이터 및 저장소
 
 RGT는 그래프를 프로젝트 루트의 `.rgt/store.db`(SQLite)에 저장하며 `rgt init`이 생성합니다. 정상 작동 중에는 외부 서비스, 텔레메트리, 네트워크 호출이 없습니다.
 
@@ -208,7 +208,7 @@ RGT는 그래프를 프로젝트 루트의 `.rgt/store.db`(SQLite)에 저장하�
 
 ## 감사의 말
 
-RGT는 AI 코딩 에이전트를 위해 셸 출력을 압축하는 고성능 CLI 프록시인 [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk)에서 영감을 받았습니다. RGT는 RTK의 접근 방식(단일 바이너리 + 네이티브 에이전트별 훅 통합)을 따르고 13개 에이전트 커버리지를 반영합니다. RTK가 명령 출력을 필터링하는 반면, RGT는 에이전트가 읽고 도출하는 내용의 숫자·날짜 출처를 추적하고 각 도출이 수학적으로 올바른지 검증합니다.
+RGT는 AI 코딩 에이전트를 위해 셸 출력을 압축하는 고성능 CLI 프록시인 [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk)에서 영감을 받았습니다. RGT는 RTK의 접근 방식(단일 바이너리 + 네이티브 에이전트별 훅 통합)을 따르고 동일하게 13개 에이전트를 지원합니다. RTK가 명령 출력을 필터링하는 반면, RGT는 에이전트가 읽고 도출하는 내용의 숫자·날짜 출처를 추적하고 각 도출이 수학적으로 올바른지 검증합니다.
 
 RGT는 [DeepSeek](https://www.deepseek.com/) AI 코딩 도구의 도움을 받아 개발되었습니다.
 

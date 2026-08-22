@@ -27,11 +27,11 @@
 
 <p align="center">
   <a href="README.md">English</a> &bull;
-  <a href="README_fr.md">Francais</a> &bull;
+  <a href="README_fr.md">Français</a> &bull;
   <a href="README_zh.md">中文</a> &bull;
   <a href="README_ja.md">日本語</a> &bull;
   <a href="README_ko.md">한국어</a> &bull;
-  <a href="README_es.md">Espanol</a> &bull;
+  <a href="README_es.md">Español</a> &bull;
   <a href="README_pt.md">Português</a>
 </p>
 
@@ -47,16 +47,16 @@ RGT は、AI コーディングエージェントがソースファイルから�
 |------|-----------|
 | `rgt record <file>` | ファイルからすべての数値と日付を抽出して来歴グラフに追加 |
 | `rgt status` | 総数・アクティブ・古いノードを報告。どの値がまだ信頼できるかを示す |
-| `rgt derive` | エージェントが計算した値を親ノードに対して検証してから**記録** |
+| `rgt derive` | エージェントが計算した値を**記録する前に**親ノードの値に基づいて検証 |
 | `rgt query <id>` | 値の系譜をソースファイルまで遡る |
 | `rgt graph` | 依存 DAG をエクスポート（テキスト、Mermaid、DOT） |
 | `rgt hook` | 各エージェントのネイティブなフック/プラグイン機構による受動的な取得 |
 
 ## 来歴追跡が重要な理由
 
-RGT は節約を測定するのではなく、静かなエラーを防ぎます。その動機となるのは 2 つの障害モードです。
+RGT は節約を測定するのではなく、検知されないエラーを防ぎます。主に 2 つの失敗パターンを想定しています。
 
-1. **古いデータ**：エージェントがファイルを読み、その後ファイルが変わり、エージェントは古い数値のままで推論を続けます。RGT は影響を受けるルートノードを**古い**とマークし、それに依存するすべての派生値へ古さを連鎖させます（`rgt status`）。
+1. **古いデータ**：エージェントがファイルを読み、その後ファイルが変わっても、エージェントは古い数値に基づいて推論を続けます。RGT は影響を受けるルートノードを**古い状態**とマークし、それに依存するすべての派生値へその状態を伝播させます（`rgt status`）。
 2. **計算ミス**：エージェントが `revenue = price * quantity` を計算して誤る場合。RGT はデータベース内の親値から式を再計算し、一致しない導出をグラフに入る前に**拒否**します（終了コード 1）。
 
 フックは**来歴の取得のみ**です。`(path, content)` を記録するだけで、エージェントのツール呼び出しを書き換えたり、フィルタリングしたり、ブロックしたりすることはありません。
@@ -95,7 +95,7 @@ cargo install --git https://github.com/rafael-bianchi/rgt
 - Linux：`rgt-x86_64-unknown-linux-musl.tar.gz` / `rgt-aarch64-unknown-linux-gnu.tar.gz`
 - Windows：`rgt-x86_64-pc-windows-msvc.zip`
 
-> macOS と Linux のバイナリは各 release で公開されます。Windows バイナリは release CI パイプラインが tag に対して実行されると登場します。
+> macOS と Linux のバイナリは各 release で公開されます。Windows バイナリは、tag に対して release CI パイプラインが実行された後に公開されます。
 
 ### 自己更新
 
@@ -140,16 +140,16 @@ rgt graph --format mermaid  # 依存グラフをエクスポート
   rgt record が {path, content} を抽出                        |
             |                                                   v
             v                                             計算は正しい？
-  来歴グラフ ── rgt status ── 古い？ ── いいえ ──> 値は信頼
+  来歴グラフ ── rgt status ── 古い？ ── いいえ ──> 値は信頼できる
             |                                   |
-            +--------------- はい ---------------> ノードと依存を古いとマーク
+            +--------------- はい ---------------> ノードとそれに依存するノードを古い状態とマーク
 ```
 
 グラフを信頼に足るものにする 3 つの戦略：
 
 1. **取得**：ネイティブフック/プラグインが、エージェントが読むすべてのファイルを `rgt record` に通すため、エージェントが意識しなくても値がグラフに入ります。
 2. **検証**：すべての `rgt derive` は"信頼するが検証する"。RGT は親値から結果を再計算し、間違った値を挿入前に拒否します。
-3. **古さ**：ソースファイルが変わると、そのノード（およびそこから派生するすべて）が古いとマークされ、エージェントに再読み込みを促せます。
+3. **古い状態の検出**：ソースファイルが変わると、そのノード（およびそこから派生するすべて）が古い状態とマークされ、エージェントに再読み込みを促せます。
 
 ## コマンド
 
@@ -166,7 +166,7 @@ rgt derive --parents <ids> --operation <op> --expression <expr> --result <val>
                                            # 導出を検証して記録
 rgt verify --parents <ids> --operation <op> --result <val>
                                            # 記録せずに派生値を検証
-rgt status [--stale-only] [--json]         # グラフの状態と古さ
+rgt status [--stale-only] [--json]         # グラフの状態とデータの古さ
 rgt query <node_id> [--json]               # 値の完全な系譜
 rgt graph [-f text|mermaid|dot]            # 依存 DAG をエクスポート
 ```
@@ -175,7 +175,7 @@ rgt graph [-f text|mermaid|dot]            # 依存 DAG をエクスポート
 
 ## 対応 AI ツール
 
-RGT は 13 の AI ツールに対し、各エージェントのネイティブ機構を使って来歴取得フックを設定します：
+RGT は 13 種類の AI コーディングツールに対し、各エージェントのネイティブ機構を使って来歴取得フックを設定します：
 
 | ツール | インストール | 方法 |
 |--------|--------------|------|
@@ -194,11 +194,11 @@ RGT は 13 の AI ツールに対し、各エージェントのネイティブ�
 | **Google Antigravity** | `rgt init --agent antigravity` | `.agents/rules/antigravity-rgt-rules.md` |
 | **Kilo Code** | `rgt init --agent kilocode` | `.kilocode/rules/rgt-rules.md` |
 
-受け入れられる `--agent` 値：`claude-code`、`cursor`、`codex`、`windsurf`、`copilot`、`gemini`、`vibe`、`opencode`、`pi`、`hermes`、`cline`、`antigravity`、`kilocode`、およびエイリアス `claude`、`roo-code`、`kilo`。
+指定可能な `--agent` の値：`claude-code`、`cursor`、`codex`、`windsurf`、`copilot`、`gemini`、`vibe`、`opencode`、`pi`、`hermes`、`cline`、`antigravity`、`kilocode`、およびエイリアス `claude`、`roo-code`、`kilo`。
 
 ## データとストレージ
 
-RGT はグラフをプロジェクトルートの `.rgt/store.db`（SQLite）に保存します。`rgt init` が作成します。通常の運用中、外部サービスはなく、テレメトリもなく、ネットワーク呼び出しもありません。
+RGT はグラフをプロジェクトルートの `.rgt/store.db`（SQLite）に保存します。`rgt init` が作成します。通常の運用中は、外部サービスやテレメトリを使用せず、ネットワーク呼び出しも行いません。
 
 ## ドキュメント
 

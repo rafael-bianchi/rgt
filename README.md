@@ -29,11 +29,11 @@
 
 <p align="center">
   <a href="README.md">English</a> &bull;
-  <a href="README_fr.md">Francais</a> &bull;
+  <a href="README_fr.md">Français</a> &bull;
   <a href="README_zh.md">中文</a> &bull;
   <a href="README_ja.md">日本語</a> &bull;
   <a href="README_ko.md">한국어</a> &bull;
-  <a href="README_es.md">Espanol</a> &bull;
+  <a href="README_es.md">Español</a> &bull;
   <a href="README_pt.md">Português</a>
 </p>
 
@@ -43,12 +43,12 @@ RGT gives AI coding agents a persistent, queryable memory of every number and da
 
 ## What RGT Does
 
-Agents reason over files that change and arithmetic they can get wrong. RGT tracks the provenance of every numeric value and re-checks the math.
+Agents reason from changing files and can make arithmetic mistakes. RGT tracks the provenance of every numeric value and re-checks the math.
 
 | Operation | What RGT does |
 |-----------|---------------|
 | `rgt record <file>` | Extracts every number and date from a file into the provenance graph |
-| `rgt status` | Reports total, active, and stale nodes, which values are still trustworthy |
+| `rgt status` | Reports total, active, and stale nodes, showing which values are still trustworthy |
 | `rgt derive` | Verifies an agent-computed value against its parents **before** recording it |
 | `rgt query <id>` | Traces a value's lineage back to its source files |
 | `rgt graph` | Exports the dependency DAG (text, Mermaid, or DOT) |

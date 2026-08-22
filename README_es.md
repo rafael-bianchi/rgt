@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <strong>Segun miento de procedencia numerica y de fechas para agentes de codificacion con IA</strong>
+  <strong>Seguimiento de la procedencia de números y fechas para agentes de codificación con IA</strong>
 </p>
 
 <p align="center">
@@ -17,59 +17,59 @@
 </p>
 
 <p align="center">
-  <a href="#instalacion">Instalacion</a> &bull;
-  <a href="#inicio-rapido">Inicio rapido</a> &bull;
+  <a href="#instalación">Instalación</a> &bull;
+  <a href="#inicio-rápido">Inicio rápido</a> &bull;
   <a href="#comandos">Comandos</a> &bull;
   <a href="#herramientas-de-ia-compatibles">Herramientas de IA compatibles</a> &bull;
-  <a href="#como-funciona">Como funciona</a> &bull;
+  <a href="#cómo-funciona">Cómo funciona</a> &bull;
   <a href="CONTRIBUTING.md">Contribuir</a>
 </p>
 
 <p align="center">
   <a href="README.md">English</a> &bull;
-  <a href="README_fr.md">Francais</a> &bull;
+  <a href="README_fr.md">Français</a> &bull;
   <a href="README_zh.md">中文</a> &bull;
   <a href="README_ja.md">日本語</a> &bull;
   <a href="README_ko.md">한국어</a> &bull;
-  <a href="README_es.md">Espanol</a> &bull;
+  <a href="README_es.md">Español</a> &bull;
   <a href="README_pt.md">Português</a>
 </p>
 
 ---
 
-RGT da a los agentes de codificacion con IA una memoria persistente y consultable de cada numero y fecha que leen de los archivos fuente o derivan mediante calculos, y luego **verifica que cada derivacion sea matematicamente correcta**. Un unico binario de Rust, 13 herramientas de codificacion con IA compatibles, hooks que solo registran datos y nunca reescriben comandos.
+RGT da a los agentes de codificación con IA una memoria persistente y consultable de cada número y fecha que leen de los archivos fuente o derivan mediante cálculos, y luego **verifica que cada derivación sea matemáticamente correcta**. Un único binario de Rust, 13 herramientas de codificación con IA compatibles, hooks que solo registran datos y nunca reescriben comandos.
 
-## Que hace RGT
+## Qué hace RGT
 
-Los agentes razonan sobre archivos que cambian y sobre aritmetica que pueden errar. RGT rastrea la procedencia de cada valor numerico y vuelve a comprobar las operaciones.
+Los agentes razonan a partir de archivos que cambian y realizan cálculos en los que pueden equivocarse. RGT rastrea la procedencia de cada valor numérico y vuelve a comprobar las operaciones.
 
-| Operacion | Que hace RGT |
+| Operación | Qué hace RGT |
 |-----------|--------------|
-| `rgt record <file>` | Extrae cada numero y fecha de un archivo hacia el grafo de procedencia |
-| `rgt status` | Reporta nodos totales, activos y obsoletos, es decir, que valores siguen siendo fiables |
-| `rgt derive` | Verifica un valor calculado por el agente contra sus padres **antes** de registrarlo |
+| `rgt record <file>` | Extrae cada número y fecha de un archivo y los incorpora al grafo de procedencia |
+| `rgt status` | Informa del número total de nodos, de los nodos activos y obsoletos, e indica qué valores siguen siendo fiables |
+| `rgt derive` | Verifica un valor calculado por el agente a partir de sus nodos padre **antes** de registrarlo |
 | `rgt query <id>` | Rastrea el linaje de un valor hasta sus archivos fuente |
 | `rgt graph` | Exporta el DAG de dependencias (texto, Mermaid o DOT) |
 | `rgt hook` | Captura pasiva mediante el mecanismo nativo de hook/plugin de cada agente |
 
-## Por que importa el seguimiento de procedencia
+## Por qué importa el seguimiento de procedencia
 
-RGT no mide ahorros: previene errores silenciosos. Dos modos de fallo lo motivan:
+RGT no mide ahorros: previene errores silenciosos. Su uso responde a dos modos de fallo:
 
-1. **Datos obsoletos**: un agente lee un archivo, luego el archivo cambia y el agente sigue razonando con los numeros antiguos. RGT marca los nodos raiz afectados como **obsoletos** y propaga la obsolescencia a cada valor derivado que dependa de ellos (`rgt status`).
-2. **Operacion erronea**: un agente calcula `revenue = price * quantity` y se equivoca. RGT recalcula la expresion a partir de los valores padre de la base de datos y **rechaza** las derivaciones incorrectas (codigo de salida 1) antes de que entren al grafo.
+1. **Datos obsoletos**: un agente lee un archivo, luego el archivo cambia y el agente sigue razonando con los números antiguos. RGT marca los nodos raíz afectados como **obsoletos** y propaga la obsolescencia a cada valor derivado que dependa de ellos (`rgt status`).
+2. **Operación errónea**: un agente calcula `revenue = price * quantity` y se equivoca. RGT recalcula la expresión a partir de los valores padre de la base de datos y **rechaza** las derivaciones incorrectas (código de salida 1) antes de que entren en el grafo.
 
-Los hooks son **exclusivamente de captura de procedencia**: registran `(path, content)` y nunca reescriben, filtran ni bloquean las llamadas de herramienta del agente.
+Los hooks son **exclusivamente de captura de procedencia**: registran `(path, content)` y nunca reescriben, filtran ni bloquean las llamadas a herramientas del agente.
 
-## Instalacion
+## Instalación
 
-### Instalacion rapida (Linux/macOS)
+### Instalación rápida (Linux/macOS)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rafael-bianchi/rgt/main/install.sh | sh
 ```
 
-> Instala en `~/.local/bin`. Agregalo al PATH si es necesario:
+> Se instala en `~/.local/bin`. Agrégalo al PATH si es necesario:
 > ```bash
 > echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc  # o ~/.bashrc
 > ```
@@ -80,7 +80,7 @@ curl -fsSL https://raw.githubusercontent.com/rafael-bianchi/rgt/main/install.sh 
 brew install rafael-bianchi/rgt/rgt
 ```
 
-> La formula del tap se actualiza con cada release de GitHub.
+> La fórmula del tap se actualiza con cada versión publicada en GitHub.
 
 ### Cargo
 
@@ -95,40 +95,40 @@ Descarga desde [releases](https://github.com/rafael-bianchi/rgt/releases):
 - Linux: `rgt-x86_64-unknown-linux-musl.tar.gz` / `rgt-aarch64-unknown-linux-gnu.tar.gz`
 - Windows: `rgt-x86_64-pc-windows-msvc.zip`
 
-> Los binarios de macOS y Linux se publican con cada release; los de Windows los produce el pipeline CI de releases y aparecen cuando este se ejecuta para un tag.
+> Los binarios de macOS y Linux se publican con cada release; los de Windows los produce el pipeline CI de releases y aparecen cuando este se ejecuta para una etiqueta.
 
-### Autoadministrado
-
-```bash
-rgt update          # reemplaza atomicamente el binario con la ultima release
-rgt update --check  # comprueba si hay una version nueva sin aplicarla
-```
-
-### Verificar instalacion
+### Actualización automática
 
 ```bash
-rgt status   # Muestra el estado del grafo de procedencia (un almacen nuevo empieza en 0 nodos)
+rgt update          # reemplaza atómicamente el binario con la última release
+rgt update --check  # comprueba si hay una versión nueva sin aplicarla
 ```
 
-## Inicio rapido
+### Verificar la instalación
+
+```bash
+rgt status   # Muestra el estado del grafo de procedencia (un almacén nuevo empieza en 0 nodos)
+```
+
+## Inicio rápido
 
 ```bash
 # 1. Configura hooks de procedencia para tu herramienta de IA
-rgt init -g                 # detecta automaticamente cada agente compatible instalado
-rgt init -g --agent copilot # o apunta a uno: copilot, gemini, vibe, opencode, pi, hermes, ...
-rgt init --agent cline      # los agentes de ambito proyecto usan archivos de reglas del proyecto
+rgt init -g                 # detecta automáticamente cada agente compatible instalado
+rgt init -g --agent copilot # o especifica uno: copilot, gemini, vibe, opencode, pi, hermes, ...
+rgt init --agent cline      # los agentes de ámbito de proyecto usan archivos de reglas del proyecto
 rgt init --agent codex      # Codex / Windsurf / Cline / Antigravity / Kilo usan archivos de reglas
 
 # 2. Reinicia tu herramienta de IA y luego:
 rgt record budget.csv       # el agente lee un archivo de datos y registra sus valores
 rgt status                  # inspecciona el grafo
 rgt derive --parents node_raw_X,node_raw_Y --operation EXPRESSION --expression "a - b" --result 60000
-                            # el agente registra una derivacion verificada
+                            # el agente registra una derivación verificada
 rgt query node_drv_Z        # rastrea el linaje del valor derivado
 rgt graph --format mermaid  # exporta el grafo de dependencias
 ```
 
-## Como funciona
+## Cómo funciona
 
 ```
   El agente lee un archivo de datos                    El agente calcula un valor derivado
@@ -136,24 +136,24 @@ rgt graph --format mermaid  # exporta el grafo de dependencias
             v                                                     v
   rgt hook post (hook/plugin nativo)                   rgt derive --parents <ids>
             |                                                     |
-            v                                           (verificacion contra los padres)
+            v                                  (verificación a partir de los valores padre)
   rgt record extrae {path, content}                              |
             |                                                     v
-            v                                               calculo correcto?
+            v                                               ¿cálculo correcto?
   grafo de procedencia ── rgt status ── obsoleto? ── NO ──> valor fiable
             |                                        |
-            +---------------- SI -------------------->  nodo + dependientes marcados obsoletos
+            +---------------- SÍ -------------------->  nodo + dependientes marcados obsoletos
 ```
 
 Tres estrategias mantienen fiable el grafo:
 
-1. **Captura**: los hooks/plugins nativos empujan cada archivo que el agente lee a traves de `rgt record`, de modo que los valores entran al grafo sin que el agente tenga que acordarse de llamarlo.
-2. **Verificacion**: cada `rgt derive` es "confianza pero verificacion": RGT recalcula el resultado a partir de los valores padre y rechaza los incorrectos antes de insertarlos.
+1. **Captura**: los hooks/plugins nativos envían cada archivo que el agente lee a través de `rgt record`, de modo que los valores entran al grafo sin que el agente tenga que acordarse de llamarlo.
+2. **Verificación**: cada `rgt derive` aplica el principio «confía, pero verifica»: RGT recalcula el resultado a partir de los valores padre y rechaza los incorrectos antes de insertarlos.
 3. **Obsolescencia**: cuando un archivo fuente cambia, sus nodos (y todo lo derivado de ellos) se marcan como obsoletos, de modo que se puede indicar al agente que relea.
 
 ## Comandos
 
-### Inicializacion y hooks
+### Inicialización y hooks
 ```bash
 rgt init [-g] [--force] [--agent <name>]   # configura hooks, detecta agentes instalados
 rgt hook pre|post [--agent <name>]         # captura pasiva desde el JSON de evento del agente (stdin)
@@ -163,7 +163,7 @@ rgt hook pre|post [--agent <name>]         # captura pasiva desde el JSON de eve
 ```bash
 rgt record <file>                          # extrae y rastrea valores de un archivo
 rgt derive --parents <ids> --operation <op> --expression <expr> --result <val>
-                                           # verifica y registra una derivacion
+                                           # verifica y registra una derivación
 rgt verify --parents <ids> --operation <op> --result <val>
                                            # verifica un valor derivado sin registrarlo
 rgt status [--stale-only] [--json]         # estado del grafo y obsolescencia
@@ -171,22 +171,22 @@ rgt query <node_id> [--json]               # linaje completo de un valor
 rgt graph [-f text|mermaid|dot]            # exporta el DAG de dependencias
 ```
 
-Operaciones: `EXPRESSION` (formulas como `a + b * c`) y `DATE_DIFF` (aritmetica de fechas, p. ej. `date2 - date1`). Las variables padre se asignan como `parent[0]=a, parent[1]=b, ...`.
+Operaciones: `EXPRESSION` (fórmulas como `a + b * c`) y `DATE_DIFF` (aritmética de fechas, p. ej. `date2 - date1`). Las variables padre se asignan como `parent[0]=a, parent[1]=b, ...`.
 
 ## Herramientas de IA compatibles
 
 RGT configura hooks de captura de procedencia para 13 herramientas de IA, usando el mecanismo nativo de cada agente:
 
-| Herramienta | Instalacion | Metodo |
+| Herramienta | Instalación | Método |
 |-------------|-------------|--------|
 | **Claude Code** | `rgt init -g` | hook shell PreToolUse/PostToolUse (`settings.json`) |
 | **Cursor** | `rgt init -g --agent cursor` | hook pre/postToolUse (`hooks.json`) |
 | **GitHub Copilot (VS Code)** | `rgt init -g --agent copilot` | hooks de Copilot Chat (`github.copilot.chat.hooks`) |
-| **GitHub Copilot CLI** | `rgt init -g --agent copilot` | archivo de instrucciones (directorio de config de Copilot CLI) |
+| **GitHub Copilot CLI** | `rgt init -g --agent copilot` | archivo de instrucciones (directorio de configuración de Copilot CLI) |
 | **Gemini CLI** | `rgt init -g --agent gemini` | `~/.gemini/hooks.toml` PostToolUse |
 | **Mistral Vibe** | `rgt init -g --agent vibe` | hook `pre_tool` (`hooks.toml`) + prompt |
 | **OpenCode** | `rgt init -g --agent opencode` | plugin TypeScript |
-| **Pi** | `rgt init --agent pi` (o `-g`) | extension TypeScript |
+| **Pi** | `rgt init --agent pi` (o `-g`) | extensión TypeScript |
 | **Hermes** | `rgt init --agent hermes` | plugin Python + `plugins.enabled` |
 | **Codex CLI** | `rgt init --agent codex` | instrucciones `AGENTS.md` |
 | **Windsurf** | `rgt init --agent windsurf` | `.windsurfrules` |
@@ -194,23 +194,23 @@ RGT configura hooks de captura de procedencia para 13 herramientas de IA, usando
 | **Google Antigravity** | `rgt init --agent antigravity` | `.agents/rules/antigravity-rgt-rules.md` |
 | **Kilo Code** | `rgt init --agent kilocode` | `.kilocode/rules/rgt-rules.md` |
 
-Valores `--agent` aceptados: `claude-code`, `cursor`, `codex`, `windsurf`, `copilot`, `gemini`, `vibe`, `opencode`, `pi`, `hermes`, `cline`, `antigravity`, `kilocode`, mas los alias `claude`, `roo-code`, `kilo`.
+Valores `--agent` aceptados: `claude-code`, `cursor`, `codex`, `windsurf`, `copilot`, `gemini`, `vibe`, `opencode`, `pi`, `hermes`, `cline`, `antigravity`, `kilocode`, además de los alias `claude`, `roo-code`, `kilo`.
 
 ## Datos y almacenamiento
 
-RGT guarda su grafo en `.rgt/store.db` (SQLite) en la raiz del proyecto, creado por `rgt init`. Sin servicios externos, sin telemetria, sin llamadas de red durante el funcionamiento normal.
+RGT guarda su grafo en `.rgt/store.db` (SQLite), en la raíz del proyecto; `rgt init` crea este archivo. Sin servicios externos, sin telemetría y sin llamadas de red durante el funcionamiento normal.
 
-## Documentacion
+## Documentación
 
-- **[AGENTS.md](AGENTS.md)**: instrucciones que RGT instala para los agentes de IA (como registrar y derivar)
-- **[CONTRIBUTING.md](CONTRIBUTING.md)**: guia de contribucion
+- **[AGENTS.md](AGENTS.md)**: instrucciones que RGT instala para los agentes de IA (cómo registrar y derivar)
+- **[CONTRIBUTING.md](CONTRIBUTING.md)**: guía de contribución
 - **[CHANGELOG.md](CHANGELOG.md)**: historial de releases
 
 ## Agradecimientos
 
-RGT se inspiro en [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk), un proxy CLI de alto rendimiento que comprime la salida de shell para agentes de codificacion con IA. RGT sigue el enfoque de RTK: un unico binario con integraciones de hook nativas y especificas por agente, y replica su cobertura de 13 agentes. Donde RTK filtra la salida de comandos, RGT rastrea la procedencia numerica y de fechas de lo que los agentes leen y derivan, y verifica que cada derivacion sea matematicamente correcta.
+RGT se inspiró en [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk), un proxy CLI de alto rendimiento que comprime la salida del shell para agentes de codificación con IA. RGT sigue el enfoque de RTK: un único binario con integraciones de hook nativas y específicas para cada agente, y replica su cobertura de 13 agentes. Mientras que RTK filtra la salida de comandos, RGT rastrea la procedencia de los números y las fechas que los agentes leen y derivan, y verifica que cada derivación sea matemáticamente correcta.
 
-RGT fue desarrollado con la ayuda de las herramientas de codificacion con IA [DeepSeek](https://www.deepseek.com/).
+RGT fue desarrollado con la ayuda de las herramientas de codificación con IA de [DeepSeek](https://www.deepseek.com/).
 
 ## Contribuir
 
@@ -218,4 +218,4 @@ RGT fue desarrollado con la ayuda de las herramientas de codificacion con IA [De
 
 ## Licencia
 
-Licenciado bajo la [Apache License, Version 2.0](LICENSE).
+Distribuido bajo la [Licencia Apache, versión 2.0](LICENSE).
