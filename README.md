@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="docs/rgt_crab.jpeg" alt="RGT — Rust Graph Tracker" width="200">
+</p>
+
+<p align="center">
   <strong>RGT — Rust Graph Tracker</strong>
 </p>
 
