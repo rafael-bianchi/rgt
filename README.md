@@ -27,6 +27,18 @@
 
 ---
 
+<p align="center">
+  <a href="README.md">English</a> &bull;
+  <a href="README_fr.md">Francais</a> &bull;
+  <a href="README_zh.md">中文</a> &bull;
+  <a href="README_ja.md">日本語</a> &bull;
+  <a href="README_ko.md">한국어</a> &bull;
+  <a href="README_es.md">Espanol</a> &bull;
+  <a href="README_pt.md">Português</a>
+</p>
+
+---
+
 RGT gives AI coding agents a persistent, queryable memory of every number and date they read from source files or derive through calculations, then **verifies each derivation is mathematically correct**. Single Rust binary, 13 supported AI coding tools, hooks that record data only and never rewrite commands.
 
 ## What RGT Does
@@ -199,6 +211,8 @@ RGT stores its graph in `.rgt/store.db` (SQLite) in the project root, created by
 ## Acknowledgments
 
 RGT was inspired by [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk), a high-performance CLI proxy that compresses shell output for AI coding agents. RGT follows RTK's approach of a single binary with native, agent-specific hook integrations, and mirrors its 13-agent coverage. Where RTK filters command output, RGT tracks the numeric and date provenance of what agents read and derive, and verifies each derivation is mathematically correct.
+
+RGT was built with assistance from [DeepSeek](https://www.deepseek.com/) AI coding tools.
 
 ## Contributing
 
