@@ -195,6 +195,10 @@ RGT stores its graph in `.rgt/store.db` (SQLite) in the project root, created by
 - **[CHANGELOG.md](CHANGELOG.md)** — release history
 - **[specs/](specs/)** — feature specifications, plans, and research
 
+## Acknowledgments
+
+RGT was inspired by [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk), a high-performance CLI proxy that compresses shell output for AI coding agents. RGT follows RTK's approach of a single binary with native, agent-specific hook integrations, and mirrors its 13-agent coverage. Where RTK filters command output, RGT tracks the numeric and date provenance of what agents read and derive — and verifies each derivation is mathematically correct.
+
 ## Contributing
 
 Contributions welcome! Please open an issue or PR on [GitHub](https://github.com/rafael-bianchi/rgt).
