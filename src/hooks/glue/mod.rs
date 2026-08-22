@@ -3,7 +3,7 @@
 //! These constants are written verbatim by the installer to each agent's
 //! config path at `rgt init` time (constitution I Agent-Side Glue Exemption).
 //! They are thin delegates only: they parse the agent's native event JSON and
-//! invoke the `rgt` CLI as a subprocess — zero business logic (constitution
+//! invoke the `rgt` CLI as a subprocess: zero business logic (constitution
 //! VIII). Every glue artifact fails open: if the `rgt` binary or the agent's
 //! runtime is absent, execution is a no-op that never blocks the agent.
 
@@ -95,7 +95,7 @@ pub const CLINE_RULES: &str = "\n## RGT Integration\n\
     \n\
     ### Recording Values\n\
     After reading a data file containing numbers or dates, record its values:\n\
-    - `rgt record <file>` — extracts and tracks numeric/date values from file content\n\
+    - `rgt record <file>`: extracts and tracks numeric/date values from file content\n\
     - Run `rgt status` to check what's tracked\n\
     \n\
     ### Recording Derivations\n\
@@ -104,9 +104,9 @@ pub const CLINE_RULES: &str = "\n## RGT Integration\n\
     - The derivation is verified before recording; wrong results are rejected (exit 1)\n\
     \n\
     ### Inspecting the Graph\n\
-    - `rgt status` — see all tracked nodes and staleness state\n\
-    - `rgt query <node_id>` — trace provenance lineage for a value\n\
-    - `rgt graph` — export the dependency graph as text or mermaid\n\
+    - `rgt status`: see all tracked nodes and staleness state\n\
+    - `rgt query <node_id>`: trace provenance lineage for a value\n\
+    - `rgt graph`: export the dependency graph as text or mermaid\n\
     \n\
     Run `rgt --help` for all available commands.\n";
 
@@ -116,7 +116,7 @@ pub const ANTIGRAVITY_RULES: &str = "# RGT Integration\n\
     \n\
     ## Recording Values\n\
     After reading a data file containing numbers or dates, record its values:\n\
-    - `rgt record <file>` — extracts and tracks numeric/date values from file content\n\
+    - `rgt record <file>`: extracts and tracks numeric/date values from file content\n\
     - Run `rgt status` to check what's tracked\n\
     \n\
     ## Recording Derivations\n\
@@ -125,9 +125,9 @@ pub const ANTIGRAVITY_RULES: &str = "# RGT Integration\n\
     - The derivation is verified before recording; wrong results are rejected (exit 1)\n\
     \n\
     ## Inspecting the Graph\n\
-    - `rgt status` — see all tracked nodes and staleness state\n\
-    - `rgt query <node_id>` — trace provenance lineage for a value\n\
-    - `rgt graph` — export the dependency graph as text or mermaid\n\
+    - `rgt status`: see all tracked nodes and staleness state\n\
+    - `rgt query <node_id>`: trace provenance lineage for a value\n\
+    - `rgt graph`: export the dependency graph as text or mermaid\n\
     \n\
     Run `rgt --help` for all available commands.\n";
 
@@ -137,7 +137,7 @@ pub const KILO_RULES: &str = "# RGT Integration\n\
     \n\
     ## Recording Values\n\
     After reading a data file containing numbers or dates, record its values:\n\
-    - `rgt record <file>` — extracts and tracks numeric/date values from file content\n\
+    - `rgt record <file>`: extracts and tracks numeric/date values from file content\n\
     - Run `rgt status` to check what's tracked\n\
     \n\
     ## Recording Derivations\n\
@@ -146,9 +146,9 @@ pub const KILO_RULES: &str = "# RGT Integration\n\
     - The derivation is verified before recording; wrong results are rejected (exit 1)\n\
     \n\
     ## Inspecting the Graph\n\
-    - `rgt status` — see all tracked nodes and staleness state\n\
-    - `rgt query <node_id>` — trace provenance lineage for a value\n\
-    - `rgt graph` — export the dependency graph as text or mermaid\n\
+    - `rgt status`: see all tracked nodes and staleness state\n\
+    - `rgt query <node_id>`: trace provenance lineage for a value\n\
+    - `rgt graph`: export the dependency graph as text or mermaid\n\
     \n\
     Run `rgt --help` for all available commands.\n";
 
@@ -170,7 +170,7 @@ pub const COPILOT_CLI_RULES: &str = "\n## RGT Integration\n\
     \n\
     ### Recording Values\n\
     After reading a data file containing numbers or dates, record its values:\n\
-    - `rgt record <file>` — extracts and tracks numeric/date values from file content\n\
+    - `rgt record <file>`: extracts and tracks numeric/date values from file content\n\
     - Run `rgt status` to check what's tracked\n\
     \n\
     ### Recording Derivations\n\
@@ -179,9 +179,9 @@ pub const COPILOT_CLI_RULES: &str = "\n## RGT Integration\n\
     - The derivation is verified before recording; wrong results are rejected (exit 1)\n\
     \n\
     ### Inspecting the Graph\n\
-    - `rgt status` — see all tracked nodes and staleness state\n\
-    - `rgt query <node_id>` — trace provenance lineage for a value\n\
-    - `rgt graph` — export the dependency graph as text or mermaid\n\
+    - `rgt status`: see all tracked nodes and staleness state\n\
+    - `rgt query <node_id>`: trace provenance lineage for a value\n\
+    - `rgt graph`: export the dependency graph as text or mermaid\n\
     \n\
     Run `rgt --help` for all available commands.\n";
 

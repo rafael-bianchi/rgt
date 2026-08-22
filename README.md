@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/rgt_crab.jpeg" alt="RGT — Rust Graph Tracker" width="200">
+  <img src="docs/rgt_crab.jpeg" alt="RGT: Rust Graph Tracker" width="200">
 </p>
 
 <p align="center">
-  <strong>RGT — Rust Graph Tracker</strong>
+  <strong>RGT: Rust Graph Tracker</strong>
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@
 
 ---
 
-RGT gives AI coding agents a persistent, queryable memory of every number and date they read from source files or derive through calculations — then **verifies each derivation is mathematically correct**. Single Rust binary, 13 supported AI coding tools, hooks that record data only and never rewrite commands.
+RGT gives AI coding agents a persistent, queryable memory of every number and date they read from source files or derive through calculations, then **verifies each derivation is mathematically correct**. Single Rust binary, 13 supported AI coding tools, hooks that record data only and never rewrite commands.
 
 ## What RGT Does
 
@@ -36,7 +36,7 @@ Agents reason over files that change and arithmetic they can get wrong. RGT trac
 | Operation | What RGT does |
 |-----------|---------------|
 | `rgt record <file>` | Extracts every number and date from a file into the provenance graph |
-| `rgt status` | Reports total, active, and stale nodes — which values are still trustworthy |
+| `rgt status` | Reports total, active, and stale nodes, which values are still trustworthy |
 | `rgt derive` | Verifies an agent-computed value against its parents **before** recording it |
 | `rgt query <id>` | Traces a value's lineage back to its source files |
 | `rgt graph` | Exports the dependency DAG (text, Mermaid, or DOT) |
@@ -44,7 +44,7 @@ Agents reason over files that change and arithmetic they can get wrong. RGT trac
 
 ## Why Provenance Tracking Matters
 
-RGT does not measure savings — it prevents silent errors. Two failure modes motivate it:
+RGT does not measure savings: it prevents silent errors. Two failure modes motivate it:
 
 1. **Stale data**: an agent reads a file, later the file changes, and the agent keeps reasoning from the old numbers. RGT marks the affected root nodes **stale** and cascades staleness through every derived value that depends on them (`rgt status`).
 2. **Wrong math**: an agent computes `revenue = price * quantity` and gets it wrong. RGT re-computes the expression from the parent values in the database and **rejects** mismatched derivations (exit 1) before they enter the graph.
@@ -137,9 +137,9 @@ rgt graph --format mermaid  # export the dependency graph
 
 Three strategies keep the graph trustworthy:
 
-1. **Capture** — native hooks/plugins push every file an agent reads through `rgt record`, so values land in the graph without the agent remembering to call it.
-2. **Verification** — every `rgt derive` is trust-but-verify: RGT re-computes the result from parent values and rejects wrong ones before insertion.
-3. **Staleness** — when a source file changes, its nodes (and everything derived from them) are flagged stale, so the agent can be told to re-read.
+1. **Capture**: native hooks/plugins push every file an agent reads through `rgt record`, so values land in the graph without the agent remembering to call it.
+2. **Verification**: every `rgt derive` is trust-but-verify: RGT re-computes the result from parent values and rejects wrong ones before insertion.
+3. **Staleness**: when a source file changes, its nodes (and everything derived from them) are flagged stale, so the agent can be told to re-read.
 
 ## Commands
 
@@ -184,7 +184,7 @@ RGT configures provenance-capture hooks for 13 AI coding tools, using each agent
 | **Google Antigravity** | `rgt init --agent antigravity` | `.agents/rules/antigravity-rgt-rules.md` |
 | **Kilo Code** | `rgt init --agent kilocode` | `.kilocode/rules/rgt-rules.md` |
 
-Accepted `--agent` values: `claude-code`, `cursor`, `codex`, `windsurf`, `copilot`, `gemini`, `vibe`, `opencode`, `pi`, `hermes`, `cline`, `antigravity`, `kilocode` — plus aliases `claude`, `roo-code`, `kilo`.
+Accepted `--agent` values: `claude-code`, `cursor`, `codex`, `windsurf`, `copilot`, `gemini`, `vibe`, `opencode`, `pi`, `hermes`, `cline`, `antigravity`, `kilocode`, plus aliases `claude`, `roo-code`, `kilo`.
 
 ## Data & Storage
 
@@ -192,13 +192,13 @@ RGT stores its graph in `.rgt/store.db` (SQLite) in the project root, created by
 
 ## Documentation
 
-- **[AGENTS.md](AGENTS.md)** — instructions RGT installs for AI agents (how to record and derive)
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — contribution guide
-- **[CHANGELOG.md](CHANGELOG.md)** — release history
+- **[AGENTS.md](AGENTS.md)**: instructions RGT installs for AI agents (how to record and derive)
+- **[CONTRIBUTING.md](CONTRIBUTING.md)**: contribution guide
+- **[CHANGELOG.md](CHANGELOG.md)**: release history
 
 ## Acknowledgments
 
-RGT was inspired by [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk), a high-performance CLI proxy that compresses shell output for AI coding agents. RGT follows RTK's approach of a single binary with native, agent-specific hook integrations, and mirrors its 13-agent coverage. Where RTK filters command output, RGT tracks the numeric and date provenance of what agents read and derive — and verifies each derivation is mathematically correct.
+RGT was inspired by [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk), a high-performance CLI proxy that compresses shell output for AI coding agents. RGT follows RTK's approach of a single binary with native, agent-specific hook integrations, and mirrors its 13-agent coverage. Where RTK filters command output, RGT tracks the numeric and date provenance of what agents read and derive, and verifies each derivation is mathematically correct.
 
 ## Contributing
 

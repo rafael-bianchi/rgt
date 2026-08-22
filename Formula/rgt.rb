@@ -14,10 +14,10 @@ class Rgt < Formula
   on_linux do
     if Hardware::CPU.intel?
       url "#{homepage}/releases/download/v#{version}/rgt-v#{version}-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "REPLACE_WITH_SHA256_X86_64_LINUX"
+      sha256 "0637ce8f7fe1c66887fead8bc99220638f83030984f9549085503bef0787dda4"
     elsif Hardware::CPU.arm?
       url "#{homepage}/releases/download/v#{version}/rgt-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "REPLACE_WITH_SHA256_AARCH64_LINUX"
+      sha256 "a3a2bbccfeccb3a337be66569e3c337868428319407a78962f7b2cd273b501a9"
     end
   end
 

@@ -8,7 +8,7 @@ RGT configures provenance-capture hooks for all 13 RTK-supported agents: Claude 
 
 ### Recording Values
 After reading a data file containing numbers or dates, record its values:
-- `rgt record <file>` — extracts and tracks numeric/date values from file content
+- `rgt record <file>`: extracts and tracks numeric/date values from file content
 - Run `rgt status` to check what's tracked
 
 ### Recording Derivations
@@ -17,8 +17,8 @@ After computing a derived value from tracked root nodes:
 - The derivation is verified before recording; wrong results are rejected (exit 1)
 
 ### Inspecting the Graph
-- `rgt status` — see all tracked nodes and staleness state
-- `rgt query <node_id>` — trace provenance lineage for a value
-- `rgt graph` — export the dependency graph as text or mermaid
+- `rgt status`: see all tracked nodes and staleness state
+- `rgt query <node_id>`: trace provenance lineage for a value
+- `rgt graph`: export the dependency graph as text or mermaid
 
 Run `rgt --help` for all available commands.
