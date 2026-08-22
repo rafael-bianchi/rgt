@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/rafael-bianchi/rgt/compare/v0.3.2...v0.4.0) (2026-08-22)
+
+
+### Features
+
+* expand agent hook coverage to all 13 RTK-supported agents: `--agent` flag, auto-detection of installed agents, per-agent stdin normalizers, and thin glue plugins/rules files for Copilot, Gemini, Mistral Vibe, OpenCode, Pi, Hermes, Cline/Roo Code, Antigravity, and Kilo. Fix Copilot CLI config path resolution on macOS ([7876fa8](https://github.com/rafael-bianchi/rgt/commit/7876fa88c0c8ae65fdf3e987856c7e915a9b166b))
+
 ## [0.3.2](https://github.com/rafael-bianchi/rgt/compare/v0.3.1...v0.3.2) (2026-08-10)
 
 
