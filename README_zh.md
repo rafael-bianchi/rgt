@@ -95,7 +95,7 @@ cargo install --git https://github.com/rafael-bianchi/rgt
 - Linux：`rgt-x86_64-unknown-linux-musl.tar.gz` / `rgt-aarch64-unknown-linux-gnu.tar.gz`
 - Windows：`rgt-x86_64-pc-windows-msvc.zip`
 
-> macOS 和 Linux 二进制随每次 release 发布；Windows 二进制由 release CI 流水线生成，并在流水线针对相应 tag 运行后提供下载。
+> macOS、Linux 和 Windows 的预编译二进制随每次 release 发布。
 
 ### 自我更新
 

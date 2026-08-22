@@ -95,7 +95,7 @@ Baixe em [releases](https://github.com/rafael-bianchi/rgt/releases):
 - Linux: `rgt-x86_64-unknown-linux-musl.tar.gz` / `rgt-aarch64-unknown-linux-gnu.tar.gz`
 - Windows: `rgt-x86_64-pc-windows-msvc.zip`
 
-> Os binários de macOS e Linux são publicados a cada release; os de Windows são produzidos pelo pipeline de release do CI e aparecem depois que o pipeline é executado para uma tag.
+> Binários pré-compilados para macOS, Linux e Windows são publicados a cada release.
 
 ### Atualização automática
 

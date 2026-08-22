@@ -95,7 +95,7 @@ cargo install --git https://github.com/rafael-bianchi/rgt
 - Linux：`rgt-x86_64-unknown-linux-musl.tar.gz` / `rgt-aarch64-unknown-linux-gnu.tar.gz`
 - Windows：`rgt-x86_64-pc-windows-msvc.zip`
 
-> macOS と Linux のバイナリは各 release で公開されます。Windows バイナリは、tag に対して release CI パイプラインが実行された後に公開されます。
+> macOS、Linux、Windows のプリビルドバイナリは各 release で公開されます。
 
 ### 自己更新
 
