@@ -161,6 +161,17 @@ rgt init [-g] [--force] [--agent <name>]   # configure hooks, detect installed a
 rgt hook pre|post [--agent <name>]         # passive capture from agent event JSON (stdin)
 ```
 
+`rgt init` **never destroys your existing configuration**. It merges RGT's hook
+entries into your agent config additively — JSON/JSONC settings (comments and
+trailing commas are tolerated and preserved), TOML configs, and rules files keep
+every other hook, keybinding, plugin, and note byte-for-byte. Re-running without
+`--force` is a no-op; `--force` refreshes only RGT's own delimited block. If a
+config file can't be parsed or safely merged, that agent is reported with a
+recoverable error and a non-zero exit — other agents are still configured, and a
+`<file>.rgt.bak` backup is kept before any existing file is rewritten.
+Exit codes: `0` = success, `1` = at least one agent failed, `2` = invalid
+`--agent` name.
+
 ### Provenance
 ```bash
 rgt record <file>                          # extract and track values from a file

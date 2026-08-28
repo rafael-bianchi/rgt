@@ -19,7 +19,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, None).is_ok());
+        assert!(execute_init(false, true, Some("codex")).is_ok());
 
         let file_path = dir.path().join("data.csv");
         let mut f = fs::File::create(&file_path).unwrap();
@@ -34,7 +34,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, None).is_ok());
+        assert!(execute_init(false, true, Some("codex")).is_ok());
 
         let result = execute_record("nonexistent.csv", false);
         assert!(result.is_err());
@@ -46,7 +46,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, None).is_ok());
+        assert!(execute_init(false, true, Some("codex")).is_ok());
 
         let file_path = dir.path().join("empty.txt");
         fs::File::create(&file_path).unwrap();
@@ -60,7 +60,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, None).is_ok());
+        assert!(execute_init(false, true, Some("codex")).is_ok());
 
         let file_path = dir.path().join("stdin_test.csv");
         let mut f = fs::File::create(&file_path).unwrap();

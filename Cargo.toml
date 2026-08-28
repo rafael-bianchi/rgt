@@ -37,6 +37,8 @@ zip = "2.2"
 walkdir = "2.5"
 tempfile = "3.10"
 evalexpr = "13.1.0"
+jsonc-parser = { version = "0.33.1", features = ["cst"] }
+toml_edit = "0.25.13"
 
 [dev-dependencies]
 
@@ -75,6 +77,10 @@ path = "tests/unit/test_record.rs"
 [[test]]
 name = "test_hook_parsers"
 path = "tests/unit/hook_parsers.rs"
+
+[[test]]
+name = "test_hook_editors"
+path = "tests/unit/hook_editors.rs"
 
 [[test]]
 name = "test_detection"

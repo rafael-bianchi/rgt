@@ -187,3 +187,12 @@ pub const COPILOT_CLI_RULES: &str = "\n## RGT Integration\n\
 
 /// Marker used to identify RGT-managed sections/files for idempotent rewrites.
 pub const RGT_MARKER: &str = "## RGT Integration";
+
+/// End marker delimiting RGT-owned blocks in text/rules files. `rgt init --force`
+/// replaces only the bytes between `RGT_MARKER` and this marker, so user content
+/// below the block is preserved (findings §2.4).
+pub const RGT_END_MARKER: &str = "<!-- /RGT Integration -->";
+
+/// `RGT_END_MARKER` on its own line, for appending to block constants at write
+/// time.
+pub const RGT_END_MARKER_LINE: &str = "\n<!-- /RGT Integration -->\n";
