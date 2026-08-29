@@ -337,4 +337,33 @@ mod tests {
             stderr
         );
     }
+    // 025 / T008 (US2): the stored fingerprint hashes the exact extracted bytes.
+    #[test]
+    fn recorded_fingerprint_hashes_the_extracted_bytes() {
+        use rgt::detection::compute_blake3_hash_from_bytes;
+        use rgt::store::queries::get_source_document_by_path;
+        use rgt::store::DbStore;
+
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        execute_init(false, true, Some("codex")).unwrap();
+
+        let file_path = dir.path().join("data.csv");
+        let bytes = b"revenue,120000\ncosts,60000\n";
+        std::fs::write(&file_path, bytes).unwrap();
+
+        let path_str = file_path.to_string_lossy().to_string();
+        execute_record(&path_str, false).unwrap();
+
+        let db = DbStore::open_in_project(dir.path()).unwrap();
+        let doc = get_source_document_by_path(db.conn(), &path_str)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            doc.blake3_hash,
+            compute_blake3_hash_from_bytes(bytes),
+            "stored hash must equal the hash of the exact bytes extracted"
+        );
+    }
 }

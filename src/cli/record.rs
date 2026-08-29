@@ -1,4 +1,4 @@
-use crate::detection::{compute_blake3_hash, get_metadata_snapshot};
+use crate::detection::{compute_blake3_hash_from_bytes, get_metadata_snapshot};
 use crate::hooks::parser::extract_values_from_content;
 use crate::store::queries::{insert_tracked_node, upsert_source_document};
 use crate::store::DbStore;
@@ -31,28 +31,40 @@ pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
         return Err(format!("file not found: {}", file));
     }
 
-    let content = if stdin {
+    // FR-002: hash the exact in-memory bytes that are parsed for values (no
+    // second file read — avoids the §7.4 TOCTOU between extraction and hashing).
+    let (content, hash) = if stdin {
         let mut buf = Vec::new();
         io::stdin()
             .read_to_end(&mut buf)
             .map_err(|e| format!("failed to read stdin: {}", e))?;
-        read_utf8_content(file, buf)?
+        let hash = compute_blake3_hash_from_bytes(&buf);
+        let content = read_utf8_content(file, buf)?;
+        (content, hash)
     } else {
         let bytes = fs::read(file).map_err(|e| format!("failed to read file: {}", e))?;
-        read_utf8_content(file, bytes)?
+        let hash = compute_blake3_hash_from_bytes(&bytes);
+        let content = read_utf8_content(file, bytes)?;
+        (content, hash)
     };
 
     let meta =
         get_metadata_snapshot(path_obj).map_err(|e| format!("failed to get metadata: {}", e))?;
-    let hash =
-        compute_blake3_hash(path_obj).map_err(|e| format!("failed to compute hash: {}", e))?;
 
     let mut db =
         DbStore::open_in_project(".").map_err(|e| format!("failed to open database: {}", e))?;
     let conn = db.conn_mut();
 
-    let doc = upsert_source_document(conn, file, meta.mtime_nsec, meta.file_size, &hash)
-        .map_err(|e| format!("failed to upsert source document: {}", e))?;
+    let doc = upsert_source_document(
+        conn,
+        file,
+        meta.mtime_nsec,
+        meta.file_size,
+        &hash,
+        meta.dev,
+        meta.ino,
+    )
+    .map_err(|e| format!("failed to upsert source document: {}", e))?;
 
     let mut extracted = extract_values_from_content(&content);
 

@@ -8,7 +8,13 @@ fn main() {
 
     let start = Instant::now();
     let meta = rgt::detection::get_metadata_snapshot(&file_path).unwrap();
-    let changed = rgt::detection::tier1_check_changed(&meta, meta.mtime_nsec, meta.file_size);
+    let changed = rgt::detection::tier1_check_changed(
+        &meta,
+        meta.mtime_nsec,
+        meta.file_size,
+        meta.dev,
+        meta.ino,
+    );
     let elapsed = start.elapsed();
 
     assert!(!changed);

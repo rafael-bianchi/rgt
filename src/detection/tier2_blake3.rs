@@ -18,3 +18,12 @@ pub fn compute_blake3_hash<P: AsRef<Path>>(path: P) -> io::Result<String> {
 
     Ok(hasher.finalize().to_hex().to_string())
 }
+
+/// Computes the BLAKE3 hex hash of an in-memory byte slice (used to hash the
+/// exact bytes that were extracted — no second file read, avoiding the §7.4
+/// TOCTOU).
+pub fn compute_blake3_hash_from_bytes(bytes: &[u8]) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(bytes);
+    hasher.finalize().to_hex().to_string()
+}
