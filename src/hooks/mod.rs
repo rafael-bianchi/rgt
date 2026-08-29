@@ -71,7 +71,8 @@ pub fn handle_passive_hook_event(_event_type: &str, agent: Option<&str>) -> io::
     let now = Utc::now();
 
     for ext in extracted {
-        let node_id = TrackedNode::generate_root_id(path, ext.line_number, &ext.value);
+        let node_id =
+            TrackedNode::generate_root_id(path, ext.line_number, ext.occurrence, &ext.value);
         let node = TrackedNode {
             id: node_id,
             node_type: NodeType::Root,

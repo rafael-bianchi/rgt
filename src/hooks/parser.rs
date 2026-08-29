@@ -25,6 +25,10 @@ pub struct HookPayload {
 pub struct ExtractedValue {
     pub value: ValueData,
     pub line_number: Option<u32>,
+    /// 0-based index of this value within its line's emitted values (dates
+    /// first, then non-masked numbers). Disambiguates identical values on the
+    /// same line (FR-002).
+    pub occurrence: u32,
 }
 
 /// Normalized capture model consumed by `handle_passive_hook_event`.
@@ -41,7 +45,10 @@ pub fn parse_hook_payload(json_str: &str) -> Result<HookPayload, serde_json::Err
 
 /// Extracts numeric values and ISO-8601 dates from text content, line by line.
 ///
-/// Returns the extracted values with their source line numbers (1-based).
+/// Returns the extracted values with their source line numbers (1-based) and a
+/// per-line occurrence index (FR-002). Recognized ISO-8601 dates emit exactly
+/// one `Date` each, and their digit components are masked from the number scan
+/// so no spurious `Number` nodes leak from a date's year/month/day (FR-001).
 pub fn extract_values_from_content(content: &str) -> Vec<ExtractedValue> {
     let mut results = Vec::new();
     let iso_date_regex =
@@ -50,7 +57,11 @@ pub fn extract_values_from_content(content: &str) -> Vec<ExtractedValue> {
 
     for (idx, line) in content.lines().enumerate() {
         let line_num = (idx + 1) as u32;
+        let mut occurrence: u32 = 0;
 
+        // FR-001: recognize dates first and record their byte spans, so the
+        // number scan can skip (mask) everything inside a recognized date.
+        let mut date_spans: Vec<(usize, usize)> = Vec::new();
         for cap in iso_date_regex.captures_iter(line) {
             if let Some(m) = cap.get(1) {
                 let s = m.as_str();
@@ -65,21 +76,33 @@ pub fn extract_values_from_content(content: &str) -> Vec<ExtractedValue> {
                 };
 
                 if let Some(valid_dt) = dt {
+                    date_spans.push((m.start(), m.end()));
                     results.push(ExtractedValue {
                         value: ValueData::Date(valid_dt),
                         line_number: Some(line_num),
+                        occurrence,
                     });
+                    occurrence += 1;
                 }
             }
         }
 
         for cap in number_regex.captures_iter(line) {
             if let Some(m) = cap.get(1) {
+                // Skip any number match that lies inside a recognized date.
+                if date_spans
+                    .iter()
+                    .any(|(s, e)| m.start() >= *s && m.end() <= *e)
+                {
+                    continue;
+                }
                 if let Ok(num) = m.as_str().parse::<f64>() {
                     results.push(ExtractedValue {
                         value: ValueData::Number(num),
                         line_number: Some(line_num),
+                        occurrence,
                     });
+                    occurrence += 1;
                 }
             }
         }

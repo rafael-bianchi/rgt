@@ -1,7 +1,7 @@
 use crate::store::queries::{get_tracked_node, insert_derivation_edge, insert_tracked_node};
 use crate::store::DbStore;
 use crate::types::{NodeType, TrackedNode, ValueData};
-use crate::verify::{valid_operation, validate_expression, verify};
+use crate::verify::{valid_operation, validate_expression, verify, MAX_PARENTS};
 use chrono::Duration;
 use std::process;
 
@@ -11,9 +11,9 @@ pub fn execute_derive(
     expression: Option<&str>,
     result: f64,
 ) -> Result<(), String> {
-    // FR-002 / FR-001: validate operation and (for EXPRESSION) the expression
-    // up front — invalid input is exit 2, never a silent skip, and never a
-    // record of an unverified value.
+    // FR-002 / FR-001 / FR-005: validate operation, expression (for
+    // EXPRESSION), and parent count up front — invalid input is exit 2, never
+    // a silent skip, and never a record of an unverified value.
     if !valid_operation(operation) {
         eprintln!(
             "Error: unknown operation '{}' — valid operations: EXPRESSION, DATE_DIFF",
@@ -27,6 +27,9 @@ pub fn execute_derive(
                 eprintln!("Error: invalid --expression: {}", e);
                 process::exit(2);
             }
+        } else {
+            eprintln!("Error: Missing --expression for EXPRESSION operation");
+            process::exit(2);
         }
     }
 
@@ -38,6 +41,14 @@ pub fn execute_derive(
 
     if parent_ids.is_empty() {
         eprintln!("Error: --parents must contain at least one node ID");
+        process::exit(2);
+    }
+    if parent_ids.len() > MAX_PARENTS {
+        eprintln!(
+            "Error: at most {} parents supported (variables a-z), got {}",
+            MAX_PARENTS,
+            parent_ids.len()
+        );
         process::exit(2);
     }
 
@@ -61,12 +72,7 @@ pub fn execute_derive(
     }
 
     match operation {
-        "EXPRESSION" => {
-            if expression.is_none() {
-                eprintln!("Error: Missing --expression for EXPRESSION operation");
-                process::exit(2);
-            }
-        }
+        "EXPRESSION" => {}
         "DATE_DIFF" => {
             if parent_ids.len() != 2 {
                 eprintln!(
