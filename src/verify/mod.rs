@@ -9,6 +9,10 @@ use std::process;
 /// The only valid `--operation` values (case-sensitive).
 pub const VALID_OPERATIONS: [&str; 2] = ["EXPRESSION", "DATE_DIFF"];
 
+/// Maximum number of `--parents` (variables `a`–`z`). Exceeding it is invalid
+/// input (FR-005; `contracts/verify-behavior.md`).
+pub const MAX_PARENTS: usize = 26;
+
 /// Whether `op` is a valid `--operation` value (FR-002): case-sensitive
 /// allow-list. Casing slips (`expression`, `Expression`, `date_diff`) are
 /// invalid input, never silently skipped.
@@ -49,8 +53,9 @@ pub fn verify(
 
 /// CLI entry point for `rgt verify`. Handles DB access, error formatting, and exit codes.
 pub fn run_verify_cli(parents: &str, operation: &str, expression: Option<&str>, result: f64) {
-    // FR-002 / FR-001: validate operation and (for EXPRESSION) the expression
-    // up front — invalid input is exit 2, never a silent pass-through.
+    // FR-002 / FR-001 / FR-005: validate operation, expression (for
+    // EXPRESSION), and parent count up front — invalid input is exit 2, never
+    // a silent pass-through.
     if !valid_operation(operation) {
         eprintln!(
             "Error: unknown operation '{}' — valid operations: EXPRESSION, DATE_DIFF",
@@ -64,10 +69,22 @@ pub fn run_verify_cli(parents: &str, operation: &str, expression: Option<&str>, 
                 eprintln!("Error: invalid --expression: {}", e);
                 process::exit(2);
             }
+        } else {
+            eprintln!("Error: Missing --expression for EXPRESSION operation");
+            process::exit(2);
         }
     }
 
     let parent_ids: Vec<String> = parents.split(',').map(|s| s.trim().to_string()).collect();
+
+    if parent_ids.len() > MAX_PARENTS {
+        eprintln!(
+            "Error: at most {} parents supported (variables a-z), got {}",
+            MAX_PARENTS,
+            parent_ids.len()
+        );
+        process::exit(2);
+    }
 
     let db = match crate::store::DbStore::open_in_project(".") {
         Ok(db) => db,

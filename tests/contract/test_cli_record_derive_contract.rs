@@ -143,4 +143,105 @@ mod tests {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+
+    // -----------------------------------------------------------------------
+    // 021 / convergence T018: missing --expression and >26 parents are exit 2
+    // (invalid input) at the CLI layer.
+    // -----------------------------------------------------------------------
+
+    fn twenty_seven_parents() -> String {
+        (0..27)
+            .map(|i| format!("id{}", i))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    #[test]
+    fn test_verify_more_than_26_parents_exits_2() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args([
+                "verify",
+                "--parents",
+                &twenty_seven_parents(),
+                "--operation",
+                "EXPRESSION",
+                "--expression",
+                "a",
+                "--result",
+                "1",
+            ])
+            .current_dir(dir.path())
+            .output()
+            .expect("spawn rgt verify");
+
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("at most 26 parents"), "{}", stderr);
+    }
+
+    #[test]
+    fn test_derive_more_than_26_parents_exits_2() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args([
+                "derive",
+                "--parents",
+                &twenty_seven_parents(),
+                "--operation",
+                "EXPRESSION",
+                "--expression",
+                "a",
+                "--result",
+                "1",
+            ])
+            .current_dir(dir.path())
+            .output()
+            .expect("spawn rgt derive");
+
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn test_verify_missing_expression_exits_2() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args([
+                "verify",
+                "--parents",
+                "x",
+                "--operation",
+                "EXPRESSION",
+                "--result",
+                "1",
+            ])
+            .current_dir(dir.path())
+            .output()
+            .expect("spawn rgt verify");
+
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("Missing --expression"), "{}", stderr);
+    }
 }

@@ -71,12 +71,12 @@ pub fn verify_expression(
     // FR-001: reject over-limit expressions before any evaluation.
     validate_expression(expression)?;
 
-    // FR-005: at most 26 parents (variables a-z); never rely on unchecked
+    // FR-005: at most MAX_PARENTS (variables a-z); never rely on unchecked
     // `u8` arithmetic for the variable name.
-    if parents.len() > PARENT_VARIABLES.len() {
+    if parents.len() > super::MAX_PARENTS {
         return Err(format!(
             "at most {} parents supported (variables a-z), got {}",
-            PARENT_VARIABLES.len(),
+            super::MAX_PARENTS,
             parents.len()
         ));
     }
