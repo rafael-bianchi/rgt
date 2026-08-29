@@ -80,3 +80,27 @@ fn rgt_policy_targets_rgt_repo() {
     let s = format!("{policy:?}");
     assert!(s.contains("rafael-bianchi") || s.contains("rgt"), "{s}");
 }
+
+/// Verifies the production policy against a REAL `rafael-bianchi/rgt`
+/// attestation (convergence task T024). Skipped until the first attested
+/// release ships and `tests/fixtures/rgt/` is populated (see the fixture
+/// README for the capture procedure).
+#[test]
+fn verifies_real_rgt_bundle_when_fixture_present() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rgt");
+    let bundle_path = dir.join("rgt-bundle.json");
+    if !bundle_path.exists() {
+        eprintln!(
+            "skipping: no real rgt attestation fixture yet (T024, gated on first attested release)"
+        );
+        return;
+    }
+    let digest = std::fs::read_to_string(dir.join("artifact.sha256"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let bundle_json = std::fs::read(&bundle_path).unwrap();
+    let policy = rgt::updater::attestation::rgt_policy().unwrap();
+    verify_bundle(&bundle_json, &digest, &policy)
+        .expect("real rafael-bianchi/rgt bundle must verify under the production policy");
+}

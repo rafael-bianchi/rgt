@@ -60,7 +60,7 @@ fn fetch_release_from_url(url: &str, token: Option<&str>) -> Result<GitHubReleas
         let err_str = e.to_string();
         if err_str.contains("status 429") {
             "GitHub API rate limit exceeded. Set GITHUB_TOKEN or wait before retrying.".to_string()
-        } else if err_str.contains("status 404") {
+        } else if err_str.contains("404") {
             format!("Release not found at {}", url)
         } else {
             format!("Failed to fetch release: {}", err_str)

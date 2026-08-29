@@ -35,6 +35,7 @@ mod tests {
         download_ok: bool,
         checksum_result: Option<bool>,
         attestation_result: Result<(), String>,
+        fetch_error: Option<String>,
     }
 
     impl StubIo {
@@ -44,13 +45,17 @@ mod tests {
                 download_ok: true,
                 checksum_result: Some(true),
                 attestation_result: Ok(()),
+                fetch_error: None,
             }
         }
     }
 
     impl UpdateIo for StubIo {
         fn fetch_release(&self, _tag: Option<&str>) -> Result<GitHubRelease, String> {
-            Ok(self.release.clone())
+            match &self.fetch_error {
+                Some(e) => Err(e.clone()),
+                None => Ok(self.release.clone()),
+            }
         }
         fn download_asset(
             &self,
@@ -102,6 +107,17 @@ mod tests {
         let err = run(Some("v0.4.1".to_string()), false, false, &io).unwrap_err();
         assert_eq!(err.code, 1);
         assert!(err.message.contains("checksums.txt"), "{}", err.message);
+    }
+
+    #[test]
+    fn nonexistent_version_tag_is_invalid_input_exit_2() {
+        let io = StubIo {
+            fetch_error: Some("Release not found at https://api.github.com/repos/rafael-bianchi/rgt/releases/tags/v9.9.9".to_string()),
+            ..StubIo::new(stub_release("v9.9.9", true))
+        };
+        let err = run(Some("v9.9.9".to_string()), false, false, &io).unwrap_err();
+        assert_eq!(err.code, 2, "{}", err.message);
+        assert!(err.message.contains("Release not found"), "{}", err.message);
     }
 
     #[test]

@@ -132,7 +132,19 @@ pub fn execute_update_with_io(
 ) -> Result<(), UpdateError> {
     let current_version = env!("CARGO_PKG_VERSION");
 
-    let release = io.fetch_release(version.as_deref()).map_err(uerr)?;
+    let release = match io.fetch_release(version.as_deref()) {
+        Ok(r) => r,
+        Err(e) => {
+            // A nonexistent --version tag is invalid input (FR-005 and
+            // contracts/update-behavior.md: exit 2), not an expected update
+            // error. `github::fetch_release_by_tag` reports 404 as
+            // "Release not found ...".
+            if version.is_some() && e.contains("Release not found") {
+                return Err(invalid_input(e));
+            }
+            return Err(uerr(e));
+        }
+    };
     let latest_tag = release.tag_name.clone();
     let latest_version = latest_tag.trim_start_matches('v');
 
