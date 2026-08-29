@@ -10,6 +10,20 @@ use std::path::Path;
 
 const VALUE_LIMIT: usize = 10_000;
 
+/// Decodes `bytes` as UTF-8, or returns an explicit "unsupported file format"
+/// error for binary/non-UTF-8 content (FR-001) instead of a raw UTF-8 decode
+/// error. Covers both file reads and `--stdin`.
+fn read_utf8_content(source: &str, bytes: Vec<u8>) -> Result<String, String> {
+    String::from_utf8(bytes).map_err(|_| {
+        format!(
+            "unsupported file format for `rgt record` at `{}`: expected plain text/CSV. \
+             PDF, Excel, and other binary files are not natively parsed — use your AI agent's \
+             own read/extraction tool (its output is captured automatically) or convert to text first.",
+            source
+        )
+    })
+}
+
 pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
     let path_obj = Path::new(file);
 
@@ -18,13 +32,14 @@ pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
     }
 
     let content = if stdin {
-        let mut buf = String::new();
+        let mut buf = Vec::new();
         io::stdin()
-            .read_to_string(&mut buf)
+            .read_to_end(&mut buf)
             .map_err(|e| format!("failed to read stdin: {}", e))?;
-        buf
+        read_utf8_content(file, buf)?
     } else {
-        fs::read_to_string(file).map_err(|e| format!("failed to read file: {}", e))?
+        let bytes = fs::read(file).map_err(|e| format!("failed to read file: {}", e))?;
+        read_utf8_content(file, bytes)?
     };
 
     let meta =

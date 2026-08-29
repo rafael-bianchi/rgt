@@ -196,3 +196,29 @@ pub const RGT_END_MARKER: &str = "<!-- /RGT Integration -->";
 /// `RGT_END_MARKER` on its own line, for appending to block constants at write
 /// time.
 pub const RGT_END_MARKER_LINE: &str = "\n<!-- /RGT Integration -->\n";
+
+/// Instruction telling agents how to record values from non-text sources.
+///
+/// The passive hook cannot see inside PDF/Excel/image files (no local text
+/// extraction exists — findings §4), so the agent must report those values
+/// explicitly. Scoped narrowly to non-text formats; plain-text sources are
+/// already auto-captured. Spliced into every rules/instructions artifact RGT
+/// writes (findings §6).
+pub const NON_TEXT_SOURCE_INSTRUCTION: &str = "\n### Recording Values from Non-Text Sources (PDF, Excel, images, scanned documents)\n\
+    RGT's passive hook can only capture plain-text file content — it cannot see inside PDF, Excel (.xlsx), image, or other binary files, even when you read them directly. This is a platform limitation (PDF/image interpretation happens inside the model itself, never as a local text file), not something RGT's hook can intercept.\n\
+    \n\
+    After reading a PDF, Excel, image, or other non-text source, you must report its values explicitly:\n\
+    - Extract the numeric values and dates from what you just read.\n\
+    - Pipe them to RGT in plain text form: `echo \"Amount: 1234.56\" | rgt record --stdin`\n\
+    - (Alternative: write your extraction to an intermediate `.txt`/`.md` file — that file's own read/write will be captured automatically, since it is plain text.)\n\
+    \n\
+    Do **not** do this for plain-text, CSV, JSON, or Markdown files — those are already captured automatically; no action needed.\n";
+
+/// Wraps a rules block so it ends with the non-text-source instruction followed
+/// by the end marker (the instruction sits inside RGT's delimited block).
+pub fn with_instruction(rules: &str) -> String {
+    format!(
+        "{}{}{}",
+        rules, NON_TEXT_SOURCE_INSTRUCTION, RGT_END_MARKER_LINE
+    )
+}

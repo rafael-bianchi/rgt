@@ -244,4 +244,97 @@ mod tests {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains("Missing --expression"), "{}", stderr);
     }
+
+    // -----------------------------------------------------------------------
+    // 023 / US1 (T003): rgt record reports unsupported (binary) formats clearly
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_record_binary_file_returns_unsupported_format_error() {
+        use std::io::Write as _;
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        let file_path = dir.path().join("report.pdf");
+        let mut f = fs::File::create(&file_path).unwrap();
+        f.write_all(&[0x25, 0x50, 0x44, 0x46, 0x2D, 0xFF, 0xFE, 0x00])
+            .unwrap(); // %PDF- + non-UTF-8
+
+        let path_str = file_path.to_string_lossy().to_string();
+        let err = execute_record(&path_str, false).unwrap_err();
+        assert!(
+            err.contains("unsupported file format for `rgt record`"),
+            "{}",
+            err
+        );
+        assert!(
+            !err.contains("stream did not contain valid UTF-8"),
+            "must not surface the raw UTF-8 error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_record_plain_text_still_succeeds() {
+        use std::io::Write as _;
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        assert!(execute_init(false, true, Some("codex")).is_ok());
+
+        let file_path = dir.path().join("data.txt");
+        let mut f = fs::File::create(&file_path).unwrap();
+        writeln!(f, "amount,42\n").unwrap();
+        let path_str = file_path.to_string_lossy().to_string();
+        assert!(execute_record(&path_str, false).is_ok());
+    }
+
+    // 023 / convergence T014: the --stdin binary branch is also covered.
+    #[test]
+    fn test_record_binary_stdin_returns_unsupported_format_error() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        // execute_record requires the path to exist (metadata/hash), even when
+        // content comes from stdin.
+        let file_path = dir.path().join("data.csv");
+        fs::write(&file_path, "placeholder\n").unwrap();
+        let path_str = file_path.to_string_lossy().to_string();
+
+        use std::io::Write as _;
+        use std::process::{Command, Stdio};
+        let mut child = Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args(["record", &path_str, "--stdin"])
+            .current_dir(dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn rgt record --stdin");
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(&[0x00, 0xFF, 0xFE, 0x01, b'x'])
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("unsupported file format for `rgt record`"),
+            "{}",
+            stderr
+        );
+        assert!(
+            !stderr.contains("stream did not contain valid UTF-8"),
+            "{}",
+            stderr
+        );
+    }
 }
