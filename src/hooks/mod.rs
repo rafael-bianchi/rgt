@@ -70,6 +70,14 @@ pub fn handle_passive_hook_event(_event_type: &str, agent: Option<&str>) -> io::
     let extracted = extract_values_from_content(&content);
     let now = Utc::now();
 
+    // FR-007: record the batch in a single transaction (all-or-nothing). On any
+    // error, the transaction is dropped (rolled back) and the hook still fails
+    // open — never blocks or partially records.
+    let tx = match db.conn().unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(_) => return Ok(()),
+    };
+
     for ext in extracted {
         let node_id =
             TrackedNode::generate_root_id(path, ext.line_number, ext.occurrence, &ext.value);
@@ -86,7 +94,13 @@ pub fn handle_passive_hook_event(_event_type: &str, agent: Option<&str>) -> io::
             updated_at: now,
         };
 
-        let _ = insert_tracked_node(db.conn(), &node);
+        if insert_tracked_node(&tx, &node).is_err() {
+            return Ok(()); // rollback on drop; fail open
+        }
+    }
+
+    if tx.commit().is_err() {
+        return Ok(());
     }
 
     Ok(())

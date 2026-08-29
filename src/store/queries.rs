@@ -70,6 +70,12 @@ pub fn insert_tracked_node(conn: &Connection, node: &TrackedNode) -> Result<()> 
             source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
         ON CONFLICT(id) DO UPDATE SET
+            value_kind = excluded.value_kind,
+            number_val = excluded.number_val,
+            date_val = excluded.date_val,
+            duration_secs = excluded.duration_secs,
+            source_doc_id = excluded.source_doc_id,
+            line_number = excluded.line_number,
             is_stale = excluded.is_stale,
             stale_reason = excluded.stale_reason,
             updated_at = excluded.updated_at",
@@ -147,19 +153,60 @@ pub fn get_tracked_node(conn: &Connection, id: &str) -> Result<Option<TrackedNod
 }
 
 /// Inserts a derivation edge between a parent node and a derived node.
+///
+/// Rejects (before writing) any edge that would create a cycle — including a
+/// self-loop — so the graph stays acyclic at the persistent write path, not
+/// only in the transient in-memory graph (FR-001).
 pub fn insert_derivation_edge(
     conn: &Connection,
     parent_id: &str,
     child_id: &str,
     operation_type: &str,
     expression: Option<&str>,
-) -> Result<()> {
+) -> Result<(), String> {
+    if parent_id == child_id {
+        return Err(format!(
+            "refusing to insert a self-loop derivation edge (parent == child == {})",
+            parent_id
+        ));
+    }
+
+    // A new edge `parent -> child` would close a cycle iff `parent` is already
+    // reachable from `child`. Check via a recursive CTE (UNION, so the
+    // recursion terminates even on a corrupted cyclic DB).
+    let mut stmt = conn
+        .prepare(
+            "WITH RECURSIVE reachable(id) AS (
+                 SELECT child_node_id FROM derivation_edges WHERE parent_node_id = ?1
+                 UNION
+                 SELECT e.child_node_id
+                   FROM derivation_edges e
+                   JOIN reachable r ON e.parent_node_id = r.id
+             )
+             SELECT 1 FROM reachable WHERE id = ?2 LIMIT 1",
+        )
+        .map_err(|e| format!("failed to prepare cycle check: {e}"))?;
+    let mut rows = stmt
+        .query(params![child_id, parent_id])
+        .map_err(|e| format!("failed to run cycle check: {e}"))?;
+    if rows
+        .next()
+        .map_err(|e| format!("failed to read cycle check: {e}"))?
+        .is_some()
+    {
+        return Err(format!(
+            "refusing to insert derivation edge {} -> {}: it would create a cycle",
+            parent_id, child_id
+        ));
+    }
+
     conn.execute(
         "INSERT INTO derivation_edges (parent_node_id, child_node_id, operation_type, expression)
          VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(parent_node_id, child_node_id) DO NOTHING",
         params![parent_id, child_id, operation_type, expression],
-    )?;
+    )
+    .map_err(|e| format!("failed to insert derivation edge: {e}"))?;
     Ok(())
 }
 

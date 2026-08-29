@@ -83,6 +83,10 @@ name = "test_update_attestation"
 path = "tests/unit/test_update_attestation.rs"
 
 [[test]]
+name = "test_store_integrity"
+path = "tests/unit/store_integrity.rs"
+
+[[test]]
 name = "test_record"
 path = "tests/unit/test_record.rs"
 

@@ -25,6 +25,9 @@ impl DbStore {
 
     pub fn open<P: AsRef<Path>>(db_path: P) -> Result<Self> {
         let conn = Connection::open(db_path)?;
+        // FR-003: wait on locks instead of failing immediately with SQLITE_BUSY
+        // (SQLite's default busy_timeout is 0). Bounded to avoid indefinite hangs.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         initialize_schema(&conn)?;
         Ok(Self { conn })
     }
@@ -32,6 +35,7 @@ impl DbStore {
     #[allow(dead_code)]
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         initialize_schema(&conn)?;
         Ok(Self { conn })
     }

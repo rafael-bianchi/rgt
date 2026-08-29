@@ -76,7 +76,7 @@ impl TrackedNode {
         }
         hasher.update(val.to_string_repr().as_bytes());
         let hash_hex = hasher.finalize().to_hex();
-        format!("node_raw_{}", &hash_hex[..12])
+        format!("node_raw_{}", &hash_hex[..32])
     }
 
     pub fn generate_derived_id(parents: &[String], op: &str, val: &ValueData) -> String {
@@ -87,7 +87,7 @@ impl TrackedNode {
         hasher.update(op.as_bytes());
         hasher.update(val.to_string_repr().as_bytes());
         let hash_hex = hasher.finalize().to_hex();
-        format!("node_drv_{}", &hash_hex[..12])
+        format!("node_drv_{}", &hash_hex[..32])
     }
 }
 
@@ -96,27 +96,45 @@ mod tests {
     use super::*;
     use crate::types::ValueData;
 
-    fn pre_change_id(file: &str, line: Option<u32>, val: &ValueData) -> String {
+    fn base_id(file: &str, line: Option<u32>, val: &ValueData) -> String {
         let mut hasher = blake3::Hasher::new();
         hasher.update(file.as_bytes());
         if let Some(l) = line {
             hasher.update(&l.to_le_bytes());
         }
         hasher.update(val.to_string_repr().as_bytes());
-        format!("node_raw_{}", &hasher.finalize().to_hex()[..12])
+        format!("node_raw_{}", &hasher.finalize().to_hex()[..32])
     }
 
     #[test]
-    fn root_id_occurrence_zero_is_deterministic_and_backward_compatible() {
+    fn root_id_occurrence_zero_is_deterministic_and_at_least_128_bits() {
         let v = ValueData::Number(120000.0);
         let a = TrackedNode::generate_root_id("f.csv", Some(1), 0, &v);
         let b = TrackedNode::generate_root_id("f.csv", Some(1), 0, &v);
         assert_eq!(a, b, "occurrence-0 must be deterministic");
+        assert!(
+            a.len() >= 8 + 32,
+            "root ID must be at least 128 bits (32 hex chars), got {}",
+            a.len()
+        );
         assert_eq!(
             a,
-            pre_change_id("f.csv", Some(1), &v),
-            "occurrence-0 must equal the pre-change file+line+value ID"
+            base_id("f.csv", Some(1), &v),
+            "occurrence-0 must equal the file+line+value hash"
         );
+    }
+
+    #[test]
+    fn derived_id_is_at_least_128_bits() {
+        let v = ValueData::Number(42.0);
+        let id = TrackedNode::generate_derived_id(&["a".to_string()], "EXPRESSION", &v);
+        assert!(
+            id.len() >= 8 + 32,
+            "derived ID must be at least 128 bits, got {}",
+            id.len()
+        );
+        let id2 = TrackedNode::generate_derived_id(&["a".to_string()], "EXPRESSION", &v);
+        assert_eq!(id, id2, "derived ID must be deterministic");
     }
 
     #[test]
