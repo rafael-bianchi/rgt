@@ -256,7 +256,7 @@ fn configure(
         };
     }
 
-    configure_agent!("claude-code", write_claude_code(home, global));
+    configure_agent!("claude-code", write_claude_code(home, global, force));
     configure_agent!("cursor", write_cursor(home, global));
     configure_agent!("codex", write_codex(force));
     configure_agent!("windsurf", write_windsurf(force));
@@ -358,7 +358,11 @@ fn ensure_text_block(
 // Existing integrations
 // ---------------------------------------------------------------------------
 
-fn write_claude_code(home: &Path, global: bool) -> Result<WriteOutcome, ConfigEditError> {
+fn write_claude_code(
+    home: &Path,
+    global: bool,
+    force: bool,
+) -> Result<WriteOutcome, ConfigEditError> {
     let claude_dir = if global {
         home.join(".claude")
     } else {
@@ -374,6 +378,24 @@ fn write_claude_code(home: &Path, global: bool) -> Result<WriteOutcome, ConfigEd
     });
     let outcome = ensure_json_hooks(&settings_file, &desired)?;
 
+    // FR-003: write a CLAUDE.md instructions block so Claude Code agents get
+    // the non-text-source reporting guidance (project CLAUDE.md, or
+    // ~/.claude/CLAUDE.md with --global). Idempotent + content-preserving via
+    // the paired-marker helper.
+    let claude_md = if global {
+        home.join(".claude").join("CLAUDE.md")
+    } else {
+        PathBuf::from("CLAUDE.md")
+    };
+    let claude_block = glue::with_instruction(glue::RGT_MARKER);
+    let instructions = ensure_text_block(
+        &claude_md,
+        glue::RGT_MARKER,
+        glue::RGT_END_MARKER,
+        &claude_block,
+        force,
+    )?;
+
     if matches!(outcome, WriteOutcome::Configured(_)) {
         // The legacy hooks.json artifact is superseded by settings.json hooks.
         let old_hooks_file = claude_dir.join("hooks.json");
@@ -381,7 +403,12 @@ fn write_claude_code(home: &Path, global: bool) -> Result<WriteOutcome, ConfigEd
             let _ = fs::remove_file(&old_hooks_file);
         }
     }
-    Ok(outcome)
+    Ok(match (outcome, instructions) {
+        (WriteOutcome::Configured(_), _) | (_, WriteOutcome::Configured(_)) => {
+            WriteOutcome::Configured(settings_file)
+        }
+        _ => WriteOutcome::Skipped,
+    })
 }
 
 fn write_cursor(home: &Path, global: bool) -> Result<WriteOutcome, ConfigEditError> {
@@ -409,7 +436,7 @@ fn codex_section() -> String {
 
 fn write_codex(force: bool) -> Result<WriteOutcome, ConfigEditError> {
     let agents_file = PathBuf::from("AGENTS.md");
-    let block = format!("{}{}", codex_section(), glue::RGT_END_MARKER_LINE);
+    let block = glue::with_instruction(&codex_section());
 
     let text = editor::read_config(&agents_file)?;
     if text.trim().is_empty() {
@@ -428,10 +455,8 @@ fn write_codex(force: bool) -> Result<WriteOutcome, ConfigEditError> {
 
 fn write_windsurf(force: bool) -> Result<WriteOutcome, ConfigEditError> {
     let rules_file = PathBuf::from(".windsurfrules");
-    let rules_content = format!(
-        "# RGT Integration\nRGT tracks numeric and date provenance for AI coding agents.\nAfter reading data files, record extracted values with `rgt record <file>`.\nAfter computing derived values, record them with `rgt derive --parents <ids> --operation EXPRESSION --expression \"a - b\" --result <val>`.\nDerivations are verified before recording; wrong results are rejected.\nUse `rgt status` to check provenance graph state.\nRun `rgt --help` for all available commands.\n{}",
-        glue::RGT_END_MARKER_LINE
-    );
+    let base = "# RGT Integration\nRGT tracks numeric and date provenance for AI coding agents.\nAfter reading data files, record extracted values with `rgt record <file>`.\nAfter computing derived values, record them with `rgt derive --parents <ids> --operation EXPRESSION --expression \"a - b\" --result <val>`.\nDerivations are verified before recording; wrong results are rejected.\nUse `rgt status` to check provenance graph state.\nRun `rgt --help` for all available commands.\n";
+    let rules_content = glue::with_instruction(base);
     ensure_text_block(
         &rules_file,
         "# RGT Integration",
@@ -466,7 +491,7 @@ fn write_copilot(
         &cli_rules_file,
         glue::RGT_MARKER,
         glue::RGT_END_MARKER,
-        &format!("{}{}", glue::COPILOT_CLI_RULES, glue::RGT_END_MARKER_LINE),
+        &glue::with_instruction(glue::COPILOT_CLI_RULES),
         force,
     )?;
 
@@ -503,7 +528,7 @@ fn write_vibe(home: &Path, force: bool) -> Result<WriteOutcome, ConfigEditError>
         &prompt_file,
         "# RGT Integration",
         glue::RGT_END_MARKER,
-        &format!("{}{}", glue::VIBE_PROMPT, glue::RGT_END_MARKER_LINE),
+        &glue::with_instruction(glue::VIBE_PROMPT),
         force,
     )?;
 
@@ -603,7 +628,7 @@ fn write_cline(force: bool) -> Result<WriteOutcome, ConfigEditError> {
         &rules_file,
         glue::RGT_MARKER,
         glue::RGT_END_MARKER,
-        &format!("{}{}", glue::CLINE_RULES, glue::RGT_END_MARKER_LINE),
+        &glue::with_instruction(glue::CLINE_RULES),
         force,
     )
 }
@@ -617,7 +642,7 @@ fn write_antigravity(force: bool) -> Result<WriteOutcome, ConfigEditError> {
         &rules_file,
         "# RGT Integration",
         glue::RGT_END_MARKER,
-        &format!("{}{}", glue::ANTIGRAVITY_RULES, glue::RGT_END_MARKER_LINE),
+        &glue::with_instruction(glue::ANTIGRAVITY_RULES),
         force,
     )
 }
@@ -631,7 +656,7 @@ fn write_kilocode(force: bool) -> Result<WriteOutcome, ConfigEditError> {
         &rules_file,
         "# RGT Integration",
         glue::RGT_END_MARKER,
-        &format!("{}{}", glue::KILO_RULES, glue::RGT_END_MARKER_LINE),
+        &glue::with_instruction(glue::KILO_RULES),
         force,
     )
 }

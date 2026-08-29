@@ -743,3 +743,158 @@ fn glue_templates_are_thin_delegates() {
     assert_thin_glue(rgt::hooks::glue::PI_TS_EXTENSION, "pi");
     assert_thin_glue(rgt::hooks::glue::HERMES_PYTHON_PLUGIN, "hermes");
 }
+
+// ---------------------------------------------------------------------------
+// 023: non-text-source capture instruction (T005/T007/T009)
+// ---------------------------------------------------------------------------
+
+const NON_TEXT_ANCHOR: &str = "Recording Values from Non-Text Sources";
+
+fn count_anchor(path: &Path, anchor: &str) -> usize {
+    match std::fs::read_to_string(path) {
+        Ok(content) => content.matches(anchor).count(),
+        Err(_) => 0,
+    }
+}
+
+fn dir_contains_anchor(dir: &Path, anchor: &str) -> bool {
+    for entry in walkdir::WalkDir::new(dir) {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if entry.file_type().is_file() && count_anchor(entry.path(), anchor) > 0 {
+            return true;
+        }
+    }
+    false
+}
+
+#[test]
+fn instructions_carry_non_text_source_instruction_once() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
+    // codex, windsurf, cline, antigravity, kilocode (project-scoped rules files)
+    run(&home, &config_dir, false, true, "codex");
+    run(&home, &config_dir, false, true, "windsurf");
+    run(&home, &config_dir, false, true, "cline");
+    run(&home, &config_dir, false, true, "antigravity");
+    run(&home, &config_dir, false, true, "kilocode");
+    // copilot CLI and vibe (home-scoped instructions files)
+    run(&home, &config_dir, true, true, "copilot");
+    run(&home, &config_dir, true, true, "vibe");
+
+    let cases: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("AGENTS.md"), "codex"),
+        (PathBuf::from(".windsurfrules"), "windsurf"),
+        (PathBuf::from(".clinerules"), "cline"),
+        (
+            PathBuf::from(".agents/rules/antigravity-rgt-rules.md"),
+            "antigravity",
+        ),
+        (PathBuf::from(".kilocode/rules/rgt-rules.md"), "kilocode"),
+        (
+            copilot_cli_config_dir(&home, &config_dir).join("AGENTS.md"),
+            "copilot CLI",
+        ),
+        (home.join(".vibe/prompts/rgt.md"), "vibe"),
+    ];
+
+    for (path, agent) in cases {
+        let content = read(&path);
+        assert_eq!(
+            count_anchor(&path, NON_TEXT_ANCHOR),
+            1,
+            "{} must contain the non-text instruction exactly once:\n{}",
+            agent,
+            content
+        );
+        assert!(
+            content.contains("already captured automatically"),
+            "{} must state plain-text formats are auto-captured:\n{}",
+            agent,
+            content
+        );
+    }
+}
+
+#[test]
+fn claude_code_writes_claude_md_with_instruction() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
+    // Project scope.
+    run(&home, &config_dir, false, true, "claude-code");
+    let project_md = PathBuf::from("CLAUDE.md");
+    assert_eq!(count_anchor(&project_md, NON_TEXT_ANCHOR), 1);
+
+    // Global scope.
+    run(&home, &config_dir, true, true, "claude-code");
+    let global_md = home.join(".claude").join("CLAUDE.md");
+    assert_eq!(count_anchor(&global_md, NON_TEXT_ANCHOR), 1);
+
+    // Idempotent re-run without force.
+    run(&home, &config_dir, false, false, "claude-code");
+    assert_eq!(count_anchor(&project_md, NON_TEXT_ANCHOR), 1);
+}
+
+#[test]
+fn claude_code_force_preserves_user_claude_md_content() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
+    write(
+        &PathBuf::from("CLAUDE.md"),
+        "# Project memory\nuser notes\n",
+    );
+    run(&home, &config_dir, false, true, "claude-code");
+    let content = read(&PathBuf::from("CLAUDE.md"));
+    assert!(
+        content.contains("# Project memory\nuser notes\n"),
+        "user content must survive:\n{}",
+        content
+    );
+    assert!(content.contains(NON_TEXT_ANCHOR));
+}
+
+#[test]
+fn unverified_and_plugin_agents_get_no_instruction_file() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
+    // Cursor, Gemini, OpenCode, Pi, Hermes: fully out of scope — no
+    // instructions artifact carrying the non-text instruction.
+    for agent in ["cursor", "gemini", "opencode", "pi", "hermes"] {
+        run(&home, &config_dir, true, true, agent);
+    }
+    assert!(
+        !dir_contains_anchor(dir.path(), NON_TEXT_ANCHOR),
+        "no instructions file carrying the non-text instruction may be written for unverified/plugin-only agents"
+    );
+
+    // Copilot is mixed: the CLI AGENTS.md IS in scope (US2), but the VS Code
+    // Chat settings must NOT carry the instruction (its hook-only surface is
+    // unverified).
+    run(&home, &config_dir, true, true, "copilot");
+    let cli_md = copilot_cli_config_dir(&home, &config_dir).join("AGENTS.md");
+    assert_eq!(
+        count_anchor(&cli_md, NON_TEXT_ANCHOR),
+        1,
+        "Copilot CLI AGENTS.md is in scope"
+    );
+    let chat_settings = config_dir.join("Code").join("User").join("settings.json");
+    assert_eq!(
+        count_anchor(&chat_settings, NON_TEXT_ANCHOR),
+        0,
+        "Copilot Chat (VS Code) settings must not carry the instruction"
+    );
+}
