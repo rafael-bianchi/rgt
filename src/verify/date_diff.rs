@@ -40,6 +40,16 @@ pub fn verify_date_diff(parents: &[ValueData], result_seconds: i64) -> Result<()
     let dur = ValueData::date_diff(&date1, &date2);
     let computed_seconds = dur.num_seconds();
 
+    // FR-006: enforce the `date2 - date1` convention. A negative duration is
+    // the observable signal of a swapped `--parents` order — reject it with a
+    // convention-naming error rather than passing the opposite sign silently.
+    if computed_seconds < 0 {
+        return Err(format!(
+            "DATE_DIFF computed date2 - date1 = {}s (negative); parents may be swapped — convention is --parents <date1>,<date2>",
+            computed_seconds
+        ));
+    }
+
     if computed_seconds == result_seconds {
         Ok(())
     } else {
@@ -72,10 +82,20 @@ mod tests {
     }
 
     #[test]
-    fn test_date_diff_negative() {
+    fn test_date_diff_negative_rejected_as_swapped() {
+        // d2 before d1 ⇒ negative duration — a swapped-order signal (FR-006).
         let d1 = Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
         let d2 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
         let parents = vec![ValueData::Date(d1), ValueData::Date(d2)];
-        assert!(verify_date_diff(&parents, -1209600).is_ok());
+        let err = verify_date_diff(&parents, -1209600).unwrap_err();
+        assert!(err.contains("date2 - date1"), "{}", err);
+        assert!(err.contains("swapped"), "{}", err);
+    }
+
+    #[test]
+    fn test_date_diff_zero_is_ok() {
+        let d = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let parents = vec![ValueData::Date(d), ValueData::Date(d)];
+        assert!(verify_date_diff(&parents, 0).is_ok());
     }
 }

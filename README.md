@@ -199,7 +199,9 @@ rgt query <node_id> [--json]               # full lineage for a value
 rgt graph [-f text|mermaid|dot]            # export the dependency DAG
 ```
 
-Operations: `EXPRESSION` (formulas like `a + b * c`) and `DATE_DIFF` (date arithmetic, e.g. `date2 - date1`). Parent variables map as `parent[0]=a, parent[1]=b, ...`.
+Operations: `EXPRESSION` (formulas like `a + b * c`) and `DATE_DIFF` (date arithmetic, e.g. `date2 - date1`). Parent variables map as `parent[0]=a, parent[1]=b, ...` (at most 26, `a`–`z`).
+
+`--operation` is case-sensitive (`EXPRESSION`/`DATE_DIFF`); anything else is rejected with exit code 2 — verification is never silently skipped. `--expression` is limited to 4096 bytes and 256 levels of parenthesis nesting (over-limit input is rejected with exit 2, never a crash). Expressions evaluate with built-in functions disabled — only your parent variables and `+ - * / % ^` and parentheses are available, so evaluation is deterministic. `DATE_DIFF` requires `--parents <date1>,<date2>` and computes `date2 - date1`; a negative result (possible swapped order) is rejected.
 
 ## Supported AI Tools
 
