@@ -125,8 +125,7 @@ pub fn execute_derive(
         .map_err(|e| format!("failed to insert derived node: {}", e))?;
 
     for pid in &parent_ids {
-        insert_derivation_edge(conn, pid, &node_id, operation, expression)
-            .map_err(|e| format!("failed to insert derivation edge: {}", e))?;
+        insert_derivation_edge(conn, pid, &node_id, operation, expression)?;
     }
 
     println!("Derived node: {}", node_id);

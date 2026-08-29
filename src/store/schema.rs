@@ -46,7 +46,8 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
             child_node_id TEXT NOT NULL REFERENCES tracked_nodes(id) ON DELETE CASCADE,
             operation_type TEXT NOT NULL,
             expression TEXT,
-            UNIQUE(parent_node_id, child_node_id)
+            UNIQUE(parent_node_id, child_node_id),
+            CHECK(parent_node_id <> child_node_id)
         );
 
         CREATE INDEX IF NOT EXISTS idx_derivation_edges_parent 

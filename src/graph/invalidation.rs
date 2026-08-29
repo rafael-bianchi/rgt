@@ -24,11 +24,20 @@ impl InvalidationCascade {
         for node in &all_nodes {
             let edges = get_child_edges(conn, &node.id)?;
             for edge in edges {
-                let _ = engine.add_derivation_edge(
-                    &edge.parent_node_id,
-                    &edge.child_node_id,
-                    &edge.operation_type,
-                );
+                // FR-002: surface a cycle encountered during reload rather than
+                // silently dropping the edge (no `let _ =`).
+                engine
+                    .add_derivation_edge(
+                        &edge.parent_node_id,
+                        &edge.child_node_id,
+                        &edge.operation_type,
+                    )
+                    .map_err(|e| {
+                        rusqlite::Error::SqliteFailure(
+                            rusqlite::ffi::Error::new(19),
+                            Some(format!("cycle in persisted derivation graph: {}", e)),
+                        )
+                    })?;
             }
         }
 
