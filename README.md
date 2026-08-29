@@ -172,6 +172,21 @@ recoverable error and a non-zero exit — other agents are still configured, and
 Exit codes: `0` = success, `1` = at least one agent failed, `2` = invalid
 `--agent` name.
 
+### Update
+```bash
+rgt update [--check] [--yes] [--version <tag>] [--skip-checksum] [--skip-attestation]
+```
+
+`rgt update` installs only **verified** binaries: every download is checked
+against the release's `checksums.txt` (SHA-256) **and** its GitHub Artifact
+Attestation — a trust anchor issued independently of the release's own assets
+(built-in Sigstore verification, no `gh` required). A release missing either
+verification is refused with a non-zero exit; `--skip-checksum` /
+`--skip-attestation` are explicit, documented-as-insecure opt-outs that are
+never the default. Version comparison uses Semantic Versioning: an older or
+equal tag is never installed (no silent downgrades), and `--version <tag>`
+warns when the requested tag is older than the installed version.
+
 ### Provenance
 ```bash
 rgt record <file>                          # extract and track values from a file

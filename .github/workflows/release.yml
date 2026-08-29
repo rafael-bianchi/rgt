@@ -24,6 +24,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -112,6 +114,11 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 "rgt-v${version}-${{ matrix.target }}.zip").Hash.ToLower()
           "$hash  rgt-v${version}-${{ matrix.target }}.zip" | Out-File -Encoding ascii "rgt-v${version}-${{ matrix.target }}.zip.sha256"
         shell: pwsh
+
+      - name: Attest release artifact
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'rgt-v*.${{ matrix.suffix }}'
 
       - name: Upload archive artifact
         uses: actions/upload-artifact@v4

@@ -88,6 +88,14 @@ enum Commands {
         /// Target a specific release version tag
         #[arg(long)]
         version: Option<String>,
+
+        /// Skip SHA-256 checksum verification (INSECURE — never the default)
+        #[arg(long)]
+        skip_checksum: bool,
+
+        /// Skip GitHub Artifact Attestation verification (INSECURE — never the default)
+        #[arg(long)]
+        skip_attestation: bool,
     },
     /// Verify that a derived value matches its parent nodes
     Verify {
@@ -165,7 +173,15 @@ async fn main() {
             check,
             yes,
             version,
-        } => cli::execute_update(check, yes, version),
+            skip_checksum,
+            skip_attestation,
+        } => match cli::execute_update(check, yes, version, skip_checksum, skip_attestation) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                eprintln!("Error: {}", e.message);
+                std::process::exit(e.code);
+            }
+        },
         Commands::Verify {
             parents,
             operation,
