@@ -211,8 +211,8 @@ RGT configures provenance-capture hooks for 13 AI coding tools, using each agent
 
 | Tool | Install | Method |
 |------|---------|--------|
-| **Claude Code** | `rgt init -g` | PreToolUse/PostToolUse shell hook (`settings.json`) |
-| **Cursor** | `rgt init -g --agent cursor` | pre/postToolUse hook (`hooks.json`) |
+| **Claude Code** | `rgt init -g` | PreToolUse/PostToolUse shell hook (`settings.json`); Bash tool reads (`cat`/`head`/`tail`/`grep`/`rtk read`, ...) are also captured |
+| **Cursor** | `rgt init -g --agent cursor` | pre/postToolUse hook (`hooks.json`); Bash tool reads captured too |
 | **GitHub Copilot (VS Code)** | `rgt init -g --agent copilot` | Copilot Chat hooks (`github.copilot.chat.hooks`) |
 | **GitHub Copilot CLI** | `rgt init -g --agent copilot` | Instructions file (Copilot CLI config dir) |
 | **Gemini CLI** | `rgt init -g --agent gemini` | `~/.gemini/hooks.toml` PostToolUse |

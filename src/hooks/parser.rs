@@ -120,7 +120,12 @@ pub fn extract_values_from_content(content: &str) -> Vec<ExtractedValue> {
 pub fn normalize_agent_event(agent: Option<&str>, stdin: &str) -> Option<NormalizedCapture> {
     let value: serde_json::Value = serde_json::from_str(stdin).ok()?;
     match agent {
-        None | Some("claude-code") | Some("cursor") => default_dialect(&value),
+        // FR-001: try the Read-shaped dialect first; a Bash tool call has no
+        // `path`/`content`, so fall back to command-based extraction.
+        None | Some("claude-code") | Some("cursor") => match default_dialect(&value) {
+            Some(c) if c.path.is_some() => Some(c),
+            _ => command_dialect(&value),
+        },
         Some("copilot") => copilot_dialect(&value),
         Some("gemini") | Some("vibe") | Some("opencode") | Some("pi") | Some("hermes") => {
             command_dialect(&value)
@@ -175,10 +180,12 @@ fn copilot_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
     command_dialect(value)
 }
 
-/// Command-based dialect (gemini, vibe, opencode, pi, hermes): the path is the
-/// first argument of a read-style command in `tool_input.command` (or a
-/// top-level `command`/`args.command`). Non-read commands, empty commands, and
-/// malformed JSON yield a no-op (`None` path).
+/// Command-based dialect (gemini, vibe, opencode, pi, hermes, and the Bash
+/// fallback for claude-code/cursor): the path is the first argument of a
+/// read-style command in `tool_input.command` (or a top-level
+/// `command`/`args.command`), and the content is `tool_response.stdout` when
+/// non-empty. Non-read commands, empty commands, and malformed JSON yield a
+/// no-op (`None` path).
 fn command_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
     let command = value
         .get("tool_input")
@@ -187,25 +194,44 @@ fn command_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
         .or_else(|| value.get("args").and_then(|a| a.get("command")))
         .and_then(|c| c.as_str());
     let path = command.and_then(extract_path_from_command);
-    Some(NormalizedCapture {
-        path,
-        content: None,
-    })
+    // FR-003: capture the Bash tool's stdout as content when non-empty;
+    // otherwise leave it None so the disk-read fallback applies.
+    let content = value
+        .get("tool_response")
+        .and_then(|t| t.get("stdout"))
+        .and_then(|s| s.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string());
+    Some(NormalizedCapture { path, content })
 }
 
-/// Extracts the first path argument of a read-style command
-/// (`cat`, `read`, `less`, `head`, `tail`, `more`, `python`, `python3`),
-/// skipping leading flags and their numeric values. Non-read commands return
-/// `None`.
+/// Extracts a path argument of a read-style command (`cat`, `read`, `less`,
+/// `head`, `tail`, `more`, `grep`, `python`, `python3`), skipping leading flags
+/// and their numeric values. For `grep` the file is the LAST non-flag token (the
+/// first is the search pattern). Non-read commands return `None`. When the
+/// command is wrapped by `rtk` (RTK's auto-rewrite of `cat`/`read`), the
+/// subcommand must be `read` (RTK's read subcommand) for a capture (FR-002).
 pub fn extract_path_from_command(command: &str) -> Option<String> {
     const READ_STYLE: &[&str] = &[
-        "cat", "read", "less", "head", "tail", "more", "python", "python3",
+        "cat", "read", "less", "head", "tail", "more", "grep", "python", "python3",
     ];
     let mut tokens = command.split_whitespace();
-    let bin = tokens.next()?;
-    if !READ_STYLE.contains(&bin) {
+    let first = tokens.next()?;
+    let verb = if first == "rtk" {
+        // RTK maps `cat`/`read` invocations to the `rtk read` subcommand; other
+        // `rtk` subcommands are not reads.
+        if tokens.next() != Some("read") {
+            return None;
+        }
+        "read"
+    } else {
+        first
+    };
+    if !READ_STYLE.contains(&verb) {
         return None;
     }
+
+    let mut last_non_flag: Option<String> = None;
     while let Some(tok) = tokens.next() {
         if let Some(rest) = tok.strip_prefix('-') {
             // A numeric-value flag (e.g. `head -n 3`) may consume the next
@@ -222,7 +248,11 @@ pub fn extract_path_from_command(command: &str) -> Option<String> {
             }
             continue;
         }
-        return Some(tok.trim_matches('"').trim_matches('\'').to_string());
+        let cleaned = tok.trim_matches('"').trim_matches('\'').to_string();
+        if verb != "grep" {
+            return Some(cleaned);
+        }
+        last_non_flag = Some(cleaned);
     }
-    None
+    last_non_flag
 }
