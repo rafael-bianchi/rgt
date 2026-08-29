@@ -55,7 +55,8 @@ pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
         .map_err(|e| format!("failed to begin transaction: {}", e))?;
 
     for ext in &extracted {
-        let node_id = TrackedNode::generate_root_id(file, ext.line_number, &ext.value);
+        let node_id =
+            TrackedNode::generate_root_id(file, ext.line_number, ext.occurrence, &ext.value);
         let node = TrackedNode {
             id: node_id,
             node_type: NodeType::Root,
