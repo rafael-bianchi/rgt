@@ -1,5 +1,6 @@
 use rgt::hooks::installer::{
-    detect_and_configure_hooks_with_config, resolve_agent_name, valid_agent_names,
+    detect_and_configure_hooks_with_config, resolve_agent_name, valid_agent_names, AgentOutcome,
+    InstallReport,
 };
 use rgt::hooks::paths::copilot_cli_config_dir;
 use std::path::{Path, PathBuf};
@@ -25,60 +26,120 @@ fn write(path: &Path, content: &str) {
     std::fs::write(path, content).unwrap();
 }
 
-fn run(home: &Path, config_dir: &Path, global: bool, force: bool, agent: &str) -> Vec<String> {
+fn run(home: &Path, config_dir: &Path, global: bool, force: bool, agent: &str) -> InstallReport {
     detect_and_configure_hooks_with_config(home, config_dir, global, force, Some(agent)).unwrap()
 }
 
-fn run_none(home: &Path, config_dir: &Path, global: bool, force: bool) -> Vec<String> {
+fn run_none(home: &Path, config_dir: &Path, global: bool, force: bool) -> InstallReport {
     detect_and_configure_hooks_with_config(home, config_dir, global, force, None).unwrap()
 }
 
-// ---------------------------------------------------------------------------
-// SC-003: existing 4 integrations remain byte-identical to the Phase 1 baseline
-// ---------------------------------------------------------------------------
+fn configured(report: &InstallReport) -> Vec<String> {
+    report
+        .outcomes
+        .iter()
+        .filter_map(|o| match o {
+            AgentOutcome::Configured { agent, .. } => Some(agent.clone()),
+            _ => None,
+        })
+        .collect()
+}
 
-const CLAUDE_BASELINE: &str = "{\n  \"hooks\": {\n    \"PostToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"command\": \"rgt hook post\",\n            \"type\": \"command\"\n          }\n        ],\n        \"matcher\": \"\"\n      }\n    ],\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"command\": \"rgt hook pre\",\n            \"type\": \"command\"\n          }\n        ],\n        \"matcher\": \"\"\n      }\n    ]\n  }\n}";
+fn skipped(report: &InstallReport) -> Vec<String> {
+    report
+        .outcomes
+        .iter()
+        .filter_map(|o| match o {
+            AgentOutcome::Skipped { agent } => Some(agent.clone()),
+            _ => None,
+        })
+        .collect()
+}
 
-const CURSOR_BASELINE: &str = "{\n  \"hooks\": {\n    \"postToolUse\": [\n      {\n        \"command\": \"rgt hook post\",\n        \"matcher\": \"Shell\"\n      }\n    ],\n    \"preToolUse\": [\n      {\n        \"command\": \"rgt hook pre\",\n        \"matcher\": \"Shell\"\n      }\n    ]\n  },\n  \"version\": 1\n}";
+fn failed(report: &InstallReport) -> Vec<String> {
+    report
+        .outcomes
+        .iter()
+        .filter_map(|o| match o {
+            AgentOutcome::Failed { agent, .. } => Some(agent.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// US1: preservation (T010) — existing user configuration is never destroyed
+// ---------------------------------------------------------------------------
 
 #[test]
-fn existing_four_agents_byte_identical_sc003() {
+fn claude_merge_preserves_foreign_hooks_settings_and_comments() {
     let dir = tempdir().unwrap();
     let _guard = set_cwd(dir.path());
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
+    let settings = home.join(".claude").join("settings.json");
 
-    run(&home, &config_dir, true, true, "claude-code");
-    run(&home, &config_dir, true, true, "cursor");
-    run(&home, &config_dir, true, true, "codex");
-    run(&home, &config_dir, true, true, "windsurf");
-
-    assert_eq!(
-        read(&home.join(".claude").join("settings.json")),
-        CLAUDE_BASELINE
+    write(
+        &settings,
+        r#"{
+  // RTK's own hook group — must survive
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "rtk hook post" }] },
+    ],
+  },
+  "keybindings": { "esc": "stop" },
+}
+"#,
     );
-    assert_eq!(
-        read(&home.join(".cursor").join("hooks.json")),
-        CURSOR_BASELINE
-    );
 
-    let agents_md = read(&PathBuf::from("AGENTS.md"));
-    assert!(agents_md.starts_with("# RGT Agents Instructions\n\n## RGT Integration"));
-    assert!(agents_md.contains("rgt record <file>"));
-    assert!(agents_md.contains("rgt derive --parents"));
-    assert!(agents_md
-        .trim_end()
-        .ends_with("Run `rgt --help` for all available commands."));
+    let report = run(&home, &config_dir, true, false, "claude-code");
+    assert_eq!(configured(&report), vec!["claude-code".to_string()]);
 
-    let windsurf = read(&PathBuf::from(".windsurfrules"));
-    assert!(windsurf.starts_with("# RGT Integration\nRGT tracks numeric and date provenance"));
-    assert!(windsurf.contains("rgt derive --parents"));
-    assert!(windsurf.contains("rgt --help"));
+    let content = read(&settings);
+    assert!(content.contains("// RTK's own hook group — must survive"));
+    assert!(content.contains("\"rtk hook post\""));
+    assert!(content.contains("\"keybindings\": { \"esc\": \"stop\" }"));
+    assert!(content.contains("\"rgt hook post\""));
+    assert!(content.contains("\"rgt hook pre\""));
+    // Output is valid JSONC.
+    jsonc_parser::parse_to_value(&content, &Default::default()).expect("must parse as JSONC");
+
+    // Second run without --force: nothing changes (FR-005).
+    let report2 = run(&home, &config_dir, true, false, "claude-code");
+    assert_eq!(skipped(&report2), vec!["claude-code".to_string()]);
+    assert_eq!(read(&settings), content);
 }
 
-// ---------------------------------------------------------------------------
-// New writers (US1)
-// ---------------------------------------------------------------------------
+#[test]
+fn cursor_merge_preserves_existing_entries_and_version() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let hooks = home.join(".cursor").join("hooks.json");
+
+    write(
+        &hooks,
+        r#"{
+  "version": 2,
+  "hooks": {
+    "postToolUse": [ { "command": "notify --done", "matcher": "Bash" } ]
+  }
+}
+"#,
+    );
+
+    let report = run(&home, &config_dir, true, false, "cursor");
+    assert_eq!(configured(&report), vec!["cursor".to_string()]);
+
+    let content = read(&hooks);
+    assert!(content.contains("\"version\": 2"));
+    assert!(content.contains("notify --done"));
+    assert!(content.contains("rgt hook post"));
+    assert!(content.contains("rgt hook pre"));
+    serde_json::from_str::<serde_json::Value>(&content).expect("must be valid JSON");
+}
 
 #[test]
 fn copilot_writer_merges_chat_hooks_into_user_settings() {
@@ -89,20 +150,92 @@ fn copilot_writer_merges_chat_hooks_into_user_settings() {
 
     // Pre-seed the user settings file with user-authored content.
     let settings = config_dir.join("Code").join("User").join("settings.json");
-    write(&settings, "{\n  \"editor.fontSize\": 14\n}\n");
+    write(
+        &settings,
+        "{\n  \"editor.fontSize\": 14,\n  \"github.copilot.chat.hooks\": { \"triggerNotifications\": true }\n}\n",
+    );
 
-    let result = run(&home, &config_dir, true, true, "copilot");
-    assert!(!result.is_empty());
-    assert!(result.iter().any(|r| r.contains("Copilot")));
+    let report = run(&home, &config_dir, true, true, "copilot");
+    assert_eq!(configured(&report), vec!["copilot".to_string()]);
 
     let content = read(&settings);
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
     assert_eq!(parsed["editor.fontSize"], 14); // user content preserved
+    assert_eq!(
+        parsed["github.copilot.chat.hooks"]["triggerNotifications"],
+        true
+    );
     let hooks = &parsed["github.copilot.chat.hooks"]["PostToolUse"][0];
     assert_eq!(
         hooks["hooks"][0]["command"],
         "rgt hook post --agent copilot"
     );
+}
+
+#[test]
+fn hermes_config_keeps_other_plugins_and_single_table() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let config = home.join(".hermes").join("config.toml");
+
+    write(
+        &config,
+        "# user comment\n[plugins]\nenabled = [  # keep me\n  \"git\",\n]\n",
+    );
+
+    let report = run(&home, &config_dir, true, false, "hermes");
+    assert_eq!(configured(&report), vec!["hermes".to_string()]);
+
+    let content = read(&config);
+    assert!(content.contains("# user comment"));
+    assert!(content.contains("# keep me"));
+    assert!(content.contains("\"git\""));
+    assert!(content.contains("\"rgt\""));
+    assert_eq!(
+        content.matches("[plugins]").count(),
+        1,
+        "no duplicate table"
+    );
+    let _: toml_edit::DocumentMut = content.parse().expect("must parse as TOML");
+}
+
+// ---------------------------------------------------------------------------
+// Writer smoke tests (adapted to the report API)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn existing_four_agents_write_with_markers() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
+    run(&home, &config_dir, true, true, "claude-code");
+    run(&home, &config_dir, true, true, "cursor");
+    run(&home, &config_dir, true, true, "codex");
+    run(&home, &config_dir, true, true, "windsurf");
+
+    let claude = read(&home.join(".claude").join("settings.json"));
+    assert!(claude.contains("\"rgt hook post\""));
+    assert!(claude.contains("\"rgt hook pre\""));
+    serde_json::from_str::<serde_json::Value>(&claude).unwrap();
+
+    let cursor = read(&home.join(".cursor").join("hooks.json"));
+    assert!(cursor.contains("rgt hook post"));
+    serde_json::from_str::<serde_json::Value>(&cursor).unwrap();
+
+    let agents_md = read(&PathBuf::from("AGENTS.md"));
+    assert!(agents_md.starts_with("# RGT Agents Instructions"));
+    assert!(agents_md.contains("## RGT Integration"));
+    assert!(agents_md.contains("rgt record <file>"));
+    assert!(agents_md.contains("<!-- /RGT Integration -->"));
+
+    let windsurf = read(&PathBuf::from(".windsurfrules"));
+    assert!(windsurf.starts_with("# RGT Integration\n"));
+    assert!(windsurf.contains("rgt derive --parents"));
+    assert!(windsurf.contains("<!-- /RGT Integration -->"));
 }
 
 #[test]
@@ -112,18 +245,18 @@ fn copilot_writer_creates_cli_rules_file() {
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
 
-    let result = run(&home, &config_dir, true, true, "copilot");
-    assert!(result.iter().any(|r| r.contains("Copilot CLI")));
+    run(&home, &config_dir, true, true, "copilot");
 
     let rules = read(&copilot_cli_config_dir(&home, &config_dir).join("AGENTS.md"));
     assert!(rules.contains("## RGT Integration"));
     assert!(rules.contains("rgt record <file>"));
+    assert!(rules.contains("<!-- /RGT Integration -->"));
 
-    // Idempotent re-run: no duplicate section.
-    run(&home, &config_dir, true, false, "copilot");
+    // Idempotent re-run without force: no change.
+    let report = run(&home, &config_dir, true, false, "copilot");
+    assert!(skipped(&report).contains(&"copilot".to_string()));
     let second = read(&copilot_cli_config_dir(&home, &config_dir).join("AGENTS.md"));
     assert_eq!(rules, second);
-    assert_eq!(second.matches("## RGT Integration").count(), 1);
 }
 
 #[test]
@@ -133,12 +266,13 @@ fn gemini_writer_creates_hooks_toml() {
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
 
-    let result = run(&home, &config_dir, true, true, "gemini");
-    assert_eq!(result.len(), 1);
+    let report = run(&home, &config_dir, true, true, "gemini");
+    assert_eq!(configured(&report), vec!["gemini".to_string()]);
 
     let toml = read(&home.join(".gemini").join("hooks.toml"));
     assert!(toml.contains("[PostToolUse]"));
     assert!(toml.contains("rgt hook post --agent gemini"));
+    let _: toml_edit::DocumentMut = toml.parse().unwrap();
 }
 
 #[test]
@@ -148,17 +282,19 @@ fn vibe_writer_creates_hooks_toml_and_prompt() {
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
 
-    let result = run(&home, &config_dir, true, true, "vibe");
-    assert_eq!(result.len(), 1);
+    let report = run(&home, &config_dir, true, true, "vibe");
+    assert_eq!(configured(&report), vec!["vibe".to_string()]);
 
     let toml = read(&home.join(".vibe").join("hooks.toml"));
     assert!(toml.contains("[[pre_tool]]"));
     assert!(toml.contains("match = \"bash\""));
     assert!(toml.contains("strict = false"));
     assert!(toml.contains("rgt hook post --agent vibe"));
+    let _: toml_edit::DocumentMut = toml.parse().unwrap();
 
     let prompt = read(&home.join(".vibe").join("prompts").join("rgt.md"));
     assert!(prompt.contains("RGT Integration"));
+    assert!(prompt.contains("<!-- /RGT Integration -->"));
 }
 
 #[test]
@@ -168,13 +304,10 @@ fn opencode_writer_project_and_global() {
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
 
-    // Project scope
-    let result = run(&home, &config_dir, false, true, "opencode");
-    assert_eq!(result.len(), 1);
+    run(&home, &config_dir, false, true, "opencode");
     let project_plugin = read(&PathBuf::from(".opencode").join("plugin").join("rgt.ts"));
     assert_thin_glue(&project_plugin, "opencode");
 
-    // Global scope
     run(&home, &config_dir, true, true, "opencode");
     let global_plugin = read(
         &home
@@ -215,8 +348,8 @@ fn hermes_writer_creates_plugin_and_enables_it() {
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
 
-    let result = run(&home, &config_dir, true, true, "hermes");
-    assert_eq!(result.len(), 1);
+    let report = run(&home, &config_dir, true, true, "hermes");
+    assert_eq!(configured(&report), vec!["hermes".to_string()]);
 
     let plugin = read(
         &home
@@ -226,7 +359,6 @@ fn hermes_writer_creates_plugin_and_enables_it() {
             .join("plugin.py"),
     );
     assert_thin_glue(&plugin, "hermes");
-    assert!(plugin.contains("shutil.which"));
 
     let config = read(&home.join(".hermes").join("config.toml"));
     assert!(config.contains("plugins"));
@@ -250,6 +382,7 @@ fn rules_writers_create_files() {
             .join("antigravity-rgt-rules.md"),
     );
     assert!(ag.contains("RGT Integration"));
+    assert!(ag.contains("<!-- /RGT Integration -->"));
 
     run(&home, &config_dir, false, true, "kilocode");
     let kilo = read(
@@ -258,26 +391,130 @@ fn rules_writers_create_files() {
             .join("rgt-rules.md"),
     );
     assert!(kilo.contains("RGT Integration"));
+    assert!(kilo.contains("<!-- /RGT Integration -->"));
 }
 
 // ---------------------------------------------------------------------------
-// Idempotency and --force semantics (FR-006)
+// US2: loud failures (T016) — malformed config is never silently overwritten
 // ---------------------------------------------------------------------------
 
 #[test]
-fn rerun_without_force_is_idempotent() {
+fn malformed_json_fails_loudly_and_file_is_untouched() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let settings = home.join(".claude").join("settings.json");
+
+    let malformed = "{ \"hooks\": {\n";
+    write(&settings, malformed);
+
+    let report = run(&home, &config_dir, true, true, "claude-code");
+    let reason = report
+        .outcomes
+        .iter()
+        .find_map(|o| match o {
+            AgentOutcome::Failed { agent, reason } if agent == "claude-code" => {
+                Some(reason.clone())
+            }
+            _ => None,
+        })
+        .expect("claude-code must fail");
+    assert!(
+        reason.contains("settings.json"),
+        "reason must name the file: {reason}"
+    );
+    assert_eq!(read(&settings), malformed, "file must be byte-identical");
+}
+
+#[test]
+fn malformed_toml_fails_loudly() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let config = home.join(".hermes").join("config.toml");
+
+    let malformed = "[plugins\nenabled = [\n";
+    write(&config, malformed);
+
+    let report = run(&home, &config_dir, true, true, "hermes");
+    assert!(failed(&report).contains(&"hermes".to_string()));
+    assert_eq!(read(&config), malformed);
+}
+
+#[test]
+fn jsonc_with_comments_is_tolerated() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let settings = home.join(".claude").join("settings.json");
+
+    write(
+        &settings,
+        "{\n  // keep me\n  \"permissions\": { \"defaultMode\": \"acceptEdits\" },\n}\n",
+    );
+
+    let report = run(&home, &config_dir, true, true, "claude-code");
+    assert_eq!(configured(&report), vec!["claude-code".to_string()]);
+    let content = read(&settings);
+    assert!(content.contains("// keep me"), "comments preserved");
+    assert!(content.contains("\"permissions\""));
+    jsonc_parser::parse_to_value(&content, &Default::default()).expect("must parse as JSONC");
+}
+
+#[test]
+fn partial_failure_still_configures_healthy_agents() {
     let dir = tempdir().unwrap();
     let _guard = set_cwd(dir.path());
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
 
-    // First run (force) creates artifacts.
+    // Claude trigger present but malformed; Gemini trigger present and healthy.
+    write(&home.join(".claude").join("settings.json"), "{ broken");
+    write(&home.join(".gemini").join("hooks.toml"), "");
+
+    let report = run_none(&home, &config_dir, true, true);
+    assert!(failed(&report).contains(&"claude-code".to_string()));
+    assert!(configured(&report).contains(&"gemini".to_string()));
+}
+
+#[test]
+fn backup_created_before_any_write_to_existing_file() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let settings = home.join(".claude").join("settings.json");
+
+    write(&settings, "{\"permissions\": {}}");
+    run(&home, &config_dir, true, false, "claude-code");
+
+    let backup = settings.with_file_name("settings.json.rgt.bak");
+    assert!(
+        backup.exists(),
+        "backup must exist before a write to an existing file"
+    );
+    assert_eq!(read(&backup), "{\"permissions\": {}}");
+}
+
+// ---------------------------------------------------------------------------
+// US3: re-init safety (T021 contract-level) — idempotency & --force block
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rerun_without_force_is_idempotent_for_toml() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
     run(&home, &config_dir, true, true, "gemini");
     let first = read(&home.join(".gemini").join("hooks.toml"));
 
-    // Second run without force: nothing written, file unchanged.
-    let result = run(&home, &config_dir, true, false, "gemini");
-    assert!(result.is_empty());
+    let report = run(&home, &config_dir, true, false, "gemini");
+    assert!(skipped(&report).contains(&"gemini".to_string()));
     assert_eq!(read(&home.join(".gemini").join("hooks.toml")), first);
 }
 
@@ -291,32 +528,84 @@ fn rules_file_appends_once_not_duplicated() {
     run(&home, &config_dir, false, true, "cline");
     let first = read(&PathBuf::from(".clinerules"));
 
-    // Re-run without force: no duplicate section.
-    run(&home, &config_dir, false, false, "cline");
+    let report = run(&home, &config_dir, false, false, "cline");
+    assert!(skipped(&report).contains(&"cline".to_string()));
     assert_eq!(read(&PathBuf::from(".clinerules")), first);
     assert_eq!(first.matches("## RGT Integration").count(), 1);
 }
 
 #[test]
-fn force_replaces_rgt_block_preserving_user_content() {
+fn force_replaces_rgt_block_preserving_user_content_below() {
     let dir = tempdir().unwrap();
     let _guard = set_cwd(dir.path());
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
     let rules_file = PathBuf::from(".clinerules");
 
-    // Seed a user file with a stale RGT block appended after user content.
+    // RGT block (with end marker) followed by user-authored notes.
     write(
         &rules_file,
-        "# User rules\n# More user rules\n## RGT Integration\nSTALE CONTENT\n",
+        "# User rules\n# More user rules\n## RGT Integration\nSTALE CONTENT\n<!-- /RGT Integration -->\n## My personal notes\nkeep me\n",
     );
     run(&home, &config_dir, false, true, "cline");
     let content = read(&rules_file);
     assert!(content.starts_with("# User rules\n"));
     assert!(content.contains("# More user rules\n"));
     assert!(!content.contains("STALE CONTENT"));
+    assert!(
+        content.contains("## My personal notes\nkeep me\n"),
+        "notes below block must survive"
+    );
     assert_eq!(content.matches("## RGT Integration").count(), 1);
     assert!(content.contains("rgt record <file>"));
+}
+
+#[test]
+fn force_on_legacy_block_without_end_marker_errors_and_untouches() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let rules_file = PathBuf::from(".clinerules");
+
+    let legacy = "## RGT Integration\nSTALE CONTENT\nuser notes\n";
+    write(&rules_file, legacy);
+
+    let report = run(&home, &config_dir, false, true, "cline");
+    let reason = report
+        .outcomes
+        .iter()
+        .find_map(|o| match o {
+            AgentOutcome::Failed { agent, reason } if agent == "cline" => Some(reason.clone()),
+            _ => None,
+        })
+        .expect("cline must fail on a legacy block");
+    assert!(
+        reason.contains(".clinerules"),
+        "reason must name the file: {reason}"
+    );
+    assert!(reason.contains("end marker"));
+    assert_eq!(
+        read(&rules_file),
+        legacy,
+        "legacy block must be left untouched"
+    );
+}
+
+#[test]
+fn legacy_block_without_force_is_skipped_not_modified() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let rules_file = PathBuf::from(".clinerules");
+
+    let legacy = "## RGT Integration\nSTALE CONTENT\n";
+    write(&rules_file, legacy);
+
+    let report = run(&home, &config_dir, false, false, "cline");
+    assert!(skipped(&report).contains(&"cline".to_string()));
+    assert_eq!(read(&rules_file), legacy);
 }
 
 #[test]
@@ -328,8 +617,8 @@ fn plugin_file_not_overwritten_without_force() {
     let plugin_file = PathBuf::from(".opencode").join("plugin").join("rgt.ts");
 
     write(&plugin_file, "// user-authored plugin\n");
-    let result = run(&home, &config_dir, false, false, "opencode");
-    assert!(result.is_empty());
+    let report = run(&home, &config_dir, false, false, "opencode");
+    assert!(skipped(&report).contains(&"opencode".to_string()));
     assert_eq!(read(&plugin_file), "// user-authored plugin\n");
 
     // --force overwrites.
@@ -358,12 +647,11 @@ fn init_no_agent_configures_all_detected() {
         "{}",
     );
 
-    let result = run_none(&home, &config_dir, false, true);
-    assert!(result.iter().any(|r| r.contains("Claude Code")));
-    assert!(result.iter().any(|r| r.contains("Mistral Vibe")));
-    assert!(result.iter().any(|r| r.contains("Kilo")));
-    assert!(result.iter().any(|r| r.contains("Cline")));
-    assert!(result.iter().any(|r| r.contains("Copilot")));
+    let report = run_none(&home, &config_dir, false, true);
+    let c = configured(&report);
+    for agent in ["claude-code", "vibe", "kilocode", "cline", "copilot"] {
+        assert!(c.contains(&agent.to_string()), "missing {}", agent);
+    }
 }
 
 #[test]
@@ -373,8 +661,8 @@ fn init_no_agent_with_nothing_detected_reports_empty() {
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
 
-    let result = run_none(&home, &config_dir, false, true);
-    assert!(result.is_empty());
+    let report = run_none(&home, &config_dir, false, true);
+    assert!(report.is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -428,14 +716,14 @@ fn unknown_agent_configures_nothing() {
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
 
-    let result =
+    let report =
         detect_and_configure_hooks_with_config(&home, &config_dir, true, true, Some("nope"))
             .unwrap();
-    assert!(result.is_empty());
+    assert!(report.is_empty());
 }
 
 // ---------------------------------------------------------------------------
-// Fail-open guards (T026 / T027): glue invokes only the CLI and never errors
+// Fail-open guards: glue invokes only the CLI and never errors
 // ---------------------------------------------------------------------------
 
 fn assert_thin_glue(content: &str, agent: &str) {

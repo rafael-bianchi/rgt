@@ -161,6 +161,32 @@ rgt init [-g] [--force] [--agent <name>]   # configure hooks, detect installed a
 rgt hook pre|post [--agent <name>]         # passive capture from agent event JSON (stdin)
 ```
 
+`rgt init` **never destroys your existing configuration**. It merges RGT's hook
+entries into your agent config additively — JSON/JSONC settings (comments and
+trailing commas are tolerated and preserved), TOML configs, and rules files keep
+every other hook, keybinding, plugin, and note byte-for-byte. Re-running without
+`--force` is a no-op; `--force` refreshes only RGT's own delimited block. If a
+config file can't be parsed or safely merged, that agent is reported with a
+recoverable error and a non-zero exit — other agents are still configured, and a
+`<file>.rgt.bak` backup is kept before any existing file is rewritten.
+Exit codes: `0` = success, `1` = at least one agent failed, `2` = invalid
+`--agent` name.
+
+### Update
+```bash
+rgt update [--check] [--yes] [--version <tag>] [--skip-checksum] [--skip-attestation]
+```
+
+`rgt update` installs only **verified** binaries: every download is checked
+against the release's `checksums.txt` (SHA-256) **and** its GitHub Artifact
+Attestation — a trust anchor issued independently of the release's own assets
+(built-in Sigstore verification, no `gh` required). A release missing either
+verification is refused with a non-zero exit; `--skip-checksum` /
+`--skip-attestation` are explicit, documented-as-insecure opt-outs that are
+never the default. Version comparison uses Semantic Versioning: an older or
+equal tag is never installed (no silent downgrades), and `--version <tag>`
+warns when the requested tag is older than the installed version.
+
 ### Provenance
 ```bash
 rgt record <file>                          # extract and track values from a file
@@ -173,7 +199,9 @@ rgt query <node_id> [--json]               # full lineage for a value
 rgt graph [-f text|mermaid|dot]            # export the dependency DAG
 ```
 
-Operations: `EXPRESSION` (formulas like `a + b * c`) and `DATE_DIFF` (date arithmetic, e.g. `date2 - date1`). Parent variables map as `parent[0]=a, parent[1]=b, ...`.
+Operations: `EXPRESSION` (formulas like `a + b * c`) and `DATE_DIFF` (date arithmetic, e.g. `date2 - date1`). Parent variables map as `parent[0]=a, parent[1]=b, ...` (at most 26, `a`–`z`).
+
+`--operation` is case-sensitive (`EXPRESSION`/`DATE_DIFF`); anything else is rejected with exit code 2 — verification is never silently skipped. `--expression` is limited to 4096 bytes and 256 levels of parenthesis nesting (over-limit input is rejected with exit 2, never a crash). Expressions evaluate with built-in functions disabled — only your parent variables and `+ - * / % ^` and parentheses are available, so evaluation is deterministic. `DATE_DIFF` requires `--parents <date1>,<date2>` and computes `date2 - date1`; a negative result (possible swapped order) is rejected.
 
 ## Supported AI Tools
 

@@ -19,7 +19,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, None).is_ok());
+        assert!(execute_init(false, true, Some("codex")).is_ok());
 
         let file_path = dir.path().join("data.csv");
         let mut f = fs::File::create(&file_path).unwrap();
@@ -34,7 +34,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, None).is_ok());
+        assert!(execute_init(false, true, Some("codex")).is_ok());
 
         let result = execute_record("nonexistent.csv", false);
         assert!(result.is_err());
@@ -46,7 +46,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, None).is_ok());
+        assert!(execute_init(false, true, Some("codex")).is_ok());
 
         let file_path = dir.path().join("empty.txt");
         fs::File::create(&file_path).unwrap();
@@ -60,7 +60,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, None).is_ok());
+        assert!(execute_init(false, true, Some("codex")).is_ok());
 
         let file_path = dir.path().join("stdin_test.csv");
         let mut f = fs::File::create(&file_path).unwrap();
@@ -70,5 +70,77 @@ mod tests {
         // We still need the file to exist on disk for metadata
         let path_str = file_path.to_string_lossy().to_string();
         assert!(execute_record(&path_str, true).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // 021 / US2 (T008): an unknown --operation is invalid input (exit 2),
+    // never a silent pass-through, and records nothing.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_derive_unknown_operation_exits_2_and_records_nothing() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args([
+                "derive",
+                "--parents",
+                "x",
+                "--operation",
+                "bogus",
+                "--result",
+                "1",
+            ])
+            .current_dir(dir.path())
+            .output()
+            .expect("spawn rgt derive");
+
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("valid operations: EXPRESSION, DATE_DIFF"),
+            "{}",
+            stderr
+        );
+        assert!(!stderr.contains("skipping"), "no silent skip: {}", stderr);
+        assert!(
+            !dir.path().join(".rgt/store.db").exists(),
+            "no derivation may be recorded for an invalid operation"
+        );
+    }
+
+    #[test]
+    fn test_derive_case_mismatched_operation_is_exit_2() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args([
+                "derive",
+                "--parents",
+                "x",
+                "--operation",
+                "expression",
+                "--expression",
+                "a + b",
+                "--result",
+                "1",
+            ])
+            .current_dir(dir.path())
+            .output()
+            .expect("spawn rgt derive");
+
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 }

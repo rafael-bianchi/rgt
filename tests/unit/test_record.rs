@@ -78,7 +78,7 @@ mod tests {
             guard
         };
 
-        execute_init(false, true, None).unwrap();
+        execute_init(false, true, Some("codex")).unwrap();
 
         let file_path = dir.path().join("perf.txt");
         let mut f = fs::File::create(&file_path).unwrap();

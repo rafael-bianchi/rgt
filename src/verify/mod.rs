@@ -1,19 +1,38 @@
 mod date_diff;
 mod expression;
 
+pub use expression::validate_expression;
+
 use crate::types::ValueData;
 use std::process;
 
+/// The only valid `--operation` values (case-sensitive).
+pub const VALID_OPERATIONS: [&str; 2] = ["EXPRESSION", "DATE_DIFF"];
+
+/// Whether `op` is a valid `--operation` value (FR-002): case-sensitive
+/// allow-list. Casing slips (`expression`, `Expression`, `date_diff`) are
+/// invalid input, never silently skipped.
+pub fn valid_operation(op: &str) -> bool {
+    VALID_OPERATIONS.contains(&op)
+}
+
 /// Verifies that a derived value matches what would be computed from parent nodes.
 ///
-/// Returns `Ok(())` if the result matches or the operation is unknown (pass-through).
-/// Returns `Err(message)` if the result does not match (verification failed).
+/// Returns `Ok(())` if the result matches.
+/// Returns `Err(message)` if the result does not match (verification failed)
+/// or the operation is not in `{EXPRESSION, DATE_DIFF}`.
 pub fn verify(
     parents: &[ValueData],
     operation: &str,
     expression: Option<&str>,
     result: f64,
 ) -> Result<(), String> {
+    if !valid_operation(operation) {
+        return Err(format!(
+            "unknown operation '{}' — valid operations: EXPRESSION, DATE_DIFF",
+            operation
+        ));
+    }
     match operation {
         "EXPRESSION" => {
             let expr = expression
@@ -24,12 +43,30 @@ pub fn verify(
             let result_secs = result as i64;
             date_diff::verify_date_diff(parents, result_secs)
         }
-        _ => Ok(()), // unknown operation — pass through
+        _ => unreachable!("valid_operation rejected above"),
     }
 }
 
 /// CLI entry point for `rgt verify`. Handles DB access, error formatting, and exit codes.
 pub fn run_verify_cli(parents: &str, operation: &str, expression: Option<&str>, result: f64) {
+    // FR-002 / FR-001: validate operation and (for EXPRESSION) the expression
+    // up front — invalid input is exit 2, never a silent pass-through.
+    if !valid_operation(operation) {
+        eprintln!(
+            "Error: unknown operation '{}' — valid operations: EXPRESSION, DATE_DIFF",
+            operation
+        );
+        process::exit(2);
+    }
+    if operation == "EXPRESSION" {
+        if let Some(expr) = expression {
+            if let Err(e) = expression::validate_expression(expr) {
+                eprintln!("Error: invalid --expression: {}", e);
+                process::exit(2);
+            }
+        }
+    }
+
     let parent_ids: Vec<String> = parents.split(',').map(|s| s.trim().to_string()).collect();
 
     let db = match crate::store::DbStore::open_in_project(".") {
@@ -56,15 +93,6 @@ pub fn run_verify_cli(parents: &str, operation: &str, expression: Option<&str>, 
         }
     }
 
-    let unknown = !matches!(operation, "EXPRESSION" | "DATE_DIFF");
-    if unknown {
-        eprintln!(
-            "Warning: operation '{}' is not verifiable — skipping verification",
-            operation
-        );
-        process::exit(0);
-    }
-
     match verify(&parent_values, operation, expression, result) {
         Ok(()) => {
             process::exit(0);
@@ -80,5 +108,60 @@ pub fn run_verify_cli(parents: &str, operation: &str, expression: Option<&str>, 
             );
             process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    // ---- T003: valid_operation ----
+
+    #[test]
+    fn valid_operation_accepts_canonical() {
+        assert!(valid_operation("EXPRESSION"));
+        assert!(valid_operation("DATE_DIFF"));
+    }
+
+    #[test]
+    fn valid_operation_rejects_case_variants_and_unknown() {
+        for op in [
+            "expression",
+            "Expression",
+            "date_diff",
+            "",
+            "RANDOM",
+            "verify",
+        ] {
+            assert!(!valid_operation(op), "{} must be rejected", op);
+        }
+    }
+
+    // ---- T008: verify() rejects unknown operations ----
+
+    #[test]
+    fn verify_rejects_unknown_operation() {
+        let err = verify(&[], "expression", None, 0.0).unwrap_err();
+        assert!(err.contains("unknown operation"), "{}", err);
+        assert!(err.contains("EXPRESSION, DATE_DIFF"), "{}", err);
+    }
+
+    #[test]
+    fn verify_canonical_operation_is_not_an_unknown_operation_error() {
+        // EXPRESSION with a missing --expression is a different error, not an
+        // unknown-operation error.
+        let err = verify(&[], "EXPRESSION", None, 1.0).unwrap_err();
+        assert!(!err.contains("unknown operation"), "{}", err);
+    }
+
+    // ---- DATE_DIFF still works end to end ----
+
+    #[test]
+    fn verify_date_diff_via_verify() {
+        let d1 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let d2 = Utc.with_ymd_and_hms(2026, 1, 11, 0, 0, 0).unwrap();
+        let parents = vec![ValueData::Date(d1), ValueData::Date(d2)];
+        assert!(verify(&parents, "DATE_DIFF", None, 864_000.0).is_ok());
     }
 }

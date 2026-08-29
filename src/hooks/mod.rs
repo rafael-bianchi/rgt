@@ -1,3 +1,4 @@
+pub mod editor;
 pub mod glue;
 pub mod installer;
 pub mod parser;

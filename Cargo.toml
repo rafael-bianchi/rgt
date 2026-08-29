@@ -37,6 +37,12 @@ zip = "2.2"
 walkdir = "2.5"
 tempfile = "3.10"
 evalexpr = "13.1.0"
+jsonc-parser = { version = "0.33.1", features = ["cst"] }
+toml_edit = "0.25.13"
+semver = "1"
+snap = "1"
+attestation-verify = "0.1.0"
+self-replace = "1.5.0"
 
 [dev-dependencies]
 
@@ -69,12 +75,24 @@ name = "test_update_contract"
 path = "tests/contract/test_update_contract.rs"
 
 [[test]]
+name = "test_update_semver"
+path = "tests/unit/test_update_semver.rs"
+
+[[test]]
+name = "test_update_attestation"
+path = "tests/unit/test_update_attestation.rs"
+
+[[test]]
 name = "test_record"
 path = "tests/unit/test_record.rs"
 
 [[test]]
 name = "test_hook_parsers"
 path = "tests/unit/hook_parsers.rs"
+
+[[test]]
+name = "test_hook_editors"
+path = "tests/unit/hook_editors.rs"
 
 [[test]]
 name = "test_detection"

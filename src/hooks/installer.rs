@@ -5,10 +5,18 @@
 //! Code, Antigravity, Kilo) with canonical names, aliases, and integration
 //! tiers, writes each agent's native hook config/plugin/rules artifact at
 //! `rgt init` time, and auto-detects installed agents for one-command setup.
+//!
+//! Every writer here preserves existing user configuration (spec FR-001/FR-002):
+//! JSON/JSONC configs are merged via [`crate::hooks::editor`]'s byte-for-byte
+//! splice, TOML configs via `toml_edit`, and text/rules blocks are replaced only
+//! between paired markers. Unparsable or unmergeable files are reported loudly
+//! (FR-003/FR-009) and per-agent failures never abort the other agents
+//! (FR-008).
 
+use crate::hooks::editor::{self, ConfigEditError};
 use crate::hooks::glue;
+use serde_json::json;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 #[allow(dead_code)]
@@ -126,19 +134,49 @@ pub fn valid_agent_names() -> Vec<&'static str> {
     crate::hooks::paths::ALL_AGENT_NAMES.to_vec()
 }
 
+/// Result of configuring a single agent's artifacts.
+#[derive(Debug)]
+enum WriteOutcome {
+    /// The agent's config was written/updated; carries the artifact path.
+    Configured(PathBuf),
+    /// The agent is already configured; nothing was written (FR-005).
+    Skipped,
+}
+
+/// Per-agent outcome of an `rgt init` run (FR-008).
+#[derive(Debug)]
+pub enum AgentOutcome {
+    Configured { agent: String, artifact: PathBuf },
+    Skipped { agent: String },
+    Failed { agent: String, reason: String },
+}
+
+/// Full per-agent report of an `rgt init` run.
+#[derive(Debug, Default)]
+pub struct InstallReport {
+    pub outcomes: Vec<AgentOutcome>,
+}
+
+impl InstallReport {
+    pub fn is_empty(&self) -> bool {
+        self.outcomes.is_empty()
+    }
+}
+
 /// Detects installed AI coding tools and configures their hooks. Supports the
 /// full 13-agent RTK set, global installs, `--force` overwrite, and per-agent
 /// targeting. Without `--agent`, only agents whose detection trigger is present
 /// are configured (US2).
-/// # Returns
-/// A list of human-readable strings describing each configured agent+config file.
+///
+/// Failures are collected per agent (never short-circuited) so a single
+/// malformed config never prevents healthy agents from being configured
+/// (FR-008).
 pub fn detect_and_configure_hooks(
     global: bool,
     force: bool,
     agent: Option<&str>,
-) -> io::Result<Vec<String>> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
+) -> Result<InstallReport, ConfigEditError> {
+    let home = dirs::home_dir().ok_or_else(|| ConfigEditError::msg("Home directory not found"))?;
     detect_and_configure_hooks_in_home(&home, global, force, agent)
 }
 
@@ -151,7 +189,7 @@ pub fn detect_and_configure_hooks_in_home(
     global: bool,
     force: bool,
     agent: Option<&str>,
-) -> io::Result<Vec<String>> {
+) -> Result<InstallReport, ConfigEditError> {
     let config_dir = dirs::config_dir().unwrap_or_else(|| home.join(".config"));
     configure(home, &config_dir, global, force, agent)
 }
@@ -166,7 +204,7 @@ pub fn detect_and_configure_hooks_with_config(
     global: bool,
     force: bool,
     agent: Option<&str>,
-) -> io::Result<Vec<String>> {
+) -> Result<InstallReport, ConfigEditError> {
     configure(home, config_dir, global, force, agent)
 }
 
@@ -176,8 +214,8 @@ fn configure(
     global: bool,
     force: bool,
     agent: Option<&str>,
-) -> io::Result<Vec<String>> {
-    let mut configured = Vec::new();
+) -> Result<InstallReport, ConfigEditError> {
+    let mut outcomes = Vec::new();
 
     // Resolve the targeted canonical agent. Unknown names configure nothing;
     // the CLI layer enforces FR-001 (exit code 2 + valid-name list).
@@ -186,7 +224,7 @@ fn configure(
         Some(name) => resolve_agent_name(name),
     };
     if agent.is_some() && target.is_none() {
-        return Ok(configured);
+        return Ok(InstallReport { outcomes });
     }
 
     // Without `--agent`, configure only agents detected as installed (US2).
@@ -196,170 +234,172 @@ fn configure(
     };
     let wants = |name: &str| targets.iter().any(|t| t == name);
 
-    // ---- Existing 4 integrations (byte-identical baseline, SC-003) ----
-
-    // 1. Claude Code (~/.claude/settings.json)
-    if wants("claude-code") {
-        write_claude_code(home, global, force, &mut configured)?;
+    macro_rules! configure_agent {
+        ($agent:expr, $writer:expr) => {
+            if wants($agent) {
+                match $writer {
+                    Ok(WriteOutcome::Configured(artifact)) => {
+                        outcomes.push(AgentOutcome::Configured {
+                            agent: $agent.to_string(),
+                            artifact,
+                        })
+                    }
+                    Ok(WriteOutcome::Skipped) => outcomes.push(AgentOutcome::Skipped {
+                        agent: $agent.to_string(),
+                    }),
+                    Err(e) => outcomes.push(AgentOutcome::Failed {
+                        agent: $agent.to_string(),
+                        reason: e.to_string(),
+                    }),
+                }
+            }
+        };
     }
 
-    // 2. Cursor (~/.cursor/hooks.json)
-    if wants("cursor") {
-        write_cursor(home, global, force, &mut configured)?;
-    }
+    configure_agent!("claude-code", write_claude_code(home, global));
+    configure_agent!("cursor", write_cursor(home, global));
+    configure_agent!("codex", write_codex(force));
+    configure_agent!("windsurf", write_windsurf(force));
+    configure_agent!("copilot", write_copilot(home, config_dir, force));
+    configure_agent!("gemini", write_gemini(home));
+    configure_agent!("vibe", write_vibe(home, force));
+    configure_agent!("opencode", write_opencode(home, global, force));
+    configure_agent!("pi", write_pi(home, global, force));
+    configure_agent!("hermes", write_hermes(home, global, force));
+    configure_agent!("cline", write_cline(force));
+    configure_agent!("antigravity", write_antigravity(force));
+    configure_agent!("kilocode", write_kilocode(force));
 
-    // 3. Codex CLI (AGENTS.md integration)
-    if wants("codex") {
-        write_codex(force, &mut configured)?;
-    }
-
-    // 4. Windsurf (.windsurfrules)
-    if wants("windsurf") {
-        write_windsurf(force, &mut configured)?;
-    }
-
-    // ---- New agents (US1) ----
-
-    if wants("copilot") {
-        write_copilot(home, config_dir, force, &mut configured)?;
-    }
-    if wants("gemini") {
-        write_gemini(home, force, &mut configured)?;
-    }
-    if wants("vibe") {
-        write_vibe(home, force, &mut configured)?;
-    }
-    if wants("opencode") {
-        write_opencode(home, global, force, &mut configured)?;
-    }
-    if wants("pi") {
-        write_pi(home, global, force, &mut configured)?;
-    }
-    if wants("hermes") {
-        write_hermes(home, global, force, &mut configured)?;
-    }
-    if wants("cline") {
-        write_cline(force, &mut configured)?;
-    }
-    if wants("antigravity") {
-        write_antigravity(force, &mut configured)?;
-    }
-    if wants("kilocode") {
-        write_kilocode(force, &mut configured)?;
-    }
-
-    Ok(configured)
+    Ok(InstallReport { outcomes })
 }
 
 // ---------------------------------------------------------------------------
-// Existing integrations (SC-003: byte-identical output)
+// Shared edit helpers (preservation guarantees live in `editor`)
 // ---------------------------------------------------------------------------
 
-fn write_claude_code(
-    home: &Path,
-    global: bool,
+/// Attaches `path` to a [`ConfigEditError`] produced by a text-level editor, so
+/// user-facing failure reasons always name the offending file (FR-009).
+fn with_path(path: &Path, mut e: ConfigEditError) -> ConfigEditError {
+    if e.path.is_none() {
+        e.path = Some(path.display().to_string());
+    }
+    e
+}
+
+/// Ensures the RGT `desired` structure is present in the JSONC config at `path`,
+/// merging byte-for-byte and preserving all non-RGT content (FR-001/FR-002).
+fn ensure_json_hooks(
+    path: &Path,
+    desired: &serde_json::Value,
+) -> Result<WriteOutcome, ConfigEditError> {
+    let text = editor::read_config(path)?;
+    if text.trim().is_empty() {
+        let content = serde_json::to_string_pretty(desired).map_err(|e| {
+            with_path(
+                path,
+                ConfigEditError::msg(format!("failed to serialize config: {e}")),
+            )
+        })?;
+        editor::write_config(path, &content)?;
+        return Ok(WriteOutcome::Configured(path.to_path_buf()));
+    }
+    let (edited, changed) =
+        editor::jsonc_merge_hook_entries(&text, desired).map_err(|e| with_path(path, e))?;
+    if !changed {
+        return Ok(WriteOutcome::Skipped);
+    }
+    editor::write_config_with_backup(path, &edited)?;
+    Ok(WriteOutcome::Configured(path.to_path_buf()))
+}
+
+/// Runs a TOML edit closure against the config at `path`, writing with a backup
+/// when anything changed (FR-004).
+fn ensure_toml<F>(path: &Path, edit: F) -> Result<WriteOutcome, ConfigEditError>
+where
+    F: FnOnce(&str) -> Result<(String, bool), ConfigEditError>,
+{
+    let text = editor::read_config(path)?;
+    let (edited, changed) = edit(&text).map_err(|e| with_path(path, e))?;
+    if !changed {
+        return Ok(WriteOutcome::Skipped);
+    }
+    editor::write_config_with_backup(path, &edited)?;
+    Ok(WriteOutcome::Configured(path.to_path_buf()))
+}
+
+/// Ensures an RGT-marked text block in `path` using paired markers. Without
+/// `--force`, an existing marker is a no-op (FR-005); with `--force` the block
+/// is replaced in place, preserving content above and below it (FR-006). Legacy
+/// blocks (marker without end marker) are a hard error (FR-006).
+fn ensure_text_block(
+    path: &Path,
+    open_marker: &str,
+    end_marker: &str,
+    block: &str,
     force: bool,
-    configured: &mut Vec<String>,
-) -> io::Result<()> {
+) -> Result<WriteOutcome, ConfigEditError> {
+    let text = editor::read_config(path)?;
+    let has_open = text
+        .lines()
+        .any(|l| l.trim_start().starts_with(open_marker));
+    if has_open && !force {
+        return Ok(WriteOutcome::Skipped);
+    }
+    let (edited, changed) = editor::text_replace_block(&text, open_marker, end_marker, block)
+        .map_err(|e| with_path(path, e))?;
+    if !changed {
+        return Ok(WriteOutcome::Skipped);
+    }
+    editor::write_config_with_backup(path, &edited)?;
+    Ok(WriteOutcome::Configured(path.to_path_buf()))
+}
+
+// ---------------------------------------------------------------------------
+// Existing integrations
+// ---------------------------------------------------------------------------
+
+fn write_claude_code(home: &Path, global: bool) -> Result<WriteOutcome, ConfigEditError> {
     let claude_dir = if global {
         home.join(".claude")
     } else {
         PathBuf::from(".claude")
     };
     let settings_file = claude_dir.join("settings.json");
-    let old_hooks_file = claude_dir.join("hooks.json");
 
-    if force || !settings_file.exists() {
-        if let Some(parent) = settings_file.parent() {
-            let _ = fs::create_dir_all(parent);
+    let desired = json!({
+        "hooks": {
+            "PostToolUse": [ { "matcher": "", "hooks": [{ "type": "command", "command": "rgt hook post" }] } ],
+            "PreToolUse": [ { "matcher": "", "hooks": [{ "type": "command", "command": "rgt hook pre" }] } ],
         }
+    });
+    let outcome = ensure_json_hooks(&settings_file, &desired)?;
 
-        let mut existing: serde_json::Value = if settings_file.exists() {
-            let content = fs::read_to_string(&settings_file).unwrap_or_default();
-            serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
-        } else {
-            serde_json::json!({})
-        };
-
-        let rgt_hooks = serde_json::json!({
-            "PostToolUse": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "rgt hook post"
-                        }
-                    ]
-                }
-            ],
-            "PreToolUse": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "rgt hook pre"
-                        }
-                    ]
-                }
-            ]
-        });
-
-        existing["hooks"] = rgt_hooks;
-        fs::write(&settings_file, serde_json::to_string_pretty(&existing)?)?;
-        configured.push(format!(
-            "Claude Code (full hook) -> {}",
-            settings_file.display()
-        ));
-
-        if force && old_hooks_file.exists() {
+    if matches!(outcome, WriteOutcome::Configured(_)) {
+        // The legacy hooks.json artifact is superseded by settings.json hooks.
+        let old_hooks_file = claude_dir.join("hooks.json");
+        if old_hooks_file.exists() {
             let _ = fs::remove_file(&old_hooks_file);
         }
     }
-    Ok(())
+    Ok(outcome)
 }
 
-fn write_cursor(
-    home: &Path,
-    global: bool,
-    force: bool,
-    configured: &mut Vec<String>,
-) -> io::Result<()> {
+fn write_cursor(home: &Path, global: bool) -> Result<WriteOutcome, ConfigEditError> {
     let cursor_dir = if global {
         home.join(".cursor")
     } else {
         PathBuf::from(".cursor")
     };
     let cursor_hooks_file = cursor_dir.join("hooks.json");
-    if force || !cursor_hooks_file.exists() {
-        if let Some(parent) = cursor_hooks_file.parent() {
-            let _ = fs::create_dir_all(parent);
+
+    let desired = json!({
+        "version": 1,
+        "hooks": {
+            "preToolUse": [ { "command": "rgt hook pre", "matcher": "Shell" } ],
+            "postToolUse": [ { "command": "rgt hook post", "matcher": "Shell" } ],
         }
-        let config = serde_json::json!({
-            "version": 1,
-            "hooks": {
-                "preToolUse": [
-                    {
-                        "command": "rgt hook pre",
-                        "matcher": "Shell"
-                    }
-                ],
-                "postToolUse": [
-                    {
-                        "command": "rgt hook post",
-                        "matcher": "Shell"
-                    }
-                ]
-            }
-        });
-        fs::write(&cursor_hooks_file, serde_json::to_string_pretty(&config)?)?;
-        configured.push(format!(
-            "Cursor (full hook) -> {}",
-            cursor_hooks_file.display()
-        ));
-    }
-    Ok(())
+    });
+    ensure_json_hooks(&cursor_hooks_file, &desired)
 }
 
 fn codex_section() -> String {
@@ -367,50 +407,38 @@ fn codex_section() -> String {
         .to_string()
 }
 
-fn write_codex(force: bool, configured: &mut Vec<String>) -> io::Result<()> {
+fn write_codex(force: bool) -> Result<WriteOutcome, ConfigEditError> {
     let agents_file = PathBuf::from("AGENTS.md");
+    let block = format!("{}{}", codex_section(), glue::RGT_END_MARKER_LINE);
 
-    let write_file = force
-        || !agents_file.exists()
-        || !fs::read_to_string(&agents_file)
-            .unwrap_or_default()
-            .contains("## RGT Integration");
-
-    if write_file {
-        if force || !agents_file.exists() {
-            fs::write(
-                &agents_file,
-                format!("# RGT Agents Instructions\n{}", codex_section()),
-            )?;
-        } else {
-            use std::io::Write;
-            let mut file = fs::OpenOptions::new().append(true).open(&agents_file)?;
-            file.write_all(codex_section().as_bytes())?;
-        }
+    let text = editor::read_config(&agents_file)?;
+    if text.trim().is_empty() {
+        let content = format!("# RGT Agents Instructions{}", block);
+        editor::write_config(&agents_file, &content)?;
+        return Ok(WriteOutcome::Configured(agents_file));
     }
-
-    configured.push(format!(
-        "Codex CLI (rules-file) -> {}",
-        agents_file.display()
-    ));
-    Ok(())
+    ensure_text_block(
+        &agents_file,
+        glue::RGT_MARKER,
+        glue::RGT_END_MARKER,
+        &block,
+        force,
+    )
 }
 
-fn write_windsurf(force: bool, configured: &mut Vec<String>) -> io::Result<()> {
+fn write_windsurf(force: bool) -> Result<WriteOutcome, ConfigEditError> {
     let rules_file = PathBuf::from(".windsurfrules");
-    let rules_content = "# RGT Integration\n\
-        RGT tracks numeric and date provenance for AI coding agents.\n\
-        After reading data files, record extracted values with `rgt record <file>`.\n\
-        After computing derived values, record them with `rgt derive --parents <ids> --operation EXPRESSION --expression \"a - b\" --result <val>`.\n\
-        Derivations are verified before recording; wrong results are rejected.\n\
-        Use `rgt status` to check provenance graph state.\n\
-        Run `rgt --help` for all available commands.\n";
-
-    if force || !rules_file.exists() {
-        fs::write(&rules_file, rules_content)?;
-        configured.push(format!("Windsurf (rules-file) -> {}", rules_file.display()));
-    }
-    Ok(())
+    let rules_content = format!(
+        "# RGT Integration\nRGT tracks numeric and date provenance for AI coding agents.\nAfter reading data files, record extracted values with `rgt record <file>`.\nAfter computing derived values, record them with `rgt derive --parents <ids> --operation EXPRESSION --expression \"a - b\" --result <val>`.\nDerivations are verified before recording; wrong results are rejected.\nUse `rgt status` to check provenance graph state.\nRun `rgt --help` for all available commands.\n{}",
+        glue::RGT_END_MARKER_LINE
+    );
+    ensure_text_block(
+        &rules_file,
+        "# RGT Integration",
+        glue::RGT_END_MARKER,
+        &rules_content,
+        force,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -423,94 +451,94 @@ fn write_copilot(
     home: &Path,
     config_dir: &Path,
     force: bool,
-    configured: &mut Vec<String>,
-) -> io::Result<()> {
+) -> Result<WriteOutcome, ConfigEditError> {
     let settings_file = crate::hooks::paths::copilot_user_settings(config_dir);
-    let hooks = serde_json::json!({
-        "PostToolUse": [
-            {
-                "matcher": ".*",
-                "hooks": [
-                    { "type": "command", "command": "rgt hook post --agent copilot" }
-                ]
-            }
-        ]
+    let desired = json!({
+        "github.copilot.chat.hooks": {
+            "PostToolUse": [ { "matcher": ".*", "hooks": [{ "type": "command", "command": "rgt hook post --agent copilot" }] } ],
+        }
     });
+    let chat = ensure_json_hooks(&settings_file, &desired)?;
 
-    let written = write_json_key(&settings_file, "github.copilot.chat.hooks", &hooks, force)?;
-    if written {
-        configured.push(format!(
-            "Copilot (full hook) -> {}",
-            settings_file.display()
-        ));
-    }
-
-    // Copilot CLI: instructions file at the CLI's user config directory.
     let cli_rules_file =
         crate::hooks::paths::copilot_cli_config_dir(home, config_dir).join("AGENTS.md");
-    if write_text_block(
+    let cli = ensure_text_block(
         &cli_rules_file,
         glue::RGT_MARKER,
-        glue::COPILOT_CLI_RULES,
+        glue::RGT_END_MARKER,
+        &format!("{}{}", glue::COPILOT_CLI_RULES, glue::RGT_END_MARKER_LINE),
         force,
-    )? {
-        configured.push(format!(
-            "Copilot CLI (rules-file) -> {}",
-            cli_rules_file.display()
-        ));
-    }
-    Ok(())
+    )?;
+
+    Ok(match (chat, cli) {
+        (WriteOutcome::Configured(_), _) | (_, WriteOutcome::Configured(_)) => {
+            WriteOutcome::Configured(settings_file)
+        }
+        _ => WriteOutcome::Skipped,
+    })
 }
 
 /// Gemini CLI: `~/.gemini/hooks.toml` PostToolUse entry.
-fn write_gemini(home: &Path, force: bool, configured: &mut Vec<String>) -> io::Result<()> {
+fn write_gemini(home: &Path) -> Result<WriteOutcome, ConfigEditError> {
     let hooks_file = home.join(".gemini").join("hooks.toml");
-    let block = "\
-        # RGT Integration\n\
-        [PostToolUse]\n\
-        command = \"rgt hook post --agent gemini\"\n";
-
-    if write_toml_block(&hooks_file, "rgt hook post --agent gemini", block, force)? {
-        configured.push(format!("Gemini (full hook) -> {}", hooks_file.display()));
-    }
-    Ok(())
+    ensure_toml(&hooks_file, |t| {
+        editor::toml_ensure_table_entry(
+            t,
+            &["PostToolUse"],
+            "command",
+            "rgt hook post --agent gemini",
+        )
+    })
 }
 
 /// Mistral Vibe: `~/.vibe/hooks.toml` pre_tool entry + `~/.vibe/prompts/rgt.md`.
-fn write_vibe(home: &Path, force: bool, configured: &mut Vec<String>) -> io::Result<()> {
+fn write_vibe(home: &Path, force: bool) -> Result<WriteOutcome, ConfigEditError> {
     let hooks_file = home.join(".vibe").join("hooks.toml");
-    let block = "\
-        # RGT Integration\n\
-        [[pre_tool]]\n\
-        match = \"bash\"\n\
-        strict = false\n\
-        command = \"rgt hook post --agent vibe\"\n";
+    let hooks = ensure_toml(&hooks_file, |t| {
+        editor::toml_ensure_vibe_pre_tool(t, "rgt hook post --agent vibe")
+    })?;
 
-    let written_hooks = write_toml_block(&hooks_file, "rgt hook post --agent vibe", block, force)?;
     let prompt_file = home.join(".vibe").join("prompts").join("rgt.md");
-    let written_prompt =
-        write_text_block(&prompt_file, glue::RGT_MARKER, glue::VIBE_PROMPT, force)?;
+    let prompt = ensure_text_block(
+        &prompt_file,
+        "# RGT Integration",
+        glue::RGT_END_MARKER,
+        &format!("{}{}", glue::VIBE_PROMPT, glue::RGT_END_MARKER_LINE),
+        force,
+    )?;
 
-    if written_hooks || written_prompt {
-        configured.push(format!(
-            "Mistral Vibe (full hook) -> {}",
-            hooks_file.display()
-        ));
-    }
-    Ok(())
+    Ok(match (hooks, prompt) {
+        (WriteOutcome::Configured(_), _) | (_, WriteOutcome::Configured(_)) => {
+            WriteOutcome::Configured(hooks_file)
+        }
+        _ => WriteOutcome::Skipped,
+    })
 }
 
 // ---------------------------------------------------------------------------
 // New integrations (US1): plugin-tier agents
 // ---------------------------------------------------------------------------
 
+/// Writes a standalone plugin file. Idempotent: skipped when present unless
+/// `--force`.
+fn write_plugin_file(path: &Path, content: &str, force: bool) -> Result<bool, ConfigEditError> {
+    if path.exists() && !force {
+        return Ok(false);
+    }
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    fs::write(path, content).map_err(|e| {
+        ConfigEditError::new(
+            Some(path.display().to_string()),
+            format!("failed to write plugin file: {e}"),
+        )
+    })?;
+    Ok(true)
+}
+
 /// OpenCode: embedded `rgt.ts` TS plugin.
-fn write_opencode(
-    home: &Path,
-    global: bool,
-    force: bool,
-    configured: &mut Vec<String>,
-) -> io::Result<()> {
+fn write_opencode(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, ConfigEditError> {
     let plugin_dir = if global {
         home.join(".config").join("opencode").join("plugins")
     } else {
@@ -518,18 +546,14 @@ fn write_opencode(
     };
     let plugin_file = plugin_dir.join("rgt.ts");
     if write_plugin_file(&plugin_file, glue::OPENCODE_TS_PLUGIN, force)? {
-        configured.push(format!("OpenCode (plugin) -> {}", plugin_file.display()));
+        Ok(WriteOutcome::Configured(plugin_file))
+    } else {
+        Ok(WriteOutcome::Skipped)
     }
-    Ok(())
 }
 
 /// Pi: embedded `rgt.ts` TS extension.
-fn write_pi(
-    home: &Path,
-    global: bool,
-    force: bool,
-    configured: &mut Vec<String>,
-) -> io::Result<()> {
+fn write_pi(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, ConfigEditError> {
     let ext_dir = if global {
         home.join(".pi").join("agent").join("extensions")
     } else {
@@ -537,18 +561,14 @@ fn write_pi(
     };
     let ext_file = ext_dir.join("rgt.ts");
     if write_plugin_file(&ext_file, glue::PI_TS_EXTENSION, force)? {
-        configured.push(format!("Pi (plugin) -> {}", ext_file.display()));
+        Ok(WriteOutcome::Configured(ext_file))
+    } else {
+        Ok(WriteOutcome::Skipped)
     }
-    Ok(())
 }
 
 /// Hermes: embedded `plugin.py` + `plugins.enabled` in the Hermes config.
-fn write_hermes(
-    home: &Path,
-    global: bool,
-    force: bool,
-    configured: &mut Vec<String>,
-) -> io::Result<()> {
+fn write_hermes(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, ConfigEditError> {
     let plugin_dir = if global {
         home.join(".hermes").join("plugins").join("rgt")
     } else {
@@ -562,12 +582,14 @@ fn write_hermes(
     } else {
         PathBuf::from(".hermes").join("config.toml")
     };
-    let written_config = enable_hermes_plugin(&config_file, force)?;
+    let config = ensure_toml(&config_file, |t| {
+        editor::toml_ensure_array_value(t, &["plugins", "enabled"], "rgt")
+    })?;
 
-    if written_plugin || written_config {
-        configured.push(format!("Hermes (plugin) -> {}", plugin_file.display()));
-    }
-    Ok(())
+    Ok(match (written_plugin, config) {
+        (true, _) | (_, WriteOutcome::Configured(_)) => WriteOutcome::Configured(plugin_file),
+        _ => WriteOutcome::Skipped,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -575,225 +597,43 @@ fn write_hermes(
 // ---------------------------------------------------------------------------
 
 /// Cline / Roo Code: append RGT section to `.clinerules`.
-fn write_cline(force: bool, configured: &mut Vec<String>) -> io::Result<()> {
+fn write_cline(force: bool) -> Result<WriteOutcome, ConfigEditError> {
     let rules_file = PathBuf::from(".clinerules");
-    if write_text_block(&rules_file, glue::RGT_MARKER, glue::CLINE_RULES, force)? {
-        configured.push(format!("Cline (rules-file) -> {}", rules_file.display()));
-    }
-    Ok(())
+    ensure_text_block(
+        &rules_file,
+        glue::RGT_MARKER,
+        glue::RGT_END_MARKER,
+        &format!("{}{}", glue::CLINE_RULES, glue::RGT_END_MARKER_LINE),
+        force,
+    )
 }
 
 /// Antigravity: rules file under `.agents/rules/`.
-fn write_antigravity(force: bool, configured: &mut Vec<String>) -> io::Result<()> {
+fn write_antigravity(force: bool) -> Result<WriteOutcome, ConfigEditError> {
     let rules_file = PathBuf::from(".agents")
         .join("rules")
         .join("antigravity-rgt-rules.md");
-    if write_text_block(
+    ensure_text_block(
         &rules_file,
-        glue::RGT_MARKER,
-        glue::ANTIGRAVITY_RULES,
+        "# RGT Integration",
+        glue::RGT_END_MARKER,
+        &format!("{}{}", glue::ANTIGRAVITY_RULES, glue::RGT_END_MARKER_LINE),
         force,
-    )? {
-        configured.push(format!(
-            "Antigravity (rules-file) -> {}",
-            rules_file.display()
-        ));
-    }
-    Ok(())
+    )
 }
 
 /// Kilo: rules file under `.kilocode/rules/`.
-fn write_kilocode(force: bool, configured: &mut Vec<String>) -> io::Result<()> {
+fn write_kilocode(force: bool) -> Result<WriteOutcome, ConfigEditError> {
     let rules_file = PathBuf::from(".kilocode")
         .join("rules")
         .join("rgt-rules.md");
-    if write_text_block(&rules_file, glue::RGT_MARKER, glue::KILO_RULES, force)? {
-        configured.push(format!("Kilo (rules-file) -> {}", rules_file.display()));
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Idempotent write helpers (FR-006)
-// ---------------------------------------------------------------------------
-
-/// Writes a top-level JSON key into a settings file, merging user-authored
-/// content. Idempotent: re-runs with the key present are skipped unless
-/// `--force`. Returns whether a write occurred.
-fn write_json_key(
-    file: &Path,
-    key: &str,
-    value: &serde_json::Value,
-    force: bool,
-) -> io::Result<bool> {
-    if let Some(parent) = file.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    let existing: serde_json::Value = if file.exists() {
-        fs::read_to_string(file)
-            .ok()
-            .and_then(|c| serde_json::from_str(&c).ok())
-            .unwrap_or_else(|| serde_json::json!({}))
-    } else {
-        serde_json::json!({})
-    };
-
-    if existing.get(key).is_some() && !force {
-        return Ok(false);
-    }
-
-    let mut updated = existing;
-    updated[key] = value.clone();
-    fs::write(file, serde_json::to_string_pretty(&updated)?)?;
-    Ok(true)
-}
-
-/// Writes/appends an RGT-marked TOML block. Idempotent: skipped when the file
-/// already contains `marker` unless `--force` (which replaces the marked block
-/// in place). Returns whether a write occurred.
-fn write_toml_block(file: &Path, marker: &str, block: &str, force: bool) -> io::Result<bool> {
-    if let Some(parent) = file.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    if !file.exists() {
-        fs::write(file, block)?;
-        return Ok(true);
-    }
-
-    let existing = fs::read_to_string(file)?;
-    if existing.contains(marker) {
-        if force {
-            let base = truncate_from_marker(&existing, marker);
-            fs::write(file, join_base_block(&base, block))?;
-            return Ok(true);
-        }
-        return Ok(false);
-    }
-
-    let mut out = existing.trim_end().to_string();
-    out.push('\n');
-    out.push_str(block);
-    fs::write(file, out)?;
-    Ok(true)
-}
-
-/// Writes/appends an RGT-marked text block (rules files, prompts). Idempotent:
-/// skipped when the file already contains `marker` unless `--force` (which
-/// replaces the marked block in place). Returns whether a write occurred.
-fn write_text_block(file: &Path, marker: &str, block: &str, force: bool) -> io::Result<bool> {
-    if let Some(parent) = file.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    if !file.exists() {
-        fs::write(file, block)?;
-        return Ok(true);
-    }
-
-    let existing = fs::read_to_string(file)?;
-    if existing.contains(marker) {
-        if force {
-            let base = truncate_from_marker(&existing, marker);
-            fs::write(file, join_base_block(&base, block))?;
-            return Ok(true);
-        }
-        return Ok(false);
-    }
-
-    let mut out = existing.trim_end().to_string();
-    out.push('\n');
-    out.push_str(block);
-    fs::write(file, out)?;
-    Ok(true)
-}
-
-/// Writes a standalone plugin file. Idempotent: skipped when present unless
-/// `--force`. Returns whether a write occurred.
-fn write_plugin_file(file: &Path, content: &str, force: bool) -> io::Result<bool> {
-    if let Some(parent) = file.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    if file.exists() && !force {
-        return Ok(false);
-    }
-    fs::write(file, content)?;
-    Ok(true)
-}
-
-/// Ensures `rgt` is listed in the Hermes config `plugins.enabled`. Creates the
-/// config when absent; appends `[plugins]` when no such key exists. Idempotent.
-fn enable_hermes_plugin(file: &Path, _force: bool) -> io::Result<bool> {
-    if let Some(parent) = file.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    if !file.exists() {
-        fs::write(file, "[plugins]\nenabled = [\"rgt\"]\n")?;
-        return Ok(true);
-    }
-
-    let existing = fs::read_to_string(file)?;
-    if existing.contains("\"rgt\"") {
-        return Ok(false); // idempotent skip
-    }
-
-    let mut out = existing.trim_end().to_string();
-    if existing.contains("plugins.enabled") {
-        // Insert into the existing enabled array.
-        out = insert_into_enabled(&out);
-        out.push('\n');
-    } else {
-        out.push_str("\n\n[plugins]\nenabled = [\"rgt\"]\n");
-    }
-    fs::write(file, out)?;
-    Ok(true)
-}
-
-/// Inserts `"rgt"` into the first `enabled = [...]` array in a TOML config.
-fn insert_into_enabled(content: &str) -> String {
-    const ARRAY_MARKER: &str = "enabled = [";
-    match content.find(ARRAY_MARKER) {
-        Some(idx) => {
-            let (before, rest) = content.split_at(idx + ARRAY_MARKER.len());
-            let mut out = before.to_string();
-            out.push_str("\"rgt\", ");
-            out.push_str(rest);
-            out
-        }
-        None => {
-            let mut out = content.to_string();
-            out.push_str("\n[plugins]\nenabled = [\"rgt\"]\n");
-            out
-        }
-    }
-}
-
-/// Truncates `content` at the first line containing `marker`, returning the
-/// text before it (trimmed of trailing whitespace) so an RGT-marked block can
-/// be replaced in place. Returns the whole trimmed content when no marker.
-fn truncate_from_marker(content: &str, marker: &str) -> String {
-    match content.lines().position(|l| l.contains(marker)) {
-        Some(idx) => content
-            .lines()
-            .take(idx)
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim_end()
-            .to_string(),
-        None => content.trim_end().to_string(),
-    }
-}
-
-/// Joins a (possibly empty) prefix and an RGT-marked block with a single
-/// separating newline.
-fn join_base_block(base: &str, block: &str) -> String {
-    if base.trim().is_empty() {
-        block.to_string()
-    } else {
-        format!("{}\n{}", base, block)
-    }
+    ensure_text_block(
+        &rules_file,
+        "# RGT Integration",
+        glue::RGT_END_MARKER,
+        &format!("{}{}", glue::KILO_RULES, glue::RGT_END_MARKER_LINE),
+        force,
+    )
 }
 
 // ---------------------------------------------------------------------------
