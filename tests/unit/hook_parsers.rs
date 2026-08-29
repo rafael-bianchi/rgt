@@ -180,3 +180,119 @@ fn extract_path_from_command_non_read_returns_none() {
     assert!(extract_path_from_command("").is_none());
     assert!(extract_path_from_command("cat").is_none());
 }
+
+// ---------------------------------------------------------------------------
+// 026: capture Bash-tool reads (rtk wrapper, grep, stdout, dispatch fallback)
+// ---------------------------------------------------------------------------
+
+fn bash_payload(command: &str, stdout: Option<&str>) -> String {
+    let stdout_json = match stdout {
+        Some(s) => format!("\"stdout\": {s:?}"),
+        None => "\"stdout\": \"\"".to_string(),
+    };
+    format!(
+        r#"{{"event":"PostToolUse","tool_name":"Bash","tool_input":{{"command":{command:?}}},"tool_response":{{{stdout_json}}}}}"#
+    )
+}
+
+// ---- T002: rtk wrapper, grep, stdout (foundational) ----
+
+#[test]
+fn rtk_read_wrapper_extracts_path() {
+    assert_eq!(
+        extract_path_from_command("rtk read /path/report.csv"),
+        Some("/path/report.csv".to_string())
+    );
+}
+
+#[test]
+fn rtk_cat_is_not_a_read_subcommand() {
+    assert_eq!(extract_path_from_command("rtk cat /path/report.csv"), None);
+}
+
+#[test]
+fn grep_is_a_read_verb() {
+    assert_eq!(
+        extract_path_from_command("grep -r amount /path/report.csv"),
+        Some("/path/report.csv".to_string())
+    );
+}
+
+#[test]
+fn plain_cat_still_works() {
+    assert_eq!(
+        extract_path_from_command("cat /path/report.csv"),
+        Some("/path/report.csv".to_string())
+    );
+}
+
+#[test]
+fn command_dialect_captures_stdout_as_content() {
+    let cap = normalize_agent_event(
+        Some("opencode"),
+        &bash_payload("cat /path/report.csv", Some("amount,120000\n")),
+    )
+    .unwrap();
+    assert_eq!(cap.path.as_deref(), Some("/path/report.csv"));
+    assert_eq!(cap.content.as_deref(), Some("amount,120000\n"));
+}
+
+// ---- T005 (US1): dispatch fallback for claude-code/cursor ----
+
+#[test]
+fn bash_payload_is_captured_for_claude_and_cursor() {
+    let payload = bash_payload("cat /path/report.csv", Some("amount,120000\n"));
+    for agent in [None, Some("claude-code"), Some("cursor")] {
+        let cap = normalize_agent_event(agent, &payload).unwrap();
+        assert_eq!(cap.path.as_deref(), Some("/path/report.csv"), "{agent:?}");
+        assert_eq!(cap.content.as_deref(), Some("amount,120000\n"), "{agent:?}");
+    }
+}
+
+#[test]
+fn native_read_event_is_unchanged() {
+    let payload = r#"{"event":"PostToolUse","tool_name":"ReadLocalFile","tool_input":{"path":"docs/budget.md"},"tool_response":{"content":"Budget: 15000"}}"#;
+    for agent in [None, Some("claude-code"), Some("cursor")] {
+        let cap = normalize_agent_event(agent, payload).unwrap();
+        assert_eq!(cap.path.as_deref(), Some("docs/budget.md"));
+        assert_eq!(cap.content.as_deref(), Some("Budget: 15000"));
+    }
+}
+
+// ---- T007 (US2): rtk end-to-end ----
+
+#[test]
+fn rtk_read_payload_is_captured_end_to_end() {
+    let payload = bash_payload("rtk read /path/report.csv", Some("amount,42\n"));
+    let cap = normalize_agent_event(None, &payload).unwrap();
+    assert_eq!(cap.path.as_deref(), Some("/path/report.csv"));
+    assert_eq!(cap.content.as_deref(), Some("amount,42\n"));
+}
+
+#[test]
+fn rtk_non_read_payload_is_a_noop() {
+    let payload = bash_payload("rtk git status", None);
+    let cap = normalize_agent_event(None, &payload).unwrap();
+    assert_eq!(cap.path, None);
+}
+
+// ---- T009 (US3): fallback / passive ----
+
+#[test]
+fn empty_stdout_is_path_only() {
+    let payload = bash_payload("cat /path/report.csv", None);
+    let cap = normalize_agent_event(None, &payload).unwrap();
+    assert_eq!(cap.path.as_deref(), Some("/path/report.csv"));
+    assert_eq!(
+        cap.content, None,
+        "empty stdout -> content None (disk fallback)"
+    );
+}
+
+#[test]
+fn non_read_command_is_a_noop() {
+    for cmd in ["ls", "git status", "echo hi"] {
+        let cap = normalize_agent_event(None, &bash_payload(cmd, Some("x"))).unwrap();
+        assert_eq!(cap.path, None, "{}", cmd);
+    }
+}
