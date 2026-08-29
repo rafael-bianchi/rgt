@@ -153,7 +153,7 @@ Three strategies keep the graph trustworthy:
 
 > **Non-text sources (PDF, Excel, images)**: RGT's passive hook cannot see inside binary files — PDF/image interpretation happens inside the model itself, never as a local text file. The RGT instructions RGT writes to agents tell them to explicitly report such values via `echo "Amount: 1234.56" | rgt record --stdin` (or an intermediate `.txt`/`.md` file). Plain-text/CSV/JSON/Markdown need no such action — they're captured automatically. `rgt record` on a binary file returns a clear "unsupported file format" error naming this path.
 2. **Verification**: every `rgt derive` is trust-but-verify: RGT re-computes the result from parent values and rejects wrong ones before insertion.
-3. **Staleness**: when a source file changes, its nodes (and everything derived from them) are flagged stale, so the agent can be told to re-read.
+3. **Staleness**: when a source file changes, its nodes (and everything derived from them) are flagged stale, so the agent can be told to re-read. Change detection is two-tier (mtime+size, then BLAKE3) with a time-bounded forced re-hash, and distinguishes a genuinely deleted file (`FILE_DELETED`) from a permission/lock error (`CHECK_FAILED`, which does not mark values stale).
 
 ## Commands
 

@@ -4,7 +4,9 @@ pub mod installer;
 pub mod parser;
 pub mod paths;
 
-use crate::detection::{compute_blake3_hash, get_metadata_snapshot};
+use crate::detection::{
+    compute_blake3_hash, compute_blake3_hash_from_bytes, get_metadata_snapshot,
+};
 use crate::hooks::parser::{extract_values_from_content, normalize_agent_event};
 use crate::store::queries::{insert_tracked_node, upsert_source_document};
 use crate::store::DbStore;
@@ -38,22 +40,31 @@ pub fn handle_passive_hook_event(_event_type: &str, agent: Option<&str>) -> io::
         return Ok(());
     }
 
-    let content = match capture.content.as_deref() {
-        Some(c) => c.to_string(),
-        None => match fs::read_to_string(path_obj) {
-            Ok(c) => c,
-            Err(_) => return Ok(()), // Fail-open non-blocking
-        },
-    };
-
     let meta = match get_metadata_snapshot(path_obj) {
         Ok(m) => m,
         Err(_) => return Ok(()),
     };
 
-    let hash = match compute_blake3_hash(path_obj) {
-        Ok(h) => h,
-        Err(_) => return Ok(()),
+    // FR-002: the fingerprint must hash the same bytes that are extracted. When
+    // content comes from the agent's `tool_response`, the file is hashed (the
+    // correct staleness identity); when content is read from disk (fallback),
+    // the exact bytes read are hashed (no second read → no TOCTOU).
+    let (content, hash) = match capture.content.as_deref() {
+        Some(c) => {
+            let hash = match compute_blake3_hash(path_obj) {
+                Ok(h) => h,
+                Err(_) => return Ok(()),
+            };
+            (c.to_string(), hash)
+        }
+        None => {
+            let bytes = match fs::read(path_obj) {
+                Ok(b) => b,
+                Err(_) => return Ok(()), // Fail-open non-blocking
+            };
+            let hash = compute_blake3_hash_from_bytes(&bytes);
+            (String::from_utf8_lossy(&bytes).into_owned(), hash)
+        }
     };
 
     let db = match DbStore::open_in_project(".") {
@@ -61,8 +72,15 @@ pub fn handle_passive_hook_event(_event_type: &str, agent: Option<&str>) -> io::
         Err(_) => return Ok(()),
     };
 
-    let doc = match upsert_source_document(db.conn(), path, meta.mtime_nsec, meta.file_size, &hash)
-    {
+    let doc = match upsert_source_document(
+        db.conn(),
+        path,
+        meta.mtime_nsec,
+        meta.file_size,
+        &hash,
+        meta.dev,
+        meta.ino,
+    ) {
         Ok(d) => d,
         Err(_) => return Ok(()),
     };

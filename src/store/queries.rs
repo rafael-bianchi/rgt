@@ -2,28 +2,68 @@ use crate::types::{DerivationEdge, NodeType, SourceDocument, TrackedNode, ValueD
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, Connection, Result};
 
-/// Inserts or updates a source document row by file path. Returns the upserted document.
+/// Inserts or updates a source document row by file path (or, when identity is
+/// available, by dev/ino). Returns the upserted document.
 pub fn upsert_source_document(
     conn: &Connection,
     file_path: &str,
     mtime_nsec: i64,
     file_size: u64,
     blake3_hash: &str,
+    dev: Option<u64>,
+    ino: Option<u64>,
 ) -> Result<SourceDocument> {
     let now = Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT INTO source_documents (file_path, mtime_nsec, file_size, blake3_hash, last_checked_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(file_path) DO UPDATE SET
-            mtime_nsec = excluded.mtime_nsec,
-            file_size = excluded.file_size,
-            blake3_hash = excluded.blake3_hash,
-            last_checked_at = excluded.last_checked_at",
-        params![file_path, mtime_nsec, file_size, blake3_hash, now],
-    )?;
+
+    // FR-005: dedupe on on-disk identity (dev/ino) when both are present, so the
+    // same file reached via different casings is one row. Fall back to the path.
+    let inserted = if let (Some(d), Some(i)) = (dev, ino) {
+        conn.execute(
+            "INSERT INTO source_documents (file_path, mtime_nsec, file_size, blake3_hash, last_checked_at, dev, ino)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(file_path) DO UPDATE SET
+                mtime_nsec = excluded.mtime_nsec,
+                file_size = excluded.file_size,
+                blake3_hash = excluded.blake3_hash,
+                last_checked_at = excluded.last_checked_at,
+                dev = excluded.dev,
+                ino = excluded.ino",
+            params![file_path, mtime_nsec, file_size, blake3_hash, now, d, i],
+        )
+    } else {
+        conn.execute(
+            "INSERT INTO source_documents (file_path, mtime_nsec, file_size, blake3_hash, last_checked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(file_path) DO UPDATE SET
+                mtime_nsec = excluded.mtime_nsec,
+                file_size = excluded.file_size,
+                blake3_hash = excluded.blake3_hash,
+                last_checked_at = excluded.last_checked_at",
+            params![file_path, mtime_nsec, file_size, blake3_hash, now],
+        )
+    };
+    inserted?;
+
+    // Re-key any duplicate casing row that now resolves to the same identity.
+    if let (Some(d), Some(i)) = (dev, ino) {
+        conn.execute(
+            "DELETE FROM source_documents
+             WHERE dev = ?1 AND ino = ?2 AND file_path <> ?3",
+            params![d, i, file_path],
+        )?;
+    }
 
     get_source_document_by_path(conn, file_path)?
         .ok_or_else(|| rusqlite::Error::QueryReturnedNoRows)
+}
+
+/// Updates a source document's `last_checked_at` to now (after a change check).
+pub fn touch_source_document(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE source_documents SET last_checked_at = ?1 WHERE id = ?2",
+        params![Utc::now().to_rfc3339(), id],
+    )?;
+    Ok(())
 }
 
 /// Fetches a source document by file path.
@@ -32,7 +72,7 @@ pub fn get_source_document_by_path(
     file_path: &str,
 ) -> Result<Option<SourceDocument>> {
     let mut stmt = conn.prepare(
-        "SELECT id, file_path, mtime_nsec, file_size, blake3_hash, last_checked_at
+        "SELECT id, file_path, mtime_nsec, file_size, blake3_hash, last_checked_at, dev, ino
          FROM source_documents WHERE file_path = ?1",
     )?;
 
@@ -50,6 +90,8 @@ pub fn get_source_document_by_path(
             file_size: row.get(3)?,
             blake3_hash: row.get(4)?,
             last_checked_at,
+            dev: row.get(6)?,
+            ino: row.get(7)?,
         }))
     } else {
         Ok(None)

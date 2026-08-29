@@ -13,7 +13,9 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
             mtime_nsec INTEGER NOT NULL,
             file_size INTEGER NOT NULL,
             blake3_hash TEXT NOT NULL,
-            last_checked_at TEXT NOT NULL
+            last_checked_at TEXT NOT NULL,
+            dev INTEGER,
+            ino INTEGER
         );
 
         CREATE INDEX IF NOT EXISTS idx_source_documents_path 
@@ -57,5 +59,32 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
         ON derivation_edges(child_node_id);
         ",
     )?;
+
+    // Idempotently add the on-disk identity columns to pre-existing databases
+    // (additive `ALTER TABLE ... ADD COLUMN`, guarded by PRAGMA table_info), then
+    // index them. The index must come after the columns exist.
+    ensure_column(conn, "source_documents", "dev", "INTEGER")?;
+    ensure_column(conn, "source_documents", "ino", "INTEGER")?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_source_documents_identity
+         ON source_documents(dev, ino);",
+    )?;
+    Ok(())
+}
+
+/// Adds a column to a table if it does not already exist (idempotent, additive).
+fn ensure_column(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+    let exists: bool = conn
+        .prepare(&format!("PRAGMA table_info({})", table))?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .iter()
+        .any(|name| name == column);
+    if !exists {
+        conn.execute_batch(&format!(
+            "ALTER TABLE {} ADD COLUMN {} {}",
+            table, column, decl
+        ))?;
+    }
     Ok(())
 }

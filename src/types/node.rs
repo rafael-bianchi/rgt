@@ -37,6 +37,10 @@ pub struct SourceDocument {
     pub file_size: u64,
     pub blake3_hash: String,
     pub last_checked_at: DateTime<Utc>,
+    /// On-disk identity (Unix dev/ino; Windows volume-serial/file-index). Used
+    /// for change detection (symlink repoint) and casing-insensitive dedupe.
+    pub dev: Option<u64>,
+    pub ino: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

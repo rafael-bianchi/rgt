@@ -130,8 +130,8 @@ fn re_record_updates_value_columns() {
     let conn = db.conn();
 
     use rgt::store::queries::upsert_source_document;
-    let doc1 = upsert_source_document(conn, "a.csv", 1, 1, "h1").unwrap();
-    let doc2 = upsert_source_document(conn, "b.csv", 1, 1, "h2").unwrap();
+    let doc1 = upsert_source_document(conn, "a.csv", 1, 1, "h1", None, None).unwrap();
+    let doc2 = upsert_source_document(conn, "b.csv", 1, 1, "h2", None, None).unwrap();
 
     insert_tracked_node(
         conn,
