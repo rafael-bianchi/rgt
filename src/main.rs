@@ -102,6 +102,8 @@ enum Commands {
         #[arg(long)]
         skip_attestation: bool,
     },
+    /// Diagnose hook installation and capture health (0 = healthy/warnings, 1 = error)
+    Doctor,
     /// Verify that a derived value matches its parent nodes
     Verify {
         /// Comma-separated parent node IDs in variable order (parent[0]=a, parent[1]=b, ...)
@@ -200,6 +202,13 @@ async fn main() {
             Err(e) => {
                 eprintln!("Error: {}", e.message);
                 std::process::exit(e.code);
+            }
+        },
+        Commands::Doctor => match cli::execute_doctor() {
+            Ok(code) => std::process::exit(code),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
             }
         },
         Commands::Verify {

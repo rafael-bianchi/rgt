@@ -10,57 +10,72 @@
 /// OpenCode TypeScript plugin (`rgt.ts`).
 ///
 /// Written to `~/.config/opencode/plugins/` (global) or `.opencode/plugin/`
-/// (project). Only captures post-tool events.
-pub const OPENCODE_TS_PLUGIN: &str = r#"import { plugin } from "@opencode-ai/plugin";
+/// (project). Only captures post-tool events. `rgt_path` is the absolute path
+/// to the CLI binary, injected at `rgt init` time (FR-003).
+pub fn opencode_plugin(rgt_path: &str) -> String {
+    let exe = js_string_literal(rgt_path);
+    format!(
+        r#"import {{ plugin }} from "@opencode-ai/plugin";
 
-export const rgt = plugin("rgt", {
-  tool: {
-    execute: {
-      after: async (args) => {
-        try {
-          const { spawnSync } = await import("node:child_process");
-          spawnSync("rgt", ["hook", "post", "--agent", "opencode"], {
+export const rgt = plugin("rgt", {{
+  tool: {{
+    execute: {{
+      after: async (args) => {{
+        try {{
+          const {{ spawnSync }} = await import("node:child_process");
+          spawnSync("{exe}", ["hook", "post", "--agent", "opencode"], {{
             input: JSON.stringify(args),
             encoding: "utf-8",
-          });
-        } catch {
+          }});
+        }} catch {{
           // fail-open: never block or alter the agent's tool call
-        }
-      },
-    },
-  },
-});
-"#;
+        }}
+      }},
+    }},
+  }},
+}});
+"#
+    )
+}
 
 /// Pi TypeScript extension (`rgt.ts`).
 ///
 /// Written to `.pi/extensions/` (project) or `~/.pi/agent/extensions/`
-/// (`--global`). Only captures post-tool events.
-pub const PI_TS_EXTENSION: &str = r#"export const extension = {
+/// (`--global`). Only captures post-tool events. `rgt_path` is the absolute
+/// path to the CLI binary, injected at `rgt init` time (FR-003).
+pub fn pi_extension(rgt_path: &str) -> String {
+    let exe = js_string_literal(rgt_path);
+    format!(
+        r#"export const extension = {{
   name: "rgt",
-  async setup() {},
-};
+  async setup() {{}},
+}};
 
-export async function onToolCall(input) {
-  try {
-    const { spawnSync } = await import("node:child_process");
-    spawnSync("rgt", ["hook", "post", "--agent", "pi"], {
+export async function onToolCall(input) {{
+  try {{
+    const {{ spawnSync }} = await import("node:child_process");
+    spawnSync("{exe}", ["hook", "post", "--agent", "pi"], {{
       input: JSON.stringify(input),
       encoding: "utf-8",
-    });
-  } catch {
+    }});
+  }} catch {{
     // fail-open: never block or alter the agent's tool call
-  }
+  }}
+}}
+"#
+    )
 }
-"#;
 
 /// Hermes Python plugin (`plugin.py`).
 ///
 /// Written to `~/.hermes/plugins/rgt/` (global) or `.hermes/plugins/rgt/`
 /// (project) and enabled via `plugins.enabled` in the Hermes config. Only
-/// captures post-tool events.
-pub const HERMES_PYTHON_PLUGIN: &str = r#"import json
-import shutil
+/// captures post-tool events. `rgt_path` is the absolute path to the CLI
+/// binary, injected at `rgt init` time (FR-003); it replaces the PATH lookup.
+pub fn hermes_plugin(rgt_path: &str) -> String {
+    let exe = py_string_literal(rgt_path);
+    format!(
+        r#"import json
 import subprocess
 
 
@@ -74,11 +89,8 @@ def post_tool_call(args):
 
 def _capture(args):
     try:
-        rgt = shutil.which("rgt")
-        if rgt is None:
-            return
         subprocess.run(
-            [rgt, "hook", "post", "--agent", "hermes"],
+            [{exe}, "hook", "post", "--agent", "hermes"],
             input=json.dumps(args).encode("utf-8"),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -87,7 +99,19 @@ def _capture(args):
     except Exception:
         # fail-open: never block or alter the agent's tool call
         pass
-"#;
+"#
+    )
+}
+
+/// Escapes `s` for embedding inside a double-quoted JavaScript string literal.
+fn js_string_literal(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Escapes `s` for embedding inside a double-quoted Python string literal.
+fn py_string_literal(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
 
 /// Cline / Roo Code rules-file section, appended to `.clinerules`.
 pub const CLINE_RULES: &str = "\n## RGT Integration\n\
