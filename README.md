@@ -176,6 +176,24 @@ recoverable error and a non-zero exit — other agents are still configured, and
 Exit codes: `0` = success, `1` = at least one agent failed, `2` = invalid
 `--agent` name.
 
+`rgt init` writes hook commands that invoke the CLI by **absolute path** (resolved
+from the running binary), so capture does not depend on the PATH of the shell
+your AI tool spawns. If you relocate the binary (e.g. a package-manager upgrade
+installs to a new path), re-run `rgt init` to refresh the written paths.
+
+### Doctor
+
+```bash
+rgt doctor   # diagnose hook installation and capture health
+```
+
+`rgt doctor` is a `brew doctor`-style diagnostic. Exit `0` when healthy or with
+advisory warnings, `1` on unambiguous problems (e.g. the store is not
+initialized). When hooks are installed but no values have ever been recorded, it
+warns that capture may not be active and tells you to verify `rgt` is resolvable
+in the shell context your AI tool uses (hook subprocesses fail open, so a broken
+PATH records nothing silently).
+
 ### Update
 ```bash
 rgt update [--check] [--yes] [--version <tag>] [--skip-checksum] [--skip-attestation]

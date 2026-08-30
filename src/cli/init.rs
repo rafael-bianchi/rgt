@@ -1,5 +1,5 @@
 use crate::hooks::installer::{
-    detect_and_configure_hooks, resolve_agent_name, valid_agent_names, AgentOutcome,
+    detect_and_configure_hooks, resolve_agent_name, valid_agent_names, AgentOutcome, InstallReport,
 };
 use crate::hooks::parser::NumberFormat;
 use crate::store::queries::set_setting;
@@ -19,6 +19,16 @@ pub fn resolve_agent_arg(agent: Option<&str>) -> Result<Option<String>, String> 
             )),
         },
     }
+}
+
+/// True when at least one hook was newly configured, so `rgt init` should tell
+/// the user to restart their AI tool for capture to take effect (FR-005). A
+/// pure no-op re-run (all `Skipped`) does not nag.
+pub fn needs_restart_reminder(report: &InstallReport) -> bool {
+    report
+        .outcomes
+        .iter()
+        .any(|o| matches!(o, AgentOutcome::Configured { .. }))
 }
 
 /// Executes `rgt init`: initializes the `.rgt/store.db` database and configures
@@ -47,6 +57,8 @@ pub fn execute_init(
 
     let mut failed = 0usize;
     let mut configured = 0usize;
+    // FR-005: compute before `report.outcomes` is consumed by the loop below.
+    let remind_restart = needs_restart_reminder(&report);
     if !report.is_empty() {
         println!("✓ Auto-configured AI coding agent hooks:");
         for outcome in report.outcomes {
@@ -74,6 +86,14 @@ pub fn execute_init(
     if configured == 0 && failed == 0 {
         println!(
             "! No new AI coding tool hook configs written (use --force to overwrite existing)."
+        );
+    }
+
+    // FR-005: hooks are read at session start — remind the user to restart.
+    if remind_restart {
+        println!();
+        println!(
+            "Restart your AI coding tool now for the newly installed RGT hooks to take effect."
         );
     }
 

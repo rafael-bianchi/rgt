@@ -457,3 +457,46 @@ fn auto_consistent_us_file_extracts_all_lines() {
         vec![1234.56, 2345.67]
     );
 }
+
+// ---- T015 (US5): Copilot CLI dialect assumption pinned ----
+
+// The Copilot CLI dual-dialect parser is an assumption pending live verification
+// (findings §2.7, spec US5). These tests lock the assumed shapes so a future
+// divergence is a deliberate, tested change.
+
+#[test]
+fn copilot_cli_tool_args_json_string_with_path() {
+    let payload = r#"{
+        "toolArgs": "{\"path\": \"/abs/report.csv\", \"base64\": \"abc\"}",
+        "tool": "Read"
+    }"#;
+    let cap = normalize_agent_event(Some("copilot"), payload).unwrap();
+    assert_eq!(cap.path.as_deref(), Some("/abs/report.csv"));
+    assert_eq!(cap.content, None, "assumed shape carries no content field");
+}
+
+#[test]
+fn copilot_cli_tool_args_json_string_with_command() {
+    let payload = r#"{
+        "toolArgs": "{\"command\": \"cat /tmp/data.csv\"}"
+    }"#;
+    let cap = normalize_agent_event(Some("copilot"), payload).unwrap();
+    assert_eq!(cap.path.as_deref(), Some("/tmp/data.csv"));
+}
+
+#[test]
+fn copilot_cli_malformed_tool_args_falls_back_to_command_dialect() {
+    let payload = r#"{
+        "toolArgs": "not-json",
+        "command": "cat /tmp/fallback.csv"
+    }"#;
+    let cap = normalize_agent_event(Some("copilot"), payload).unwrap();
+    assert_eq!(cap.path.as_deref(), Some("/tmp/fallback.csv"));
+}
+
+#[test]
+fn copilot_cli_unknown_shape_is_a_noop() {
+    let payload = r#"{ "unexpected": true }"#;
+    let cap = normalize_agent_event(Some("copilot"), payload);
+    assert_eq!(cap.and_then(|c| c.path), None);
+}

@@ -1,6 +1,6 @@
 use rgt::hooks::installer::{
-    detect_and_configure_hooks_with_config, resolve_agent_name, valid_agent_names, AgentOutcome,
-    InstallReport,
+    detect_and_configure_hooks_with_config_and_exe, resolve_agent_name, valid_agent_names,
+    AgentOutcome, InstallReport,
 };
 use rgt::hooks::paths::copilot_cli_config_dir;
 use std::path::{Path, PathBuf};
@@ -8,6 +8,11 @@ use std::sync::Mutex;
 use tempfile::tempdir;
 
 static CWD_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Fixed absolute path injected into hook commands for deterministic tests.
+fn injected_exe() -> PathBuf {
+    PathBuf::from("/usr/local/bin/rgt")
+}
 
 fn set_cwd(dir: &Path) -> std::sync::MutexGuard<'static, ()> {
     let guard = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
@@ -27,11 +32,38 @@ fn write(path: &Path, content: &str) {
 }
 
 fn run(home: &Path, config_dir: &Path, global: bool, force: bool, agent: &str) -> InstallReport {
-    detect_and_configure_hooks_with_config(home, config_dir, global, force, Some(agent)).unwrap()
+    detect_and_configure_hooks_with_config_and_exe(
+        home,
+        config_dir,
+        global,
+        force,
+        Some(agent),
+        &injected_exe(),
+    )
+    .unwrap()
 }
 
 fn run_none(home: &Path, config_dir: &Path, global: bool, force: bool) -> InstallReport {
-    detect_and_configure_hooks_with_config(home, config_dir, global, force, None).unwrap()
+    detect_and_configure_hooks_with_config_and_exe(
+        home,
+        config_dir,
+        global,
+        force,
+        None,
+        &injected_exe(),
+    )
+    .unwrap()
+}
+
+/// The shell-quoted absolute path prefix expected in command hooks.
+fn exe_prefix() -> String {
+    format!("\"{}\"", injected_exe().display())
+}
+
+/// Same as [`exe_prefix`], but JSON-escaped for raw file-content assertions
+/// (serde_json escapes embedded quotes as `\"` in the serialized command).
+fn exe_prefix_json() -> String {
+    format!("\\\"{}\\\"", injected_exe().display())
 }
 
 fn configured(report: &InstallReport) -> Vec<String> {
@@ -100,8 +132,13 @@ fn claude_merge_preserves_foreign_hooks_settings_and_comments() {
     assert!(content.contains("// RTK's own hook group — must survive"));
     assert!(content.contains("\"rtk hook post\""));
     assert!(content.contains("\"keybindings\": { \"esc\": \"stop\" }"));
-    assert!(content.contains("\"rgt hook post\""));
-    assert!(content.contains("\"rgt hook pre\""));
+    assert!(content.contains("Read|Edit|Write|Bash"));
+    assert!(content.contains(&format!("{} hook post", exe_prefix_json())));
+    assert!(content.contains(&format!("{} hook pre", exe_prefix_json())));
+    assert!(
+        !content.contains("\"rgt hook post\""),
+        "must not use bare rgt"
+    );
     // Output is valid JSONC.
     jsonc_parser::parse_to_value(&content, &Default::default()).expect("must parse as JSONC");
 
@@ -136,8 +173,9 @@ fn cursor_merge_preserves_existing_entries_and_version() {
     let content = read(&hooks);
     assert!(content.contains("\"version\": 2"));
     assert!(content.contains("notify --done"));
-    assert!(content.contains("rgt hook post"));
-    assert!(content.contains("rgt hook pre"));
+    assert!(content.contains(&format!("{} hook post", exe_prefix_json())));
+    assert!(content.contains(&format!("{} hook pre", exe_prefix_json())));
+    assert!(!content.contains("\"rgt hook post\""));
     serde_json::from_str::<serde_json::Value>(&content).expect("must be valid JSON");
 }
 
@@ -166,10 +204,8 @@ fn copilot_writer_merges_chat_hooks_into_user_settings() {
         true
     );
     let hooks = &parsed["github.copilot.chat.hooks"]["PostToolUse"][0];
-    assert_eq!(
-        hooks["hooks"][0]["command"],
-        "rgt hook post --agent copilot"
-    );
+    let cmd = hooks["hooks"][0]["command"].as_str().unwrap();
+    assert_eq!(cmd, &format!("{} hook post --agent copilot", exe_prefix()));
 }
 
 #[test]
@@ -218,12 +254,13 @@ fn existing_four_agents_write_with_markers() {
     run(&home, &config_dir, true, true, "windsurf");
 
     let claude = read(&home.join(".claude").join("settings.json"));
-    assert!(claude.contains("\"rgt hook post\""));
-    assert!(claude.contains("\"rgt hook pre\""));
+    assert!(claude.contains("Read|Edit|Write|Bash"));
+    assert!(claude.contains(&format!("{} hook post", exe_prefix_json())));
+    assert!(claude.contains(&format!("{} hook pre", exe_prefix_json())));
     serde_json::from_str::<serde_json::Value>(&claude).unwrap();
 
     let cursor = read(&home.join(".cursor").join("hooks.json"));
-    assert!(cursor.contains("rgt hook post"));
+    assert!(cursor.contains(&format!("{} hook post", exe_prefix_json())));
     serde_json::from_str::<serde_json::Value>(&cursor).unwrap();
 
     let agents_md = read(&PathBuf::from("AGENTS.md"));
@@ -271,7 +308,7 @@ fn gemini_writer_creates_hooks_toml() {
 
     let toml = read(&home.join(".gemini").join("hooks.toml"));
     assert!(toml.contains("[PostToolUse]"));
-    assert!(toml.contains("rgt hook post --agent gemini"));
+    assert!(toml.contains(&format!("{} hook post --agent gemini", exe_prefix())));
     let _: toml_edit::DocumentMut = toml.parse().unwrap();
 }
 
@@ -289,7 +326,7 @@ fn vibe_writer_creates_hooks_toml_and_prompt() {
     assert!(toml.contains("[[pre_tool]]"));
     assert!(toml.contains("match = \"bash\""));
     assert!(toml.contains("strict = false"));
-    assert!(toml.contains("rgt hook post --agent vibe"));
+    assert!(toml.contains(&format!("{} hook post --agent vibe", exe_prefix())));
     let _: toml_edit::DocumentMut = toml.parse().unwrap();
 
     let prompt = read(&home.join(".vibe").join("prompts").join("rgt.md"));
@@ -716,9 +753,15 @@ fn unknown_agent_configures_nothing() {
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
 
-    let report =
-        detect_and_configure_hooks_with_config(&home, &config_dir, true, true, Some("nope"))
-            .unwrap();
+    let report = detect_and_configure_hooks_with_config_and_exe(
+        &home,
+        &config_dir,
+        true,
+        true,
+        Some("nope"),
+        &injected_exe(),
+    )
+    .unwrap();
     assert!(report.is_empty());
 }
 
@@ -739,9 +782,15 @@ fn assert_thin_glue(content: &str, agent: &str) {
 
 #[test]
 fn glue_templates_are_thin_delegates() {
-    assert_thin_glue(rgt::hooks::glue::OPENCODE_TS_PLUGIN, "opencode");
-    assert_thin_glue(rgt::hooks::glue::PI_TS_EXTENSION, "pi");
-    assert_thin_glue(rgt::hooks::glue::HERMES_PYTHON_PLUGIN, "hermes");
+    assert_thin_glue(
+        &rgt::hooks::glue::opencode_plugin("/usr/local/bin/rgt"),
+        "opencode",
+    );
+    assert_thin_glue(&rgt::hooks::glue::pi_extension("/usr/local/bin/rgt"), "pi");
+    assert_thin_glue(
+        &rgt::hooks::glue::hermes_plugin("/usr/local/bin/rgt"),
+        "hermes",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -897,4 +946,40 @@ fn unverified_and_plugin_agents_get_no_instruction_file() {
         0,
         "Copilot Chat (VS Code) settings must not carry the instruction"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 028 / US4 (T013): restart reminder gating
+// ---------------------------------------------------------------------------
+
+#[test]
+fn restart_reminder_true_when_any_hook_configured() {
+    let report = InstallReport {
+        outcomes: vec![AgentOutcome::Configured {
+            agent: "codex".into(),
+            artifact: PathBuf::from("AGENTS.md"),
+        }],
+    };
+    assert!(rgt::cli::needs_restart_reminder(&report));
+}
+
+#[test]
+fn restart_reminder_false_when_all_skipped() {
+    let report = InstallReport {
+        outcomes: vec![
+            AgentOutcome::Skipped {
+                agent: "codex".into(),
+            },
+            AgentOutcome::Skipped {
+                agent: "cursor".into(),
+            },
+        ],
+    };
+    assert!(!rgt::cli::needs_restart_reminder(&report));
+}
+
+#[test]
+fn restart_reminder_false_when_empty_report() {
+    let report = InstallReport::default();
+    assert!(!rgt::cli::needs_restart_reminder(&report));
 }

@@ -60,15 +60,18 @@ mod tests {
         assert!(hooks.get("PreToolUse").is_some());
 
         let post = &hooks["PostToolUse"][0];
-        assert_eq!(post["matcher"].as_str().unwrap(), "");
+        assert_eq!(post["matcher"].as_str().unwrap(), "Read|Edit|Write|Bash");
         let post_hooks = post["hooks"].as_array().unwrap();
         assert_eq!(post_hooks[0]["type"].as_str().unwrap(), "command");
-        assert_eq!(post_hooks[0]["command"].as_str().unwrap(), "rgt hook post");
+        let post_cmd = post_hooks[0]["command"].as_str().unwrap();
+        assert!(post_cmd.ends_with("hook post"), "got {}", post_cmd);
+        assert!(!post_cmd.starts_with("rgt "), "must not use bare rgt");
 
         let pre = &hooks["PreToolUse"][0];
-        assert_eq!(pre["matcher"].as_str().unwrap(), "");
+        assert_eq!(pre["matcher"].as_str().unwrap(), "Read|Edit|Write|Bash");
         let pre_hooks = pre["hooks"].as_array().unwrap();
-        assert_eq!(pre_hooks[0]["command"].as_str().unwrap(), "rgt hook pre");
+        let pre_cmd = pre_hooks[0]["command"].as_str().unwrap();
+        assert!(pre_cmd.ends_with("hook pre"), "got {}", pre_cmd);
 
         // Old hooks.json must NOT exist
         assert!(!dir.path().join(".claude").join("hooks.json").exists());
@@ -87,11 +90,13 @@ mod tests {
         assert_eq!(hooks["version"].as_i64().unwrap(), 1);
 
         let pre = &hooks["hooks"]["preToolUse"][0];
-        assert_eq!(pre["command"].as_str().unwrap(), "rgt hook pre");
+        let pre_cmd = pre["command"].as_str().unwrap();
+        assert!(pre_cmd.ends_with("hook pre"), "got {}", pre_cmd);
         assert_eq!(pre["matcher"].as_str().unwrap(), "Shell");
 
         let post = &hooks["hooks"]["postToolUse"][0];
-        assert_eq!(post["command"].as_str().unwrap(), "rgt hook post");
+        let post_cmd = post["command"].as_str().unwrap();
+        assert!(post_cmd.ends_with("hook post"), "got {}", post_cmd);
         assert_eq!(post["matcher"].as_str().unwrap(), "Shell");
     }
 

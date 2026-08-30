@@ -375,7 +375,7 @@ fn element_has_rgt_command(el: &Value<'_>) -> bool {
         return false;
     };
     if let Some(cmd) = obj.get_string("command") {
-        if cmd.value.starts_with("rgt hook") {
+        if is_rgt_command(&cmd.value) {
             return true;
         }
     }
@@ -383,7 +383,7 @@ fn element_has_rgt_command(el: &Value<'_>) -> bool {
         for h in &hooks.elements {
             if let Value::Object(hobj) = h {
                 if let Some(cmd) = hobj.get_string("command") {
-                    if cmd.value.starts_with("rgt hook") {
+                    if is_rgt_command(&cmd.value) {
                         return true;
                     }
                 }
@@ -391,6 +391,28 @@ fn element_has_rgt_command(el: &Value<'_>) -> bool {
         }
     }
     false
+}
+
+/// True when the command is an RGT hook invocation: `<exe> hook pre|post`,
+/// where the executable is the bare `rgt`/`rgt.exe` name or an absolute path
+/// (the FR-003 injected form, and the test-harness binary in integration
+/// tests). A bare non-RGT command such as RTK's `rtk hook post` is not matched.
+fn is_rgt_command(cmd: &str) -> bool {
+    let mut tokens = cmd.split_whitespace();
+    let exe = tokens.next().unwrap_or_default().trim_matches('"');
+    let sub = tokens.next();
+    if sub != Some("hook") {
+        return false;
+    }
+    let op = tokens.next();
+    if !matches!(op, Some("pre") | Some("post")) {
+        return false;
+    }
+    let base = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
+    let is_bare_rgt = base == "rgt" || base == "rgt.exe";
+    let is_absolute =
+        exe.starts_with('/') || exe.starts_with('\\') || exe.as_bytes().get(1) == Some(&b':');
+    is_bare_rgt || is_absolute
 }
 
 // ---------------------------------------------------------------------------

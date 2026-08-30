@@ -191,7 +191,8 @@ pub fn detect_and_configure_hooks_in_home(
     agent: Option<&str>,
 ) -> Result<InstallReport, ConfigEditError> {
     let config_dir = dirs::config_dir().unwrap_or_else(|| home.join(".config"));
-    configure(home, &config_dir, global, force, agent)
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("rgt"));
+    configure(home, &config_dir, global, force, agent, &exe)
 }
 
 /// Same as [`detect_and_configure_hooks_in_home`], with an explicit config
@@ -205,7 +206,30 @@ pub fn detect_and_configure_hooks_with_config(
     force: bool,
     agent: Option<&str>,
 ) -> Result<InstallReport, ConfigEditError> {
-    configure(home, config_dir, global, force, agent)
+    // FR-003: subprocess hooks reference the CLI by absolute path so capture
+    // does not depend on PATH resolution at hook-invocation time. `current_exe`
+    // effectively never fails; fall back to the bare name only as a last resort.
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("rgt"));
+    detect_and_configure_hooks_with_config_and_exe(home, config_dir, global, force, agent, &exe)
+}
+
+/// Same as [`detect_and_configure_hooks_with_config`], but with an explicit
+/// CLI executable path injected (deterministic tests inject a fixed path).
+pub fn detect_and_configure_hooks_with_config_and_exe(
+    home: &Path,
+    config_dir: &Path,
+    global: bool,
+    force: bool,
+    agent: Option<&str>,
+    exe: &Path,
+) -> Result<InstallReport, ConfigEditError> {
+    configure(home, config_dir, global, force, agent, exe)
+}
+
+/// Shell-quotes an absolute CLI path for embedding in a hook command string
+/// (handles paths containing spaces).
+fn shell_quote(path: &Path) -> String {
+    format!("\"{}\"", path.display())
 }
 
 fn configure(
@@ -214,6 +238,7 @@ fn configure(
     global: bool,
     force: bool,
     agent: Option<&str>,
+    rgt_path: &Path,
 ) -> Result<InstallReport, ConfigEditError> {
     let mut outcomes = Vec::new();
 
@@ -256,16 +281,19 @@ fn configure(
         };
     }
 
-    configure_agent!("claude-code", write_claude_code(home, global, force));
-    configure_agent!("cursor", write_cursor(home, global));
+    configure_agent!(
+        "claude-code",
+        write_claude_code(home, global, force, rgt_path)
+    );
+    configure_agent!("cursor", write_cursor(home, global, rgt_path));
     configure_agent!("codex", write_codex(force));
     configure_agent!("windsurf", write_windsurf(force));
-    configure_agent!("copilot", write_copilot(home, config_dir, force));
-    configure_agent!("gemini", write_gemini(home));
-    configure_agent!("vibe", write_vibe(home, force));
-    configure_agent!("opencode", write_opencode(home, global, force));
-    configure_agent!("pi", write_pi(home, global, force));
-    configure_agent!("hermes", write_hermes(home, global, force));
+    configure_agent!("copilot", write_copilot(home, config_dir, force, rgt_path));
+    configure_agent!("gemini", write_gemini(home, rgt_path));
+    configure_agent!("vibe", write_vibe(home, force, rgt_path));
+    configure_agent!("opencode", write_opencode(home, global, force, rgt_path));
+    configure_agent!("pi", write_pi(home, global, force, rgt_path));
+    configure_agent!("hermes", write_hermes(home, global, force, rgt_path));
     configure_agent!("cline", write_cline(force));
     configure_agent!("antigravity", write_antigravity(force));
     configure_agent!("kilocode", write_kilocode(force));
@@ -362,6 +390,7 @@ fn write_claude_code(
     home: &Path,
     global: bool,
     force: bool,
+    rgt_path: &Path,
 ) -> Result<WriteOutcome, ConfigEditError> {
     let claude_dir = if global {
         home.join(".claude")
@@ -370,10 +399,14 @@ fn write_claude_code(
     };
     let settings_file = claude_dir.join("settings.json");
 
+    // FR-003: absolute CLI path. FR-004: matcher scoped to the tools RGT
+    // captures (Read|Edit|Write|Bash) so the hook does not spawn on every call;
+    // `Bash` is kept so Bash-read capture (026) keeps working.
+    let exe = shell_quote(rgt_path);
     let desired = json!({
         "hooks": {
-            "PostToolUse": [ { "matcher": "", "hooks": [{ "type": "command", "command": "rgt hook post" }] } ],
-            "PreToolUse": [ { "matcher": "", "hooks": [{ "type": "command", "command": "rgt hook pre" }] } ],
+            "PostToolUse": [ { "matcher": "Read|Edit|Write|Bash", "hooks": [{ "type": "command", "command": format!("{} hook post", exe) }] } ],
+            "PreToolUse": [ { "matcher": "Read|Edit|Write|Bash", "hooks": [{ "type": "command", "command": format!("{} hook pre", exe) }] } ],
         }
     });
     let outcome = ensure_json_hooks(&settings_file, &desired)?;
@@ -411,7 +444,11 @@ fn write_claude_code(
     })
 }
 
-fn write_cursor(home: &Path, global: bool) -> Result<WriteOutcome, ConfigEditError> {
+fn write_cursor(
+    home: &Path,
+    global: bool,
+    rgt_path: &Path,
+) -> Result<WriteOutcome, ConfigEditError> {
     let cursor_dir = if global {
         home.join(".cursor")
     } else {
@@ -419,11 +456,12 @@ fn write_cursor(home: &Path, global: bool) -> Result<WriteOutcome, ConfigEditErr
     };
     let cursor_hooks_file = cursor_dir.join("hooks.json");
 
+    let exe = shell_quote(rgt_path);
     let desired = json!({
         "version": 1,
         "hooks": {
-            "preToolUse": [ { "command": "rgt hook pre", "matcher": "Shell" } ],
-            "postToolUse": [ { "command": "rgt hook post", "matcher": "Shell" } ],
+            "preToolUse": [ { "command": format!("{} hook pre", exe), "matcher": "Shell" } ],
+            "postToolUse": [ { "command": format!("{} hook post", exe), "matcher": "Shell" } ],
         }
     });
     ensure_json_hooks(&cursor_hooks_file, &desired)
@@ -476,11 +514,13 @@ fn write_copilot(
     home: &Path,
     config_dir: &Path,
     force: bool,
+    rgt_path: &Path,
 ) -> Result<WriteOutcome, ConfigEditError> {
     let settings_file = crate::hooks::paths::copilot_user_settings(config_dir);
+    let exe = shell_quote(rgt_path);
     let desired = json!({
         "github.copilot.chat.hooks": {
-            "PostToolUse": [ { "matcher": ".*", "hooks": [{ "type": "command", "command": "rgt hook post --agent copilot" }] } ],
+            "PostToolUse": [ { "matcher": ".*", "hooks": [{ "type": "command", "command": format!("{} hook post --agent copilot", exe) }] } ],
         }
     });
     let chat = ensure_json_hooks(&settings_file, &desired)?;
@@ -504,23 +544,25 @@ fn write_copilot(
 }
 
 /// Gemini CLI: `~/.gemini/hooks.toml` PostToolUse entry.
-fn write_gemini(home: &Path) -> Result<WriteOutcome, ConfigEditError> {
+fn write_gemini(home: &Path, rgt_path: &Path) -> Result<WriteOutcome, ConfigEditError> {
     let hooks_file = home.join(".gemini").join("hooks.toml");
+    let exe = shell_quote(rgt_path);
     ensure_toml(&hooks_file, |t| {
         editor::toml_ensure_table_entry(
             t,
             &["PostToolUse"],
             "command",
-            "rgt hook post --agent gemini",
+            &format!("{} hook post --agent gemini", exe),
         )
     })
 }
 
 /// Mistral Vibe: `~/.vibe/hooks.toml` pre_tool entry + `~/.vibe/prompts/rgt.md`.
-fn write_vibe(home: &Path, force: bool) -> Result<WriteOutcome, ConfigEditError> {
+fn write_vibe(home: &Path, force: bool, rgt_path: &Path) -> Result<WriteOutcome, ConfigEditError> {
     let hooks_file = home.join(".vibe").join("hooks.toml");
+    let exe = shell_quote(rgt_path);
     let hooks = ensure_toml(&hooks_file, |t| {
-        editor::toml_ensure_vibe_pre_tool(t, "rgt hook post --agent vibe")
+        editor::toml_ensure_vibe_pre_tool(t, &format!("{} hook post --agent vibe", exe))
     })?;
 
     let prompt_file = home.join(".vibe").join("prompts").join("rgt.md");
@@ -563,14 +605,20 @@ fn write_plugin_file(path: &Path, content: &str, force: bool) -> Result<bool, Co
 }
 
 /// OpenCode: embedded `rgt.ts` TS plugin.
-fn write_opencode(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, ConfigEditError> {
+fn write_opencode(
+    home: &Path,
+    global: bool,
+    force: bool,
+    rgt_path: &Path,
+) -> Result<WriteOutcome, ConfigEditError> {
     let plugin_dir = if global {
         home.join(".config").join("opencode").join("plugins")
     } else {
         PathBuf::from(".opencode").join("plugin")
     };
     let plugin_file = plugin_dir.join("rgt.ts");
-    if write_plugin_file(&plugin_file, glue::OPENCODE_TS_PLUGIN, force)? {
+    let content = glue::opencode_plugin(&rgt_path.display().to_string());
+    if write_plugin_file(&plugin_file, &content, force)? {
         Ok(WriteOutcome::Configured(plugin_file))
     } else {
         Ok(WriteOutcome::Skipped)
@@ -578,14 +626,20 @@ fn write_opencode(home: &Path, global: bool, force: bool) -> Result<WriteOutcome
 }
 
 /// Pi: embedded `rgt.ts` TS extension.
-fn write_pi(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, ConfigEditError> {
+fn write_pi(
+    home: &Path,
+    global: bool,
+    force: bool,
+    rgt_path: &Path,
+) -> Result<WriteOutcome, ConfigEditError> {
     let ext_dir = if global {
         home.join(".pi").join("agent").join("extensions")
     } else {
         PathBuf::from(".pi").join("extensions")
     };
     let ext_file = ext_dir.join("rgt.ts");
-    if write_plugin_file(&ext_file, glue::PI_TS_EXTENSION, force)? {
+    let content = glue::pi_extension(&rgt_path.display().to_string());
+    if write_plugin_file(&ext_file, &content, force)? {
         Ok(WriteOutcome::Configured(ext_file))
     } else {
         Ok(WriteOutcome::Skipped)
@@ -593,14 +647,20 @@ fn write_pi(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, Conf
 }
 
 /// Hermes: embedded `plugin.py` + `plugins.enabled` in the Hermes config.
-fn write_hermes(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, ConfigEditError> {
+fn write_hermes(
+    home: &Path,
+    global: bool,
+    force: bool,
+    rgt_path: &Path,
+) -> Result<WriteOutcome, ConfigEditError> {
     let plugin_dir = if global {
         home.join(".hermes").join("plugins").join("rgt")
     } else {
         PathBuf::from(".hermes").join("plugins").join("rgt")
     };
     let plugin_file = plugin_dir.join("plugin.py");
-    let written_plugin = write_plugin_file(&plugin_file, glue::HERMES_PYTHON_PLUGIN, force)?;
+    let content = glue::hermes_plugin(&rgt_path.display().to_string());
+    let written_plugin = write_plugin_file(&plugin_file, &content, force)?;
 
     let config_file = if global {
         home.join(".hermes").join("config.toml")
@@ -718,4 +778,90 @@ pub fn detect_installed_agents(home: &Path, config_dir: &Path) -> Vec<String> {
     }
 
     detected
+}
+
+/// Returns the RGT hook artifact paths that currently exist for the given
+/// home/config bases (FR-002 — `rgt doctor` uses this to detect installed
+/// hooks). Enumerates the known per-agent artifact locations in both the
+/// project (`global == false`) and home (`global == true`) variants; only
+/// paths that exist on disk are returned.
+pub fn list_hook_artifacts(home: &Path, config_dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut artifacts = Vec::new();
+    let mut push = |agent: &str, path: PathBuf| {
+        if path.exists() {
+            artifacts.push((agent.to_string(), path));
+        }
+    };
+
+    let project = |name: &str| PathBuf::from(name);
+    let home_dir = |name: &str| home.join(name);
+
+    // Claude Code (project `.claude` + global `~/.claude`).
+    push("claude-code", project(".claude").join("settings.json"));
+    push("claude-code", home_dir(".claude").join("settings.json"));
+    // Cursor.
+    push("cursor", project(".cursor").join("hooks.json"));
+    push("cursor", home_dir(".cursor").join("hooks.json"));
+    // Copilot Chat (VS Code user settings) + CLI rules.
+    push(
+        "copilot",
+        crate::hooks::paths::copilot_user_settings(config_dir),
+    );
+    push(
+        "copilot",
+        crate::hooks::paths::copilot_cli_config_dir(home, config_dir).join("AGENTS.md"),
+    );
+    // Gemini / Vibe.
+    push("gemini", home_dir(".gemini").join("hooks.toml"));
+    push("vibe", home_dir(".vibe").join("hooks.toml"));
+    // OpenCode / Pi / Hermes plugins.
+    push(
+        "opencode",
+        project(".opencode").join("plugin").join("rgt.ts"),
+    );
+    push(
+        "opencode",
+        home_dir(".config")
+            .join("opencode")
+            .join("plugins")
+            .join("rgt.ts"),
+    );
+    push("pi", project(".pi").join("extensions").join("rgt.ts"));
+    push(
+        "pi",
+        home_dir(".pi")
+            .join("agent")
+            .join("extensions")
+            .join("rgt.ts"),
+    );
+    push(
+        "hermes",
+        project(".hermes")
+            .join("plugins")
+            .join("rgt")
+            .join("plugin.py"),
+    );
+    push(
+        "hermes",
+        home_dir(".hermes")
+            .join("plugins")
+            .join("rgt")
+            .join("plugin.py"),
+    );
+    // Rules-file agents.
+    push("codex", project("AGENTS.md"));
+    push("windsurf", project(".windsurfrules"));
+    push("cline", project(".clinerules"));
+    push(
+        "antigravity",
+        project(".agents")
+            .join("rules")
+            .join("antigravity-rgt-rules.md"),
+    );
+    push(
+        "kilocode",
+        project(".kilocode").join("rules").join("rgt-rules.md"),
+    );
+
+    artifacts
 }
