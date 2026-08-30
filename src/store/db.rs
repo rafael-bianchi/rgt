@@ -1,4 +1,4 @@
-use crate::store::schema::initialize_schema;
+use crate::store::schema::{initialize_schema, stamp_or_migrate_schema};
 use rusqlite::{Connection, Result};
 use std::fs;
 use std::path::Path;
@@ -29,6 +29,8 @@ impl DbStore {
         // (SQLite's default busy_timeout is 0). Bounded to avoid indefinite hangs.
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         initialize_schema(&conn)?;
+        // FR-001: stamp or migrate the schema version; fail fast on a newer store.
+        stamp_or_migrate_schema(&conn)?;
         Ok(Self { conn })
     }
 
@@ -37,6 +39,7 @@ impl DbStore {
         let conn = Connection::open_in_memory()?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         initialize_schema(&conn)?;
+        stamp_or_migrate_schema(&conn)?;
         Ok(Self { conn })
     }
 

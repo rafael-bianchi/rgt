@@ -21,6 +21,7 @@ After computing a derived value from tracked root nodes:
 - `rgt status`: see all tracked nodes and staleness state
 - `rgt query <node_id>`: trace provenance lineage for a value
 - `rgt graph`: export the dependency graph as text or mermaid
+- `rgt gc [--vacuum]`: remove obsolete (stale, dependent-free) nodes
 - `rgt doctor`: diagnose hook installation and capture health (0 = healthy/warnings, 1 = error)
 
 > **Copilot CLI note**: RGT's Copilot CLI event-shape handling is an assumption

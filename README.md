@@ -219,9 +219,12 @@ rgt verify --parents <ids> --operation <op> --result <val>
 rgt status [--stale-only] [--json]         # graph state and staleness
 rgt query <node_id> [--json]               # full lineage for a value
 rgt graph [-f text|mermaid|dot]            # export the dependency DAG
+rgt gc [--vacuum]                          # remove obsolete (stale, dependent-free) nodes
 ```
 
 `rgt record --number-format` overrides the persisted format for one call; otherwise the persisted setting (from `rgt init`) is used, falling back to `auto`. Number parsing is locale-aware: a leading `-` and accounting parentheses `(N)` are part of the value, thousands/decimal separators are honored per the active format, and values that can't be parsed under that format are skipped (with a warning) rather than split into bogus nodes.
+
+`rgt gc` removes **obsolete nodes** — values marked stale that nothing derives from — and reports how many it removed. It never touches non-stale nodes or anything still depended on. `rgt gc --vacuum` additionally reclaims freed disk pages with SQLite `VACUUM` (opt-in; the default run only deletes rows).
 
 Operations: `EXPRESSION` (formulas like `a + b * c`) and `DATE_DIFF` (date arithmetic, e.g. `date2 - date1`). Parent variables map as `parent[0]=a, parent[1]=b, ...` (at most 26, `a`–`z`).
 

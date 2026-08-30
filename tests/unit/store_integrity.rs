@@ -203,3 +203,36 @@ fn hook_capture_records_batch_atomically() {
     let nodes = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
     assert_eq!(nodes.len(), 3, "all values must be recorded in the batch");
 }
+
+// ---- 029 / US1 (T005): schema version stamping and skew detection ----
+
+#[test]
+fn unversioned_store_is_stamped_to_schema_version() {
+    use rgt::store::schema::{schema_version, stamp_or_migrate_schema, SCHEMA_VERSION};
+    let db = DbStore::open_in_memory().unwrap();
+    let conn = db.conn();
+    // A fresh store is stamped on open; verify a second pass is a no-op.
+    assert_eq!(schema_version(conn).unwrap(), SCHEMA_VERSION);
+    stamp_or_migrate_schema(conn).unwrap();
+    assert_eq!(schema_version(conn).unwrap(), SCHEMA_VERSION);
+}
+
+#[test]
+fn newer_store_version_is_rejected() {
+    use rgt::store::schema::{stamp_or_migrate_schema, SCHEMA_VERSION};
+    let db = DbStore::open_in_memory().unwrap();
+    let conn = db.conn();
+    // Simulate a store created by a future build.
+    conn.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION + 1))
+        .unwrap();
+    let err = stamp_or_migrate_schema(conn).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("newer than this build supports"), "{}", msg);
+}
+
+#[test]
+fn equal_version_is_a_noop() {
+    use rgt::store::schema::{schema_version, SCHEMA_VERSION};
+    let db = DbStore::open_in_memory().unwrap();
+    assert_eq!(schema_version(db.conn()).unwrap(), SCHEMA_VERSION);
+}

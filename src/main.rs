@@ -104,6 +104,12 @@ enum Commands {
     },
     /// Diagnose hook installation and capture health (0 = healthy/warnings, 1 = error)
     Doctor,
+    /// Remove obsolete (stale, dependent-free) nodes from the provenance graph
+    Gc {
+        /// Reclaim physical disk space with VACUUM after collection
+        #[arg(long)]
+        vacuum: bool,
+    },
     /// Verify that a derived value matches its parent nodes
     Verify {
         /// Comma-separated parent node IDs in variable order (parent[0]=a, parent[1]=b, ...)
@@ -211,6 +217,7 @@ async fn main() {
                 std::process::exit(1);
             }
         },
+        Commands::Gc { vacuum } => cli::execute_gc(vacuum),
         Commands::Verify {
             parents,
             operation,
