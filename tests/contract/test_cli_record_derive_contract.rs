@@ -19,14 +19,14 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, Some("codex")).is_ok());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
 
         let file_path = dir.path().join("data.csv");
         let mut f = fs::File::create(&file_path).unwrap();
         writeln!(f, "revenue,120000\ncosts,60000\nprofit,60000\n").unwrap();
 
         let path_str = file_path.to_string_lossy().to_string();
-        assert!(execute_record(&path_str, false).is_ok());
+        assert!(execute_record(&path_str, false, None).is_ok());
     }
 
     #[test]
@@ -34,9 +34,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, Some("codex")).is_ok());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
 
-        let result = execute_record("nonexistent.csv", false);
+        let result = execute_record("nonexistent.csv", false, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("file not found"));
     }
@@ -46,13 +46,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, Some("codex")).is_ok());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
 
         let file_path = dir.path().join("empty.txt");
         fs::File::create(&file_path).unwrap();
 
         let path_str = file_path.to_string_lossy().to_string();
-        assert!(execute_record(&path_str, false).is_ok());
+        assert!(execute_record(&path_str, false, None).is_ok());
     }
 
     #[test]
@@ -60,7 +60,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, Some("codex")).is_ok());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
 
         let file_path = dir.path().join("stdin_test.csv");
         let mut f = fs::File::create(&file_path).unwrap();
@@ -69,7 +69,7 @@ mod tests {
         // The --stdin flag reads from actual stdin, but we pass it as a flag
         // We still need the file to exist on disk for metadata
         let path_str = file_path.to_string_lossy().to_string();
-        assert!(execute_record(&path_str, true).is_ok());
+        assert!(execute_record(&path_str, true, None).is_ok());
     }
 
     // -----------------------------------------------------------------------
@@ -261,7 +261,7 @@ mod tests {
             .unwrap(); // %PDF- + non-UTF-8
 
         let path_str = file_path.to_string_lossy().to_string();
-        let err = execute_record(&path_str, false).unwrap_err();
+        let err = execute_record(&path_str, false, None).unwrap_err();
         assert!(
             err.contains("unsupported file format for `rgt record`"),
             "{}",
@@ -280,13 +280,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, Some("codex")).is_ok());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
 
         let file_path = dir.path().join("data.txt");
         let mut f = fs::File::create(&file_path).unwrap();
         writeln!(f, "amount,42\n").unwrap();
         let path_str = file_path.to_string_lossy().to_string();
-        assert!(execute_record(&path_str, false).is_ok());
+        assert!(execute_record(&path_str, false, None).is_ok());
     }
 
     // 023 / convergence T014: the --stdin binary branch is also covered.
@@ -347,14 +347,14 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        execute_init(false, true, Some("codex")).unwrap();
+        execute_init(false, true, Some("codex"), None).unwrap();
 
         let file_path = dir.path().join("data.csv");
         let bytes = b"revenue,120000\ncosts,60000\n";
         std::fs::write(&file_path, bytes).unwrap();
 
         let path_str = file_path.to_string_lossy().to_string();
-        execute_record(&path_str, false).unwrap();
+        execute_record(&path_str, false, None).unwrap();
 
         let db = DbStore::open_in_project(dir.path()).unwrap();
         let doc = get_source_document_by_path(db.conn(), &path_str)
@@ -365,5 +365,99 @@ mod tests {
             compute_blake3_hash_from_bytes(bytes),
             "stored hash must equal the hash of the exact bytes extracted"
         );
+    }
+    // -----------------------------------------------------------------------
+    // 027 / US3 (T011): --number-format persistence and resolution.
+    // -----------------------------------------------------------------------
+
+    fn recorded_numbers() -> Vec<f64> {
+        use rgt::store::queries::list_all_nodes;
+        use rgt::store::DbStore;
+        use rgt::types::ValueData;
+        let db = DbStore::open_in_project(".").unwrap();
+        list_all_nodes(db.conn())
+            .unwrap()
+            .into_iter()
+            .filter_map(|n| match n.value {
+                ValueData::Number(v) => Some(v),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn read_setting(key: &str) -> Option<String> {
+        use rgt::store::queries::get_setting;
+        use rgt::store::DbStore;
+        let db = DbStore::open_in_project(".").unwrap();
+        get_setting(db.conn(), key).unwrap()
+    }
+
+    #[test]
+    fn init_number_format_eu_persists_and_flagless_record_uses_it() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        assert!(execute_init(
+            false,
+            true,
+            Some("codex"),
+            Some(rgt::hooks::parser::NumberFormat::Eu)
+        )
+        .is_ok());
+        assert_eq!(read_setting("number_format").as_deref(), Some("eu"));
+
+        let file_path = dir.path().join("eu.csv");
+        let mut f = fs::File::create(&file_path).unwrap();
+        writeln!(f, "1.234,56\n").unwrap();
+
+        let path_str = file_path.to_string_lossy().to_string();
+        assert!(execute_record(&path_str, false, None).is_ok());
+        // Persisted `eu` makes 1.234,56 a single 1234.56 node.
+        assert_eq!(recorded_numbers(), vec![1234.56]);
+    }
+
+    #[test]
+    fn explicit_record_flag_overrides_persisted_setting() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        assert!(execute_init(
+            false,
+            true,
+            Some("codex"),
+            Some(rgt::hooks::parser::NumberFormat::Eu)
+        )
+        .is_ok());
+
+        // Under explicit `us`, the eu-style value is malformed -> skipped, warned, no node.
+        let file_path = dir.path().join("mixed.csv");
+        let mut f = fs::File::create(&file_path).unwrap();
+        writeln!(f, "1.234,56\n").unwrap();
+
+        let path_str = file_path.to_string_lossy().to_string();
+        assert!(
+            execute_record(&path_str, false, Some(rgt::hooks::parser::NumberFormat::Us)).is_ok()
+        );
+        assert!(
+            recorded_numbers().is_empty(),
+            "explicit us must override persisted eu -> malformed skipped"
+        );
+    }
+
+    #[test]
+    fn no_setting_defaults_to_auto() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
+        assert_eq!(read_setting("number_format"), None);
+
+        let file_path = dir.path().join("auto.csv");
+        let mut f = fs::File::create(&file_path).unwrap();
+        writeln!(f, "1,234.56\n").unwrap();
+
+        let path_str = file_path.to_string_lossy().to_string();
+        assert!(execute_record(&path_str, false, None).is_ok());
+        assert_eq!(recorded_numbers(), vec![1234.56]);
     }
 }

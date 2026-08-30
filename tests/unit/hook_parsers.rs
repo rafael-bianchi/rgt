@@ -296,3 +296,164 @@ fn non_read_command_is_a_noop() {
         assert_eq!(cap.path, None, "{}", cmd);
     }
 }
+
+// ---- T007 (US1): signs & accounting parentheses ----
+
+fn nums(content: &str, format: rgt::hooks::parser::NumberFormat) -> Vec<f64> {
+    use rgt::hooks::parser::extract_values_from_content;
+    extract_values_from_content(content, format)
+        .values
+        .into_iter()
+        .map(|v| match v.value {
+            rgt::types::ValueData::Number(n) => n,
+            _ => panic!("expected Number"),
+        })
+        .collect()
+}
+
+fn skip_count(content: &str, format: rgt::hooks::parser::NumberFormat) -> usize {
+    use rgt::hooks::parser::extract_values_from_content;
+    extract_values_from_content(content, format).skipped_malformed
+}
+
+#[test]
+fn sign_minus_is_part_of_the_number() {
+    assert_eq!(
+        nums("-42\n", rgt::hooks::parser::NumberFormat::Auto),
+        vec![-42.0]
+    );
+}
+
+#[test]
+fn unary_plus_is_tolerated() {
+    assert_eq!(
+        nums("+42\n", rgt::hooks::parser::NumberFormat::Auto),
+        vec![42.0]
+    );
+}
+
+#[test]
+fn accounting_parentheses_are_negative() {
+    assert_eq!(
+        nums("(500)\n", rgt::hooks::parser::NumberFormat::Auto),
+        vec![-500.0]
+    );
+}
+
+#[test]
+fn minus_before_parentheses_is_positive() {
+    assert_eq!(
+        nums("-(500)\n", rgt::hooks::parser::NumberFormat::Auto),
+        vec![500.0]
+    );
+}
+
+#[test]
+fn sign_only_attaches_when_not_preceded_by_word_char() {
+    // `abc-123` is an identifier hyphen, not a negative; sign is dropped.
+    assert_eq!(
+        nums("abc-123\n", rgt::hooks::parser::NumberFormat::Auto),
+        vec![123.0]
+    );
+}
+
+// ---- T009 (US2): separators per format ----
+
+#[test]
+fn us_thousands_and_decimal_are_one_node() {
+    let n = nums("1,234.56\n", rgt::hooks::parser::NumberFormat::Us);
+    assert_eq!(n, vec![1234.56]);
+}
+
+#[test]
+fn eu_thousands_and_decimal_are_one_node() {
+    let n = nums("1.234,56\n", rgt::hooks::parser::NumberFormat::Eu);
+    assert_eq!(n, vec![1234.56]);
+}
+
+#[test]
+fn us_bare_thousands_integer() {
+    assert_eq!(
+        nums("1,234\n", rgt::hooks::parser::NumberFormat::Us),
+        vec![1234.0]
+    );
+}
+
+#[test]
+fn eu_bare_comma_is_decimal() {
+    assert_eq!(
+        nums("1,234\n", rgt::hooks::parser::NumberFormat::Eu),
+        vec![1.234]
+    );
+}
+
+#[test]
+fn currency_and_percent_symbols_are_dropped() {
+    let n = nums("$1,234.56\n", rgt::hooks::parser::NumberFormat::Us);
+    assert_eq!(n, vec![1234.56]);
+    let n = nums("12.5%\n", rgt::hooks::parser::NumberFormat::Us);
+    assert_eq!(n, vec![12.5]);
+}
+
+#[test]
+fn malformed_number_is_skipped_and_counted_never_split() {
+    let n = nums("1.234.567,89\n", rgt::hooks::parser::NumberFormat::Us);
+    assert!(n.is_empty(), "malformed value must not emit any node");
+    assert_eq!(
+        skip_count("1.234.567,89\n", rgt::hooks::parser::NumberFormat::Us),
+        1,
+        "malformed value must be counted once"
+    );
+}
+
+// ---- T015 (US4): auto inference, once per file ----
+
+#[test]
+fn auto_us_input_infers_us() {
+    assert_eq!(
+        nums("1,234.56\n", rgt::hooks::parser::NumberFormat::Auto),
+        vec![1234.56]
+    );
+}
+
+#[test]
+fn auto_eu_input_infers_eu() {
+    assert_eq!(
+        nums("1.234,56\n", rgt::hooks::parser::NumberFormat::Auto),
+        vec![1234.56]
+    );
+}
+
+#[test]
+fn auto_single_separator_falls_back_to_us() {
+    assert_eq!(
+        nums("1,234\n", rgt::hooks::parser::NumberFormat::Auto),
+        vec![1234.0]
+    );
+    assert_eq!(
+        nums("1.234\n", rgt::hooks::parser::NumberFormat::Auto),
+        vec![1.234]
+    );
+}
+
+#[test]
+fn auto_infers_once_per_file_and_applies_to_all_lines() {
+    // First candidate with both separators (line 1) picks `.` as decimal -> us,
+    // so line 2's eu-style number is malformed and skipped (never split).
+    let content = "1,234.56\n1.234,56\n";
+    let n = nums(content, rgt::hooks::parser::NumberFormat::Auto);
+    assert_eq!(n, vec![1234.56]);
+    assert_eq!(
+        skip_count(content, rgt::hooks::parser::NumberFormat::Auto),
+        1
+    );
+}
+
+#[test]
+fn auto_consistent_us_file_extracts_all_lines() {
+    let content = "1,234.56\n2,345.67\n";
+    assert_eq!(
+        nums(content, rgt::hooks::parser::NumberFormat::Auto),
+        vec![1234.56, 2345.67]
+    );
+}

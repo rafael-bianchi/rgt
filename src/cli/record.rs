@@ -1,6 +1,6 @@
 use crate::detection::{compute_blake3_hash_from_bytes, get_metadata_snapshot};
-use crate::hooks::parser::extract_values_from_content;
-use crate::store::queries::{insert_tracked_node, upsert_source_document};
+use crate::hooks::parser::{extract_values_from_content, NumberFormat};
+use crate::store::queries::{get_setting, insert_tracked_node, upsert_source_document};
 use crate::store::DbStore;
 use crate::types::{NodeType, TrackedNode};
 use chrono::Utc;
@@ -9,6 +9,21 @@ use std::io::{self, Read};
 use std::path::Path;
 
 const VALUE_LIMIT: usize = 10_000;
+
+/// Resolves the active number format: an explicit CLI flag wins, then the
+/// persisted `number_format` setting, then `Auto` (FR-003).
+pub fn resolve_number_format(
+    conn: &rusqlite::Connection,
+    explicit: Option<NumberFormat>,
+) -> NumberFormat {
+    if let Some(f) = explicit {
+        return f;
+    }
+    match get_setting(conn, "number_format") {
+        Ok(Some(raw)) => raw.parse().unwrap_or(NumberFormat::Auto),
+        _ => NumberFormat::Auto,
+    }
+}
 
 /// Decodes `bytes` as UTF-8, or returns an explicit "unsupported file format"
 /// error for binary/non-UTF-8 content (FR-001) instead of a raw UTF-8 decode
@@ -24,7 +39,11 @@ fn read_utf8_content(source: &str, bytes: Vec<u8>) -> Result<String, String> {
     })
 }
 
-pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
+pub fn execute_record(
+    file: &str,
+    stdin: bool,
+    explicit_format: Option<NumberFormat>,
+) -> Result<(), String> {
     let path_obj = Path::new(file);
 
     if !path_obj.exists() {
@@ -55,6 +74,8 @@ pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
         DbStore::open_in_project(".").map_err(|e| format!("failed to open database: {}", e))?;
     let conn = db.conn_mut();
 
+    let number_format = resolve_number_format(conn, explicit_format);
+
     let doc = upsert_source_document(
         conn,
         file,
@@ -66,7 +87,9 @@ pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
     )
     .map_err(|e| format!("failed to upsert source document: {}", e))?;
 
-    let mut extracted = extract_values_from_content(&content);
+    let extraction = extract_values_from_content(&content, number_format);
+    let skipped_malformed = extraction.skipped_malformed;
+    let mut extracted = extraction.values;
 
     let mut skipped = false;
     if extracted.len() > VALUE_LIMIT {
@@ -107,6 +130,15 @@ pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
         eprintln!(
             "Warning: value limit ({}) reached, excess values skipped for {}",
             VALUE_LIMIT, file
+        );
+    }
+
+    if skipped_malformed > 0 {
+        println!(
+            "Warning: {} number(s) in {} could not be parsed as {} and were skipped (not split into bogus nodes)",
+            skipped_malformed,
+            file,
+            number_format.as_str()
         );
     }
 

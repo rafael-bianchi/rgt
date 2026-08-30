@@ -7,8 +7,8 @@ pub mod paths;
 use crate::detection::{
     compute_blake3_hash, compute_blake3_hash_from_bytes, get_metadata_snapshot,
 };
-use crate::hooks::parser::{extract_values_from_content, normalize_agent_event};
-use crate::store::queries::{insert_tracked_node, upsert_source_document};
+use crate::hooks::parser::{extract_values_from_content, normalize_agent_event, NumberFormat};
+use crate::store::queries::{get_setting, insert_tracked_node, upsert_source_document};
 use crate::store::DbStore;
 use crate::types::{NodeType, TrackedNode};
 use chrono::Utc;
@@ -72,6 +72,12 @@ pub fn handle_passive_hook_event(_event_type: &str, agent: Option<&str>) -> io::
         Err(_) => return Ok(()),
     };
 
+    // FR-003: the passive path uses the persisted format (no flag available).
+    let number_format = match get_setting(db.conn(), "number_format") {
+        Ok(Some(raw)) => raw.parse().unwrap_or(NumberFormat::Auto),
+        _ => NumberFormat::Auto,
+    };
+
     let doc = match upsert_source_document(
         db.conn(),
         path,
@@ -85,7 +91,7 @@ pub fn handle_passive_hook_event(_event_type: &str, agent: Option<&str>) -> io::
         Err(_) => return Ok(()),
     };
 
-    let extracted = extract_values_from_content(&content);
+    let extraction = extract_values_from_content(&content, number_format);
     let now = Utc::now();
 
     // FR-007: record the batch in a single transaction (all-or-nothing). On any
@@ -96,7 +102,7 @@ pub fn handle_passive_hook_event(_event_type: &str, agent: Option<&str>) -> io::
         Err(_) => return Ok(()),
     };
 
-    for ext in extracted {
+    for ext in extraction.values {
         let node_id =
             TrackedNode::generate_root_id(path, ext.line_number, ext.occurrence, &ext.value);
         let node = TrackedNode {

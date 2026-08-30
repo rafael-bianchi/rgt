@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use rgt::hooks::parser::{extract_values_from_content, parse_hook_payload};
+    use rgt::hooks::parser::{extract_values_from_content, parse_hook_payload, NumberFormat};
     use rgt::types::ValueKind;
 
     #[test]
@@ -26,7 +26,7 @@ mod tests {
             .content
             .as_deref()
             .unwrap();
-        let extracted = extract_values_from_content(content);
+        let extracted = extract_values_from_content(content, NumberFormat::Auto).values;
         assert!(!extracted.is_empty());
         assert!(extracted
             .iter()

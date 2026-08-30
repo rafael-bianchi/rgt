@@ -1,6 +1,8 @@
 use crate::hooks::installer::{
     detect_and_configure_hooks, resolve_agent_name, valid_agent_names, AgentOutcome,
 };
+use crate::hooks::parser::NumberFormat;
+use crate::store::queries::set_setting;
 
 /// Resolves an `--agent` spelling (canonical or alias) to its canonical name.
 /// Unknown names produce an error message listing every valid `--agent` value
@@ -26,9 +28,18 @@ pub fn resolve_agent_arg(agent: Option<&str>) -> Result<Option<String>, String> 
 /// If any agent fails to configure, the command returns an error so the CLI
 /// exits with code 1 (expected error, per the constitution); healthy agents are
 /// still configured (FR-008).
-pub fn execute_init(global: bool, force: bool, agent: Option<&str>) -> Result<(), String> {
-    let _db = crate::store::DbStore::open_in_project(".")
+pub fn execute_init(
+    global: bool,
+    force: bool,
+    agent: Option<&str>,
+    number_format: Option<NumberFormat>,
+) -> Result<(), String> {
+    let db = crate::store::DbStore::open_in_project(".")
         .map_err(|e| format!("Database init failed: {}", e))?;
+    if let Some(fmt) = number_format {
+        set_setting(db.conn(), "number_format", fmt.as_str())
+            .map_err(|e| format!("Failed to persist --number-format: {}", e))?;
+    }
     println!("✓ Initialized RGT database at .rgt/store.db");
 
     let report = detect_and_configure_hooks(global, force, agent)

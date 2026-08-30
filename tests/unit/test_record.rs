@@ -1,19 +1,24 @@
 #[cfg(test)]
 mod tests {
-    use rgt::hooks::parser::extract_values_from_content;
+    use rgt::hooks::parser::{extract_values_from_content, NumberFormat};
     use rgt::types::{TrackedNode, ValueKind};
+
+    /// Extracts values under the default `auto` format for existing assertions.
+    fn extract(content: &str) -> Vec<rgt::hooks::parser::ExtractedValue> {
+        extract_values_from_content(content, NumberFormat::Auto).values
+    }
 
     #[test]
     fn test_extract_numbers_from_content() {
         let content = "category,amount\nrevenue,100000\ncosts,60000\nprofit,40000\n";
-        let extracted = extract_values_from_content(content);
+        let extracted = extract(content);
         assert_eq!(extracted.len(), 3); // 100000, 60000, 40000
     }
 
     #[test]
     fn test_extract_dates_from_content() {
         let content = "start: 2026-01-15\nreview: 2026-03-01\nlaunch: 2026-06-30\n";
-        let extracted = extract_values_from_content(content);
+        let extracted = extract(content);
         // FR-005: exact total count — previously only date_count was asserted,
         // masking the 9 spurious number nodes from the dates' digits.
         assert_eq!(extracted.len(), 3);
@@ -24,7 +29,7 @@ mod tests {
 
     #[test]
     fn test_single_date_emits_one_node_no_spurious_numbers() {
-        let extracted = extract_values_from_content("start: 2026-01-15\n");
+        let extracted = extract("start: 2026-01-15\n");
         assert_eq!(
             extracted.len(),
             1,
@@ -36,14 +41,14 @@ mod tests {
 
     #[test]
     fn test_iso_datetime_emits_one_node() {
-        let extracted = extract_values_from_content("stamp: 2026-01-15T12:30:00Z\n");
+        let extracted = extract("stamp: 2026-01-15T12:30:00Z\n");
         assert_eq!(extracted.len(), 1);
         assert_eq!(extracted[0].value.kind(), ValueKind::Date);
     }
 
     #[test]
     fn test_same_line_identical_values_have_distinct_occurrences_and_ids() {
-        let extracted = extract_values_from_content("revenue,120000,discount,120000\n");
+        let extracted = extract("revenue,120000,discount,120000\n");
         assert_eq!(extracted.len(), 2);
         for v in &extracted {
             assert_eq!(v.value.kind(), ValueKind::Number);
@@ -71,7 +76,7 @@ mod tests {
 
     #[test]
     fn test_control_different_values_same_line() {
-        let extracted = extract_values_from_content("a,100,b,200\n");
+        let extracted = extract("a,100,b,200\n");
         assert_eq!(extracted.len(), 2);
         assert_eq!(extracted[0].occurrence, 0);
         assert_eq!(extracted[1].occurrence, 1);
@@ -80,8 +85,8 @@ mod tests {
     #[test]
     fn test_extraction_is_deterministic() {
         let content = "start: 2026-01-15\nrevenue,120000,discount,120000\nqty,42\n";
-        let a = extract_values_from_content(content);
-        let b = extract_values_from_content(content);
+        let a = extract(content);
+        let b = extract(content);
         assert_eq!(a.len(), b.len());
         for (x, y) in a.iter().zip(b.iter()) {
             assert_eq!(x.line_number, y.line_number);
@@ -92,14 +97,14 @@ mod tests {
 
     #[test]
     fn test_empty_content() {
-        let extracted = extract_values_from_content("");
+        let extracted = extract("");
         assert!(extracted.is_empty());
     }
 
     #[test]
     fn test_extract_no_numbers_or_dates() {
         let content = "hello world\njust text\nnothing here\n";
-        let extracted = extract_values_from_content(content);
+        let extracted = extract(content);
         assert!(extracted.is_empty());
     }
 
@@ -109,7 +114,7 @@ mod tests {
         for i in 0..11000 {
             content.push_str(&format!("{}\n", i));
         }
-        let extracted = extract_values_from_content(&content);
+        let extracted = extract(&content);
 
         let num_count = extracted
             .iter()
@@ -147,7 +152,7 @@ mod tests {
             guard
         };
 
-        execute_init(false, true, Some("codex")).unwrap();
+        execute_init(false, true, Some("codex"), None).unwrap();
 
         let file_path = dir.path().join("perf.txt");
         let mut f = fs::File::create(&file_path).unwrap();
@@ -157,7 +162,7 @@ mod tests {
 
         let path_str = file_path.to_string_lossy().to_string();
         let start = Instant::now();
-        execute_record(&path_str, false).unwrap();
+        execute_record(&path_str, false, None).unwrap();
         let elapsed = start.elapsed();
 
         // Threshold rationale: guards against reintroducing per-node auto-commit inserts
