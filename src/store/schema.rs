@@ -42,6 +42,11 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_tracked_nodes_stale 
         ON tracked_nodes(is_stale);
 
+        CREATE TABLE IF NOT EXISTS project_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS derivation_edges (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             parent_node_id TEXT NOT NULL REFERENCES tracked_nodes(id) ON DELETE CASCADE,

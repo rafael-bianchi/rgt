@@ -9,6 +9,7 @@ RGT configures provenance-capture hooks for all 13 RTK-supported agents: Claude 
 ### Recording Values
 After reading a data file containing numbers or dates, record its values:
 - `rgt record <file>`: extracts and tracks numeric/date values from file content
+- `rgt record <file> --number-format <us|eu|auto>`: parse numbers with a specific locale (`.`/`,` separator convention); default is the project's persisted setting, then `auto`
 - Run `rgt status` to check what's tracked
 
 ### Recording Derivations

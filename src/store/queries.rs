@@ -363,3 +363,23 @@ pub fn list_nodes_by_source_doc(conn: &Connection, source_doc_id: i64) -> Result
     }
     Ok(nodes)
 }
+
+/// Reads a per-project setting (key/value), e.g. `number_format` (FR-003).
+pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
+    let mut stmt = conn.prepare("SELECT value FROM project_settings WHERE key = ?1")?;
+    let mut rows = stmt.query(params![key])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row.get(0)?)),
+        None => Ok(None),
+    }
+}
+
+/// Writes a per-project setting (upsert by key), e.g. `number_format` (FR-003).
+pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO project_settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}

@@ -159,9 +159,11 @@ Three strategies keep the graph trustworthy:
 
 ### Initialize & Hooks
 ```bash
-rgt init [-g] [--force] [--agent <name>]   # configure hooks, detect installed agents
+rgt init [-g] [--force] [--agent <name>] [--number-format <us|eu|auto>]  # configure hooks, detect installed agents
 rgt hook pre|post [--agent <name>]         # passive capture from agent event JSON (stdin)
 ```
+
+`--number-format` persists the locale used to parse numbers (`.`/`,` separators and signs) for the passive hook path. Valid values: `us` (`.` decimal, `,` thousands), `eu` (`,` decimal, `.` thousands), or `auto` (inferred per file — the default).
 
 `rgt init` **never destroys your existing configuration**. It merges RGT's hook
 entries into your agent config additively — JSON/JSONC settings (comments and
@@ -191,7 +193,7 @@ warns when the requested tag is older than the installed version.
 
 ### Provenance
 ```bash
-rgt record <file>                          # extract and track values from a file
+rgt record <file> [--number-format <us|eu|auto>]   # extract and track values from a file
 rgt derive --parents <ids> --operation <op> --expression <expr> --result <val>
                                            # verify and record a derivation
 rgt verify --parents <ids> --operation <op> --result <val>
@@ -200,6 +202,8 @@ rgt status [--stale-only] [--json]         # graph state and staleness
 rgt query <node_id> [--json]               # full lineage for a value
 rgt graph [-f text|mermaid|dot]            # export the dependency DAG
 ```
+
+`rgt record --number-format` overrides the persisted format for one call; otherwise the persisted setting (from `rgt init`) is used, falling back to `auto`. Number parsing is locale-aware: a leading `-` and accounting parentheses `(N)` are part of the value, thousands/decimal separators are honored per the active format, and values that can't be parsed under that format are skipped (with a warning) rather than split into bogus nodes.
 
 Operations: `EXPRESSION` (formulas like `a + b * c`) and `DATE_DIFF` (date arithmetic, e.g. `date2 - date1`). Parent variables map as `parent[0]=a, parent[1]=b, ...` (at most 26, `a`–`z`).
 

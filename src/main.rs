@@ -8,6 +8,7 @@ mod types;
 mod updater;
 mod verify;
 
+use crate::hooks::parser::NumberFormat;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -38,6 +39,10 @@ enum Commands {
         /// kilocode (or aliases claude, roo-code, kilo). Detects all if omitted.
         #[arg(long)]
         agent: Option<String>,
+
+        /// Number parsing locale: us, eu, or auto. Persisted for the passive hook path.
+        #[arg(long, value_parser = ["us", "eu", "auto"])]
+        number_format: Option<String>,
     },
     /// Inspect provenance graph status, active nodes, and stale values
     Status {
@@ -123,6 +128,10 @@ enum Commands {
         /// Read file content from stdin instead of disk (path still required for node IDs)
         #[arg(long)]
         stdin: bool,
+
+        /// Number parsing locale: us, eu, or auto (defaults to persisted setting, then auto)
+        #[arg(long, value_parser = ["us", "eu", "auto"])]
+        number_format: Option<String>,
     },
     /// Verify and record a derived value from parent nodes
     Derive {
@@ -144,6 +153,13 @@ enum Commands {
     },
 }
 
+/// Maps a validated `--number-format` literal to a `NumberFormat` (clap's
+/// `value_parser` already restricts the input to us/eu/auto, so this is
+/// infallible). `None` means the caller falls back to setting/auto.
+fn parse_number_format(s: Option<&str>) -> Option<NumberFormat> {
+    s.and_then(|raw| raw.parse().ok())
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -153,8 +169,12 @@ async fn main() {
             global,
             force,
             agent,
+            number_format,
         } => match cli::resolve_agent_arg(agent.as_deref()) {
-            Ok(resolved) => cli::execute_init(global, force, resolved.as_deref()),
+            Ok(resolved) => {
+                let fmt = parse_number_format(number_format.as_deref());
+                cli::execute_init(global, force, resolved.as_deref(), fmt)
+            }
             Err(msg) => {
                 eprintln!("Error: {}", msg);
                 std::process::exit(2);
@@ -191,7 +211,11 @@ async fn main() {
             crate::verify::run_verify_cli(&parents, &operation, expression.as_deref(), result);
             Ok(())
         }
-        Commands::Record { file, stdin } => cli::execute_record(&file, stdin),
+        Commands::Record {
+            file,
+            stdin,
+            number_format,
+        } => cli::execute_record(&file, stdin, parse_number_format(number_format.as_deref())),
         Commands::Derive {
             parents,
             operation,
