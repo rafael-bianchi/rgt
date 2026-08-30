@@ -17,7 +17,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _guard = set_cwd(dir.path());
 
-        assert!(execute_init(false, true, None).is_ok());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
         assert!(dir.path().join(".rgt/store.db").exists());
 
         assert!(execute_status(false, true).is_ok());

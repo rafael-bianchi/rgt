@@ -24,6 +24,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -36,9 +38,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-13
-            target: x86_64-apple-darwin
-            suffix: tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
             suffix: tar.gz
@@ -56,6 +55,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -114,6 +115,11 @@ jobs:
           "$hash  rgt-v${version}-${{ matrix.target }}.zip" | Out-File -Encoding ascii "rgt-v${version}-${{ matrix.target }}.zip.sha256"
         shell: pwsh
 
+      - name: Attest release artifact
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'rgt-v*.${{ matrix.suffix }}'
+
       - name: Upload archive artifact
         uses: actions/upload-artifact@v4
         with:
@@ -128,6 +134,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -152,6 +160,8 @@ jobs:
     container: fedora:latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - name: Install dependencies
         run: dnf install -y rust cargo rpm-build
@@ -235,14 +245,6 @@ jobs:
           SHA=$(sha256sum /tmp/rgt-aarch64-darwin.tar.gz | cut -d' ' -f1)
           echo "sha=$SHA" >> $GITHUB_OUTPUT
 
-      - name: Compute SHA256 for x86_64-apple-darwin
-        id: sha256_x86_64_darwin
-        run: |
-          URL="https://github.com/rafael-bianchi/rgt/releases/download/${{ steps.version.outputs.tag }}/rgt-${{ steps.version.outputs.tag }}-x86_64-apple-darwin.tar.gz"
-          curl -fsSL "$URL" -o /tmp/rgt-x86_64-darwin.tar.gz
-          SHA=$(sha256sum /tmp/rgt-x86_64-darwin.tar.gz | cut -d' ' -f1)
-          echo "sha=$SHA" >> $GITHUB_OUTPUT
-
       - name: Compute SHA256 for x86_64-unknown-linux-musl
         id: sha256_x86_64_linux
         run: |
@@ -262,7 +264,6 @@ jobs:
       - name: Update Formula/rgt.rb with SHA256 values
         run: |
           sed -i "s/REPLACE_WITH_SHA256_AARCH64_DARWIN/${{ steps.sha256_aarch64_darwin.outputs.sha }}/" Formula/rgt.rb
-          sed -i "s/REPLACE_WITH_SHA256_X86_64_DARWIN/${{ steps.sha256_x86_64_darwin.outputs.sha }}/" Formula/rgt.rb
           sed -i "s/REPLACE_WITH_SHA256_X86_64_LINUX/${{ steps.sha256_x86_64_linux.outputs.sha }}/" Formula/rgt.rb
           sed -i "s/REPLACE_WITH_SHA256_AARCH64_LINUX/${{ steps.sha256_aarch64_linux.outputs.sha }}/" Formula/rgt.rb
 

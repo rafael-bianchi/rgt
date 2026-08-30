@@ -2,28 +2,68 @@ use crate::types::{DerivationEdge, NodeType, SourceDocument, TrackedNode, ValueD
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, Connection, Result};
 
-/// Inserts or updates a source document row by file path. Returns the upserted document.
+/// Inserts or updates a source document row by file path (or, when identity is
+/// available, by dev/ino). Returns the upserted document.
 pub fn upsert_source_document(
     conn: &Connection,
     file_path: &str,
     mtime_nsec: i64,
     file_size: u64,
     blake3_hash: &str,
+    dev: Option<u64>,
+    ino: Option<u64>,
 ) -> Result<SourceDocument> {
     let now = Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT INTO source_documents (file_path, mtime_nsec, file_size, blake3_hash, last_checked_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(file_path) DO UPDATE SET
-            mtime_nsec = excluded.mtime_nsec,
-            file_size = excluded.file_size,
-            blake3_hash = excluded.blake3_hash,
-            last_checked_at = excluded.last_checked_at",
-        params![file_path, mtime_nsec, file_size, blake3_hash, now],
-    )?;
+
+    // FR-005: dedupe on on-disk identity (dev/ino) when both are present, so the
+    // same file reached via different casings is one row. Fall back to the path.
+    let inserted = if let (Some(d), Some(i)) = (dev, ino) {
+        conn.execute(
+            "INSERT INTO source_documents (file_path, mtime_nsec, file_size, blake3_hash, last_checked_at, dev, ino)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(file_path) DO UPDATE SET
+                mtime_nsec = excluded.mtime_nsec,
+                file_size = excluded.file_size,
+                blake3_hash = excluded.blake3_hash,
+                last_checked_at = excluded.last_checked_at,
+                dev = excluded.dev,
+                ino = excluded.ino",
+            params![file_path, mtime_nsec, file_size, blake3_hash, now, d, i],
+        )
+    } else {
+        conn.execute(
+            "INSERT INTO source_documents (file_path, mtime_nsec, file_size, blake3_hash, last_checked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(file_path) DO UPDATE SET
+                mtime_nsec = excluded.mtime_nsec,
+                file_size = excluded.file_size,
+                blake3_hash = excluded.blake3_hash,
+                last_checked_at = excluded.last_checked_at",
+            params![file_path, mtime_nsec, file_size, blake3_hash, now],
+        )
+    };
+    inserted?;
+
+    // Re-key any duplicate casing row that now resolves to the same identity.
+    if let (Some(d), Some(i)) = (dev, ino) {
+        conn.execute(
+            "DELETE FROM source_documents
+             WHERE dev = ?1 AND ino = ?2 AND file_path <> ?3",
+            params![d, i, file_path],
+        )?;
+    }
 
     get_source_document_by_path(conn, file_path)?
         .ok_or_else(|| rusqlite::Error::QueryReturnedNoRows)
+}
+
+/// Updates a source document's `last_checked_at` to now (after a change check).
+pub fn touch_source_document(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE source_documents SET last_checked_at = ?1 WHERE id = ?2",
+        params![Utc::now().to_rfc3339(), id],
+    )?;
+    Ok(())
 }
 
 /// Fetches a source document by file path.
@@ -32,7 +72,7 @@ pub fn get_source_document_by_path(
     file_path: &str,
 ) -> Result<Option<SourceDocument>> {
     let mut stmt = conn.prepare(
-        "SELECT id, file_path, mtime_nsec, file_size, blake3_hash, last_checked_at
+        "SELECT id, file_path, mtime_nsec, file_size, blake3_hash, last_checked_at, dev, ino
          FROM source_documents WHERE file_path = ?1",
     )?;
 
@@ -50,6 +90,8 @@ pub fn get_source_document_by_path(
             file_size: row.get(3)?,
             blake3_hash: row.get(4)?,
             last_checked_at,
+            dev: row.get(6)?,
+            ino: row.get(7)?,
         }))
     } else {
         Ok(None)
@@ -70,6 +112,12 @@ pub fn insert_tracked_node(conn: &Connection, node: &TrackedNode) -> Result<()> 
             source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
         ON CONFLICT(id) DO UPDATE SET
+            value_kind = excluded.value_kind,
+            number_val = excluded.number_val,
+            date_val = excluded.date_val,
+            duration_secs = excluded.duration_secs,
+            source_doc_id = excluded.source_doc_id,
+            line_number = excluded.line_number,
             is_stale = excluded.is_stale,
             stale_reason = excluded.stale_reason,
             updated_at = excluded.updated_at",
@@ -147,19 +195,60 @@ pub fn get_tracked_node(conn: &Connection, id: &str) -> Result<Option<TrackedNod
 }
 
 /// Inserts a derivation edge between a parent node and a derived node.
+///
+/// Rejects (before writing) any edge that would create a cycle — including a
+/// self-loop — so the graph stays acyclic at the persistent write path, not
+/// only in the transient in-memory graph (FR-001).
 pub fn insert_derivation_edge(
     conn: &Connection,
     parent_id: &str,
     child_id: &str,
     operation_type: &str,
     expression: Option<&str>,
-) -> Result<()> {
+) -> Result<(), String> {
+    if parent_id == child_id {
+        return Err(format!(
+            "refusing to insert a self-loop derivation edge (parent == child == {})",
+            parent_id
+        ));
+    }
+
+    // A new edge `parent -> child` would close a cycle iff `parent` is already
+    // reachable from `child`. Check via a recursive CTE (UNION, so the
+    // recursion terminates even on a corrupted cyclic DB).
+    let mut stmt = conn
+        .prepare(
+            "WITH RECURSIVE reachable(id) AS (
+                 SELECT child_node_id FROM derivation_edges WHERE parent_node_id = ?1
+                 UNION
+                 SELECT e.child_node_id
+                   FROM derivation_edges e
+                   JOIN reachable r ON e.parent_node_id = r.id
+             )
+             SELECT 1 FROM reachable WHERE id = ?2 LIMIT 1",
+        )
+        .map_err(|e| format!("failed to prepare cycle check: {e}"))?;
+    let mut rows = stmt
+        .query(params![child_id, parent_id])
+        .map_err(|e| format!("failed to run cycle check: {e}"))?;
+    if rows
+        .next()
+        .map_err(|e| format!("failed to read cycle check: {e}"))?
+        .is_some()
+    {
+        return Err(format!(
+            "refusing to insert derivation edge {} -> {}: it would create a cycle",
+            parent_id, child_id
+        ));
+    }
+
     conn.execute(
         "INSERT INTO derivation_edges (parent_node_id, child_node_id, operation_type, expression)
          VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(parent_node_id, child_node_id) DO NOTHING",
         params![parent_id, child_id, operation_type, expression],
-    )?;
+    )
+    .map_err(|e| format!("failed to insert derivation edge: {e}"))?;
     Ok(())
 }
 
@@ -273,4 +362,38 @@ pub fn list_nodes_by_source_doc(conn: &Connection, source_doc_id: i64) -> Result
         }
     }
     Ok(nodes)
+}
+
+/// Reads a per-project setting (key/value), e.g. `number_format` (FR-003).
+pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
+    let mut stmt = conn.prepare("SELECT value FROM project_settings WHERE key = ?1")?;
+    let mut rows = stmt.query(params![key])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row.get(0)?)),
+        None => Ok(None),
+    }
+}
+
+/// Writes a per-project setting (upsert by key), e.g. `number_format` (FR-003).
+pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO project_settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+/// Deletes obsolete nodes — stale nodes with no derived dependents (not a
+/// parent in any `derivation_edges` row) — and returns the number deleted
+/// (FR-003). The caller owns the transaction; deleting a node cascades to its
+/// own `derivation_edges` rows via `ON DELETE CASCADE`.
+pub fn delete_obsolete_nodes(conn: &Connection) -> Result<usize> {
+    let count = conn.execute(
+        "DELETE FROM tracked_nodes
+         WHERE is_stale = 1
+           AND id NOT IN (SELECT parent_node_id FROM derivation_edges)",
+        [],
+    )?;
+    Ok(count)
 }

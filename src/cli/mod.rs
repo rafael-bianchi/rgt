@@ -1,4 +1,6 @@
 pub mod derive;
+pub mod doctor;
+pub mod gc;
 pub mod graph;
 pub mod init;
 pub mod query;
@@ -7,6 +9,8 @@ pub mod status;
 pub mod update;
 
 pub use derive::*;
+pub use doctor::*;
+pub use gc::*;
 pub use graph::*;
 pub use init::*;
 pub use query::*;

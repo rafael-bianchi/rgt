@@ -1,5 +1,44 @@
 use rusqlite::{Connection, Result};
 
+/// The current supported store schema version, tracked via SQLite's
+/// `PRAGMA user_version` (FR-001). Version 1 is the initial versioned schema;
+/// future schema changes bump this and append to the migration list.
+pub const SCHEMA_VERSION: i32 = 1;
+
+/// Reads the store's recorded schema version (`PRAGMA user_version`).
+pub fn schema_version(conn: &Connection) -> Result<i32> {
+    conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+}
+
+/// Stamps or migrates the store's schema version (FR-001/FR-002):
+/// - `0` (unversioned, fresh or pre-029 store) → stamped to `SCHEMA_VERSION`;
+/// - `== SCHEMA_VERSION` → no-op;
+/// - `< SCHEMA_VERSION` → applies the ordered migrations for that range;
+/// - `> SCHEMA_VERSION` → error (a newer store cannot be opened by this build).
+pub fn stamp_or_migrate_schema(conn: &Connection) -> Result<()> {
+    let current = schema_version(conn)?;
+    if current > SCHEMA_VERSION {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(1),
+            Some(format!(
+                "store schema version {} is newer than this build supports (max {}); upgrade `rgt`",
+                current, SCHEMA_VERSION
+            )),
+        ));
+    }
+    if current == SCHEMA_VERSION {
+        return Ok(());
+    }
+    // Ordered, idempotent migrations from `current` up to `SCHEMA_VERSION`.
+    // The list is currently empty (SCHEMA_VERSION == 1 and `0` is a backfill
+    // stamp, not a migration); a future bump appends migrations here. Each
+    // migration runs inside the caller's transaction and bumps `user_version`.
+    if current == 0 {
+        conn.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION))?;
+    }
+    Ok(())
+}
+
 /// Initializes the SQLite schema (WAL mode, tables, indexes) idempotently.
 pub fn initialize_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -13,7 +52,9 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
             mtime_nsec INTEGER NOT NULL,
             file_size INTEGER NOT NULL,
             blake3_hash TEXT NOT NULL,
-            last_checked_at TEXT NOT NULL
+            last_checked_at TEXT NOT NULL,
+            dev INTEGER,
+            ino INTEGER
         );
 
         CREATE INDEX IF NOT EXISTS idx_source_documents_path 
@@ -40,13 +81,19 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_tracked_nodes_stale 
         ON tracked_nodes(is_stale);
 
+        CREATE TABLE IF NOT EXISTS project_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS derivation_edges (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             parent_node_id TEXT NOT NULL REFERENCES tracked_nodes(id) ON DELETE CASCADE,
             child_node_id TEXT NOT NULL REFERENCES tracked_nodes(id) ON DELETE CASCADE,
             operation_type TEXT NOT NULL,
             expression TEXT,
-            UNIQUE(parent_node_id, child_node_id)
+            UNIQUE(parent_node_id, child_node_id),
+            CHECK(parent_node_id <> child_node_id)
         );
 
         CREATE INDEX IF NOT EXISTS idx_derivation_edges_parent 
@@ -56,5 +103,32 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
         ON derivation_edges(child_node_id);
         ",
     )?;
+
+    // Idempotently add the on-disk identity columns to pre-existing databases
+    // (additive `ALTER TABLE ... ADD COLUMN`, guarded by PRAGMA table_info), then
+    // index them. The index must come after the columns exist.
+    ensure_column(conn, "source_documents", "dev", "INTEGER")?;
+    ensure_column(conn, "source_documents", "ino", "INTEGER")?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_source_documents_identity
+         ON source_documents(dev, ino);",
+    )?;
+    Ok(())
+}
+
+/// Adds a column to a table if it does not already exist (idempotent, additive).
+fn ensure_column(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+    let exists: bool = conn
+        .prepare(&format!("PRAGMA table_info({})", table))?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .iter()
+        .any(|name| name == column);
+    if !exists {
+        conn.execute_batch(&format!(
+            "ALTER TABLE {} ADD COLUMN {} {}",
+            table, column, decl
+        ))?;
+    }
     Ok(())
 }

@@ -1,7 +1,7 @@
 use crate::store::queries::{get_tracked_node, insert_derivation_edge, insert_tracked_node};
 use crate::store::DbStore;
 use crate::types::{NodeType, TrackedNode, ValueData};
-use crate::verify::verify;
+use crate::verify::{valid_operation, validate_expression, verify, MAX_PARENTS};
 use chrono::Duration;
 use std::process;
 
@@ -11,6 +11,28 @@ pub fn execute_derive(
     expression: Option<&str>,
     result: f64,
 ) -> Result<(), String> {
+    // FR-002 / FR-001 / FR-005: validate operation, expression (for
+    // EXPRESSION), and parent count up front — invalid input is exit 2, never
+    // a silent skip, and never a record of an unverified value.
+    if !valid_operation(operation) {
+        eprintln!(
+            "Error: unknown operation '{}' — valid operations: EXPRESSION, DATE_DIFF",
+            operation
+        );
+        process::exit(2);
+    }
+    if operation == "EXPRESSION" {
+        if let Some(expr) = expression {
+            if let Err(e) = validate_expression(expr) {
+                eprintln!("Error: invalid --expression: {}", e);
+                process::exit(2);
+            }
+        } else {
+            eprintln!("Error: Missing --expression for EXPRESSION operation");
+            process::exit(2);
+        }
+    }
+
     let parent_ids: Vec<String> = parents
         .split(',')
         .map(|s| s.trim().to_string())
@@ -19,6 +41,14 @@ pub fn execute_derive(
 
     if parent_ids.is_empty() {
         eprintln!("Error: --parents must contain at least one node ID");
+        process::exit(2);
+    }
+    if parent_ids.len() > MAX_PARENTS {
+        eprintln!(
+            "Error: at most {} parents supported (variables a-z), got {}",
+            MAX_PARENTS,
+            parent_ids.len()
+        );
         process::exit(2);
     }
 
@@ -42,12 +72,7 @@ pub fn execute_derive(
     }
 
     match operation {
-        "EXPRESSION" => {
-            if expression.is_none() {
-                eprintln!("Error: Missing --expression for EXPRESSION operation");
-                process::exit(2);
-            }
-        }
+        "EXPRESSION" => {}
         "DATE_DIFF" => {
             if parent_ids.len() != 2 {
                 eprintln!(
@@ -57,13 +82,7 @@ pub fn execute_derive(
                 process::exit(2);
             }
         }
-        _ => {
-            eprintln!(
-                "Warning: operation '{}' is not verifiable — skipping verification",
-                operation
-            );
-            return Ok(());
-        }
+        _ => unreachable!("valid_operation rejected above"),
     }
 
     match verify(&parent_values, operation, expression, result) {
@@ -106,8 +125,7 @@ pub fn execute_derive(
         .map_err(|e| format!("failed to insert derived node: {}", e))?;
 
     for pid in &parent_ids {
-        insert_derivation_edge(conn, pid, &node_id, operation, expression)
-            .map_err(|e| format!("failed to insert derivation edge: {}", e))?;
+        insert_derivation_edge(conn, pid, &node_id, operation, expression)?;
     }
 
     println!("Derived node: {}", node_id);

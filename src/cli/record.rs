@@ -1,6 +1,6 @@
-use crate::detection::{compute_blake3_hash, get_metadata_snapshot};
-use crate::hooks::parser::extract_values_from_content;
-use crate::store::queries::{insert_tracked_node, upsert_source_document};
+use crate::detection::{compute_blake3_hash_from_bytes, get_metadata_snapshot};
+use crate::hooks::parser::{extract_values_from_content, NumberFormat};
+use crate::store::queries::{get_setting, insert_tracked_node, upsert_source_document};
 use crate::store::DbStore;
 use crate::types::{NodeType, TrackedNode};
 use chrono::Utc;
@@ -10,36 +10,86 @@ use std::path::Path;
 
 const VALUE_LIMIT: usize = 10_000;
 
-pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
+/// Resolves the active number format: an explicit CLI flag wins, then the
+/// persisted `number_format` setting, then `Auto` (FR-003).
+pub fn resolve_number_format(
+    conn: &rusqlite::Connection,
+    explicit: Option<NumberFormat>,
+) -> NumberFormat {
+    if let Some(f) = explicit {
+        return f;
+    }
+    match get_setting(conn, "number_format") {
+        Ok(Some(raw)) => raw.parse().unwrap_or(NumberFormat::Auto),
+        _ => NumberFormat::Auto,
+    }
+}
+
+/// Decodes `bytes` as UTF-8, or returns an explicit "unsupported file format"
+/// error for binary/non-UTF-8 content (FR-001) instead of a raw UTF-8 decode
+/// error. Covers both file reads and `--stdin`.
+fn read_utf8_content(source: &str, bytes: Vec<u8>) -> Result<String, String> {
+    String::from_utf8(bytes).map_err(|_| {
+        format!(
+            "unsupported file format for `rgt record` at `{}`: expected plain text/CSV. \
+             PDF, Excel, and other binary files are not natively parsed — use your AI agent's \
+             own read/extraction tool (its output is captured automatically) or convert to text first.",
+            source
+        )
+    })
+}
+
+pub fn execute_record(
+    file: &str,
+    stdin: bool,
+    explicit_format: Option<NumberFormat>,
+) -> Result<(), String> {
     let path_obj = Path::new(file);
 
     if !path_obj.exists() {
         return Err(format!("file not found: {}", file));
     }
 
-    let content = if stdin {
-        let mut buf = String::new();
+    // FR-002: hash the exact in-memory bytes that are parsed for values (no
+    // second file read — avoids the §7.4 TOCTOU between extraction and hashing).
+    let (content, hash) = if stdin {
+        let mut buf = Vec::new();
         io::stdin()
-            .read_to_string(&mut buf)
+            .read_to_end(&mut buf)
             .map_err(|e| format!("failed to read stdin: {}", e))?;
-        buf
+        let hash = compute_blake3_hash_from_bytes(&buf);
+        let content = read_utf8_content(file, buf)?;
+        (content, hash)
     } else {
-        fs::read_to_string(file).map_err(|e| format!("failed to read file: {}", e))?
+        let bytes = fs::read(file).map_err(|e| format!("failed to read file: {}", e))?;
+        let hash = compute_blake3_hash_from_bytes(&bytes);
+        let content = read_utf8_content(file, bytes)?;
+        (content, hash)
     };
 
     let meta =
         get_metadata_snapshot(path_obj).map_err(|e| format!("failed to get metadata: {}", e))?;
-    let hash =
-        compute_blake3_hash(path_obj).map_err(|e| format!("failed to compute hash: {}", e))?;
 
     let mut db =
         DbStore::open_in_project(".").map_err(|e| format!("failed to open database: {}", e))?;
     let conn = db.conn_mut();
 
-    let doc = upsert_source_document(conn, file, meta.mtime_nsec, meta.file_size, &hash)
-        .map_err(|e| format!("failed to upsert source document: {}", e))?;
+    let number_format = resolve_number_format(conn, explicit_format);
 
-    let mut extracted = extract_values_from_content(&content);
+    let doc = upsert_source_document(
+        conn,
+        file,
+        meta.mtime_nsec,
+        meta.file_size,
+        &hash,
+        meta.dev,
+        meta.ino,
+    )
+    .map_err(|e| format!("failed to upsert source document: {}", e))?;
+
+    let extraction = extract_values_from_content(&content, number_format);
+    let skipped_malformed = extraction.skipped_malformed;
+    let mut extracted = extraction.values;
 
     let mut skipped = false;
     if extracted.len() > VALUE_LIMIT {
@@ -55,7 +105,8 @@ pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
         .map_err(|e| format!("failed to begin transaction: {}", e))?;
 
     for ext in &extracted {
-        let node_id = TrackedNode::generate_root_id(file, ext.line_number, &ext.value);
+        let node_id =
+            TrackedNode::generate_root_id(file, ext.line_number, ext.occurrence, &ext.value);
         let node = TrackedNode {
             id: node_id,
             node_type: NodeType::Root,
@@ -79,6 +130,15 @@ pub fn execute_record(file: &str, stdin: bool) -> Result<(), String> {
         eprintln!(
             "Warning: value limit ({}) reached, excess values skipped for {}",
             VALUE_LIMIT, file
+        );
+    }
+
+    if skipped_malformed > 0 {
+        println!(
+            "Warning: {} number(s) in {} could not be parsed as {} and were skipped (not split into bogus nodes)",
+            skipped_malformed,
+            file,
+            number_format.as_str()
         );
     }
 

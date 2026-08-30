@@ -27,3 +27,6 @@ Thumbs.db
 .kilocode/
 .specify/
 .agents/
+
+# Local design specs (kept out of the public repo)
+specs/

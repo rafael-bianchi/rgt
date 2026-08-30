@@ -8,6 +8,7 @@ mod types;
 mod updater;
 mod verify;
 
+use crate::hooks::parser::NumberFormat;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -22,8 +23,10 @@ struct Cli {
 enum Commands {
     /// Initialize RGT project tracking and configure AI agent hooks
     Init {
-        /// Detect and configure global hooks for Claude Code, Cursor (full hook), Windsurf
-        /// (rules-file) and Codex CLI (rules-file)
+        /// Detect and configure global hooks. Agents: Claude Code, Cursor,
+        /// Copilot, Gemini, Mistral Vibe (full hook); OpenCode, Pi, Hermes
+        /// (plugin); Windsurf, Codex CLI, Cline/Roo Code, Antigravity, Kilo
+        /// (rules-file).
         #[arg(short = 'g', long)]
         global: bool,
 
@@ -31,9 +34,15 @@ enum Commands {
         #[arg(long)]
         force: bool,
 
-        /// Target a specific agent: claude-code, cursor (full hook), windsurf, codex (rules-file). Detects all if omitted.
+        /// Target a specific agent: claude-code, cursor, codex, windsurf,
+        /// copilot, gemini, vibe, opencode, pi, hermes, cline, antigravity,
+        /// kilocode (or aliases claude, roo-code, kilo). Detects all if omitted.
         #[arg(long)]
         agent: Option<String>,
+
+        /// Number parsing locale: us, eu, or auto. Persisted for the passive hook path.
+        #[arg(long, value_parser = ["us", "eu", "auto"])]
+        number_format: Option<String>,
     },
     /// Inspect provenance graph status, active nodes, and stale values
     Status {
@@ -64,6 +73,12 @@ enum Commands {
     Hook {
         /// Hook event type: pre or post
         event: String,
+
+        /// Target agent stdin dialect: claude-code, cursor, codex, windsurf,
+        /// copilot, gemini, vibe, opencode, pi, hermes, cline, antigravity,
+        /// kilocode (or aliases claude, roo-code, kilo). Omitted = Claude Code format.
+        #[arg(long)]
+        agent: Option<String>,
     },
     /// Check for and install binary updates from GitHub Releases
     Update {
@@ -78,6 +93,22 @@ enum Commands {
         /// Target a specific release version tag
         #[arg(long)]
         version: Option<String>,
+
+        /// Skip SHA-256 checksum verification (INSECURE — never the default)
+        #[arg(long)]
+        skip_checksum: bool,
+
+        /// Skip GitHub Artifact Attestation verification (INSECURE — never the default)
+        #[arg(long)]
+        skip_attestation: bool,
+    },
+    /// Diagnose hook installation and capture health (0 = healthy/warnings, 1 = error)
+    Doctor,
+    /// Remove obsolete (stale, dependent-free) nodes from the provenance graph
+    Gc {
+        /// Reclaim physical disk space with VACUUM after collection
+        #[arg(long)]
+        vacuum: bool,
     },
     /// Verify that a derived value matches its parent nodes
     Verify {
@@ -105,6 +136,10 @@ enum Commands {
         /// Read file content from stdin instead of disk (path still required for node IDs)
         #[arg(long)]
         stdin: bool,
+
+        /// Number parsing locale: us, eu, or auto (defaults to persisted setting, then auto)
+        #[arg(long, value_parser = ["us", "eu", "auto"])]
+        number_format: Option<String>,
     },
     /// Verify and record a derived value from parent nodes
     Derive {
@@ -126,6 +161,13 @@ enum Commands {
     },
 }
 
+/// Maps a validated `--number-format` literal to a `NumberFormat` (clap's
+/// `value_parser` already restricts the input to us/eu/auto, so this is
+/// infallible). `None` means the caller falls back to setting/auto.
+fn parse_number_format(s: Option<&str>) -> Option<NumberFormat> {
+    s.and_then(|raw| raw.parse().ok())
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -135,12 +177,22 @@ async fn main() {
             global,
             force,
             agent,
-        } => cli::execute_init(global, force, agent.as_deref()),
+            number_format,
+        } => match cli::resolve_agent_arg(agent.as_deref()) {
+            Ok(resolved) => {
+                let fmt = parse_number_format(number_format.as_deref());
+                cli::execute_init(global, force, resolved.as_deref(), fmt)
+            }
+            Err(msg) => {
+                eprintln!("Error: {}", msg);
+                std::process::exit(2);
+            }
+        },
         Commands::Status { stale_only, json } => cli::execute_status(stale_only, json),
         Commands::Query { node_id, json } => cli::execute_query(&node_id, json),
         Commands::Graph { format } => cli::execute_graph(&format),
-        Commands::Hook { event } => {
-            if let Err(e) = hooks::handle_passive_hook_event(&event) {
+        Commands::Hook { event, agent } => {
+            if let Err(e) = hooks::handle_passive_hook_event(&event, agent.as_deref()) {
                 eprintln!("Hook warning: {}", e);
             }
             Ok(())
@@ -149,7 +201,23 @@ async fn main() {
             check,
             yes,
             version,
-        } => cli::execute_update(check, yes, version),
+            skip_checksum,
+            skip_attestation,
+        } => match cli::execute_update(check, yes, version, skip_checksum, skip_attestation) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                eprintln!("Error: {}", e.message);
+                std::process::exit(e.code);
+            }
+        },
+        Commands::Doctor => match cli::execute_doctor() {
+            Ok(code) => std::process::exit(code),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        },
+        Commands::Gc { vacuum } => cli::execute_gc(vacuum),
         Commands::Verify {
             parents,
             operation,
@@ -159,7 +227,11 @@ async fn main() {
             crate::verify::run_verify_cli(&parents, &operation, expression.as_deref(), result);
             Ok(())
         }
-        Commands::Record { file, stdin } => cli::execute_record(&file, stdin),
+        Commands::Record {
+            file,
+            stdin,
+            number_format,
+        } => cli::execute_record(&file, stdin, parse_number_format(number_format.as_deref())),
         Commands::Derive {
             parents,
             operation,
