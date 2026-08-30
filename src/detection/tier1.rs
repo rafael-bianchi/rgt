@@ -34,7 +34,10 @@ pub fn get_metadata_snapshot<P: AsRef<Path>>(path: P) -> io::Result<MetadataSnap
             .unwrap_or_default();
         let mtime_nsec = duration.as_nanos() as i64;
 
-        #[cfg(windows)]
+        // `volume_serial_number`/`file_index` (`windows_by_handle`) are stable
+        // only on the MSVC target; the GNU target compiles on stable by falling
+        // back to no on-disk identity (path-based dedup).
+        #[cfg(all(windows, target_env = "msvc"))]
         let (dev, ino) = {
             use std::os::windows::fs::MetadataExt;
             (
@@ -42,7 +45,7 @@ pub fn get_metadata_snapshot<P: AsRef<Path>>(path: P) -> io::Result<MetadataSnap
                 meta.file_index(),
             )
         };
-        #[cfg(not(windows))]
+        #[cfg(not(all(windows, target_env = "msvc")))]
         let (dev, ino) = (None, None);
 
         (mtime_nsec, dev, ino)
