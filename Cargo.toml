@@ -119,6 +119,10 @@ name = "test_doctor_contract"
 path = "tests/contract/test_doctor_contract.rs"
 
 [[test]]
+name = "test_store_maintenance_contract"
+path = "tests/contract/test_store_maintenance_contract.rs"
+
+[[test]]
 name = "test_distribution_quickstart"
 path = "tests/integration/test_distribution_quickstart.rs"
 

@@ -1,5 +1,44 @@
 use rusqlite::{Connection, Result};
 
+/// The current supported store schema version, tracked via SQLite's
+/// `PRAGMA user_version` (FR-001). Version 1 is the initial versioned schema;
+/// future schema changes bump this and append to the migration list.
+pub const SCHEMA_VERSION: i32 = 1;
+
+/// Reads the store's recorded schema version (`PRAGMA user_version`).
+pub fn schema_version(conn: &Connection) -> Result<i32> {
+    conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+}
+
+/// Stamps or migrates the store's schema version (FR-001/FR-002):
+/// - `0` (unversioned, fresh or pre-029 store) → stamped to `SCHEMA_VERSION`;
+/// - `== SCHEMA_VERSION` → no-op;
+/// - `< SCHEMA_VERSION` → applies the ordered migrations for that range;
+/// - `> SCHEMA_VERSION` → error (a newer store cannot be opened by this build).
+pub fn stamp_or_migrate_schema(conn: &Connection) -> Result<()> {
+    let current = schema_version(conn)?;
+    if current > SCHEMA_VERSION {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(1),
+            Some(format!(
+                "store schema version {} is newer than this build supports (max {}); upgrade `rgt`",
+                current, SCHEMA_VERSION
+            )),
+        ));
+    }
+    if current == SCHEMA_VERSION {
+        return Ok(());
+    }
+    // Ordered, idempotent migrations from `current` up to `SCHEMA_VERSION`.
+    // The list is currently empty (SCHEMA_VERSION == 1 and `0` is a backfill
+    // stamp, not a migration); a future bump appends migrations here. Each
+    // migration runs inside the caller's transaction and bumps `user_version`.
+    if current == 0 {
+        conn.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION))?;
+    }
+    Ok(())
+}
+
 /// Initializes the SQLite schema (WAL mode, tables, indexes) idempotently.
 pub fn initialize_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(

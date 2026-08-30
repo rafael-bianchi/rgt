@@ -383,3 +383,17 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
     )?;
     Ok(())
 }
+
+/// Deletes obsolete nodes — stale nodes with no derived dependents (not a
+/// parent in any `derivation_edges` row) — and returns the number deleted
+/// (FR-003). The caller owns the transaction; deleting a node cascades to its
+/// own `derivation_edges` rows via `ON DELETE CASCADE`.
+pub fn delete_obsolete_nodes(conn: &Connection) -> Result<usize> {
+    let count = conn.execute(
+        "DELETE FROM tracked_nodes
+         WHERE is_stale = 1
+           AND id NOT IN (SELECT parent_node_id FROM derivation_edges)",
+        [],
+    )?;
+    Ok(count)
+}

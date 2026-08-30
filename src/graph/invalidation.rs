@@ -6,6 +6,7 @@ use crate::store::queries::{
 use crate::store::DbStore;
 use chrono::{DateTime, Utc};
 use rusqlite::Result;
+use std::collections::HashSet;
 use std::path::Path;
 
 pub struct InvalidationCascade {
@@ -60,20 +61,22 @@ impl InvalidationCascade {
         };
 
         let root_nodes = list_nodes_by_source_doc(conn, doc.id)?;
-        let mut total_invalidated = 0;
+        // FR-005: count each distinct node exactly once — a downstream node
+        // reachable from multiple stale roots must not inflate the count.
+        let mut invalidated: HashSet<String> = HashSet::new();
 
         for root in root_nodes {
+            invalidated.insert(root.id.clone());
             mark_node_stale(conn, &root.id, stale_reason)?;
-            total_invalidated += 1;
 
             let downstream = self.engine.get_downstream_dependents(&root.id);
             for child_id in downstream {
+                invalidated.insert(child_id.clone());
                 mark_node_stale(conn, &child_id, "PARENT_NODE_STALE")?;
-                total_invalidated += 1;
             }
         }
 
-        Ok(total_invalidated)
+        Ok(invalidated.len())
     }
 
     pub fn evaluate_and_invalidate_all<P: AsRef<Path>>(
