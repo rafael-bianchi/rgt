@@ -83,15 +83,17 @@ fn rgt_policy_targets_rgt_repo() {
 
 /// Verifies the production policy against a REAL `rafael-bianchi/rgt`
 /// attestation (convergence task T024). Skipped until the first attested
-/// release ships and `tests/fixtures/rgt/` is populated (see the fixture
-/// README for the capture procedure).
+/// release ships — run `scripts/capture-rgt-attestation-fixture.sh vX.Y.Z`
+/// against it (see SECURITY.md "Remediation trigger" and the fixture README),
+/// then this test verifies the bundle against the production policy for real.
 #[test]
 fn verifies_real_rgt_bundle_when_fixture_present() {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rgt");
     let bundle_path = dir.join("rgt-bundle.json");
     if !bundle_path.exists() {
         eprintln!(
-            "skipping: no real rgt attestation fixture yet (T024, gated on first attested release)"
+            "skipping: no real rgt attestation fixture yet. Once an attested release ships, \
+             run `scripts/capture-rgt-attestation-fixture.sh vX.Y.Z` (see SECURITY.md) to capture it."
         );
         return;
     }
