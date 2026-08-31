@@ -149,6 +149,8 @@ rgt graph --format ttl      # exporta Turtle PROV-O
 Três estratégias mantêm o grafo confiável:
 
 1. **Captura**: hooks/plugins nativos encaminham cada arquivo que um agente lê por meio do `rgt record`; assim, os valores entram no grafo sem o agente precisar se lembrar de chamá-lo.
+
+> **Fontes não textuais (PDF, Excel, imagens)**: o hook passivo do RGT não consegue ver dentro de arquivos binários — a interpretação de PDF/imagem acontece dentro do próprio modelo, nunca como um arquivo de texto local. As instruções que o RGT escreve para os agentes orientam-nos a reportar explicitamente esses valores via `echo "Valor: 1234.56" | rgt record --stdin` (ou um arquivo `.txt`/`.md` intermediário). Arquivos de texto puro/CSV/JSON/Markdown não exigem nenhuma ação — são capturados automaticamente. `rgt record` em um arquivo binário retorna um erro claro de "formato de arquivo não suportado" indicando esse caminho.
 2. **Verificação**: cada `rgt derive` aplica o princípio "confie, mas verifique": o RGT recalcula o resultado a partir dos valores pai e rejeita os errados antes da inserção.
 3. **Obsolescência**: quando um arquivo de origem muda, seus nós (e tudo o que deles deriva) são marcados como obsoletos, permitindo orientar o agente a reler o arquivo.
 
@@ -156,23 +158,50 @@ Três estratégias mantêm o grafo confiável:
 
 ### Inicialização e hooks
 ```bash
-rgt init [-g] [--force] [--agent <name>]   # configura hooks, detecta agentes instalados
+rgt init [-g] [--force] [--agent <name>] [--number-format <us|eu|auto>]  # configura hooks, detecta agentes instalados
 rgt hook pre|post [--agent <name>]         # captura passiva do JSON de evento do agente (stdin)
 ```
 
+`--number-format` persiste a localidade usada para analisar números (separadores `.`/`,` e sinais) para o caminho do hook passivo. Valores válidos: `us` (decimal `.`, milhares `,`), `eu` (decimal `,`, milhares `.`) ou `auto` (inferido por arquivo — o padrão).
+
+`rgt init` **nunca destrói sua configuração existente**. Ele mescla as entradas de hook do RGT na configuração do seu agente de forma aditiva — arquivos JSON/JSONC (comentários e vírgulas finais são tolerados e preservados), configurações TOML e arquivos de regras mantêm todos os outros hooks, atalhos, plugins e anotações byte a byte. Reexecutar sem `--force` é um no-op; `--force` atualiza apenas o bloco delimitado do RGT. Se um arquivo de configuração não puder ser analisado ou mesclado com segurança, esse agente é reportado com um erro recuperável e uma saída não nula — os demais agentes ainda são configurados, e um backup `<arquivo>.rgt.bak` é mantido antes de qualquer reescrita de um arquivo existente.
+Códigos de saída: `0` = sucesso, `1` = pelo menos um agente falhou, `2` = nome de `--agent` inválido.
+
+`rgt init` grava comandos de hook que invocam o CLI por **caminho absoluto** (resolvido a partir do binário em execução), de modo que a captura não dependa do PATH do shell que sua ferramenta de IA inicia. Se você mover o binário (ex.: uma atualização do gerenciador de pacotes o instala em outro caminho), execute `rgt init` novamente para atualizar os caminhos gravados.
+
+### Doctor
+
+```bash
+rgt doctor   # diagnostica a instalação de hooks e a saúde da captura
+```
+
+`rgt doctor` é um diagnóstico no estilo do `brew doctor`. Saída `0` quando saudável ou com avisos de orientação, `1` diante de problemas inequívocos (ex.: o armazenamento não está inicializado). Quando há hooks instalados mas nenhum valor foi registrado, ele avisa que a captura pode não estar ativa e pede para verificar se `rgt` é resolvível no contexto de shell que sua ferramenta de IA usa (os subprocessos de hook falham sem bloquear, então um PATH quebrado não registra nada silenciosamente).
+
+### Atualização
+```bash
+rgt update [--check] [--yes] [--version <tag>] [--skip-checksum] [--skip-attestation]
+```
+
+`rgt update` só instala binários **verificados**: cada download é conferido contra o `checksums.txt` da release (SHA-256) **e** a sua GitHub Artifact Attestation — uma âncora de confiança emitida independentemente dos próprios artefatos da release (verificação Sigstore integrada, sem `gh`). Uma release sem qualquer uma das duas verificações é recusada com saída não nula; `--skip-checksum` / `--skip-attestation` são opt-outs explícitos, documentados como inseguros, nunca o padrão. A comparação de versões usa versionamento semântico: um tag mais antigo ou igual nunca é instalado (sem downgrades silenciosos), e `--version <tag>` avisa quando o tag solicitado é mais antigo que a versão instalada.
+
 ### Procedência
 ```bash
-rgt record <file>                          # extrai e rastreia valores de um arquivo
+rgt record <file> [--number-format <us|eu|auto>]   # extrai e rastreia valores de um arquivo
 rgt derive --parents <ids> --operation <op> --expression <expr> --result <val>
-                                           # verifica e registra uma derivação
+                                            # verifica e registra uma derivação
 rgt verify --parents <ids> --operation <op> --result <val>
-                                           # verifica um valor derivado sem registrar
+                                            # verifica um valor derivado sem registrar
 rgt status [--stale-only] [--json]         # estado do grafo e obsolescência
 rgt query <node_id> [--json]               # linhagem completa de um valor
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # exporta o grafo
+rgt gc [--vacuum]                          # remove nós obsoletos (obsoletos, sem dependentes)
 ```
 
-Operações: `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM` e `DURATION_AVG`. `DATE_DIFF` calcula automaticamente o tempo decorrido entre duas datas ordenadas; soma e média aceitam de 2 a 26 Durações distintas. Os resultados são armazenados como segundos inteiros exatos. A média que não resulta em um segundo inteiro é rejeitada.
+`rgt record --number-format` substitui o formato persistido por uma chamada; caso contrário, a configuração persistida (do `rgt init`) é usada, com fallback para `auto`. A análise de números é sensível à localidade: um `-` inicial e os parênteses contábeis `(N)` fazem parte do valor, separadores de milhares/decimal são respeitados conforme o formato ativo, e valores que não podem ser analisados nesse formato são ignorados (com aviso) em vez de divididos em nós incorretos.
+
+`rgt gc` remove os **nós obsoletos** — valores marcados como obsoletos dos quais nada deriva — e informa quantos removeu. Ele nunca toca em nós não obsoletos nem em nada ainda dependido. `rgt gc --vacuum` adicionalmente recupera as páginas de disco liberadas com `VACUUM` do SQLite (opcional; a execução padrão só exclui linhas).
+
+Operações: `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM` e `DURATION_AVG`. `DATE_DIFF` calcula automaticamente o tempo decorrido entre duas datas ordenadas; soma e média aceitam de 2 a 26 Durações distintas. Os resultados são armazenados como segundos inteiros exatos. A média que não resulta em um segundo inteiro é rejeitada. As variáveis pai correspondem a `parent[0]=a, parent[1]=b, ...` (no máximo 26, `a`–`z`).
 
 As unidades fixas de exibição são `seconds`, `minutes`, `hours`, `days` e `weeks`; meses e anos de calendário não são aceitos. `--result-unit` qualifica o valor informado, enquanto `--unit` só altera a exibição. Por exemplo:
 
@@ -183,6 +212,8 @@ rgt query <duration_id> --unit days [--json]
 ```
 
 A consulta mantém `value` e acrescenta `duration_seconds` exato como texto e `selected_unit_display` apenas ao nó solicitado. Conversões decimais repetidas são marcadas como aproximadas; os segundos continuam exatos. `EXPRESSION` com datas usa segundos Unix e com Durações usa segundos decorridos, retorna um Number e emite um aviso.
+
+`--operation` diferencia maiúsculas de minúsculas (`EXPRESSION`/`DATE_DIFF`/`DURATION_SUM`/`DURATION_AVG`); qualquer outra coisa é rejeitada com o código de saída 2 — a verificação nunca é ignorada silenciosamente. `--expression` é limitada a 4096 bytes e 256 níveis de aninhamento de parênteses (entrada acima do limite é rejeitada com o código 2, nunca uma quebra). As expressões são avaliadas com as funções integradas desabilitadas — apenas suas variáveis pai e `+ - * / % ^` e parênteses estão disponíveis, então a avaliação é determinística.
 
 ## Ferramentas de IA compatíveis
 

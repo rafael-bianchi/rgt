@@ -149,6 +149,8 @@ rgt graph --format ttl      # exportez le graphe en Turtle PROV-O
 Trois stratégies garantissent la fiabilité du graphe :
 
 1. **Capture** : les hooks/plugins natifs transmettent chaque fichier lu par un agent à `rgt record`, si bien que les valeurs entrent dans le graphe sans que l'agent ait à y penser.
+
+> **Sources non textuelles (PDF, Excel, images)** : le hook passif de RGT ne peut pas voir à l'intérieur des fichiers binaires — l'interprétation PDF/image se fait à l'intérieur du modèle lui-même, jamais sous forme de fichier texte local. Les instructions que RGT écrit pour les agents leur demandent de rapporter explicitement ces valeurs via `echo "Montant : 1234.56" | rgt record --stdin` (ou un fichier `.txt`/`.md` intermédiaire). Les fichiers texte brut/CSV/JSON/Markdown ne nécessitent aucune action — ils sont capturés automatiquement. `rgt record` sur un fichier binaire renvoie une erreur claire « format de fichier non pris en charge » indiquant cette voie.
 2. **Vérification** : chaque `rgt derive` applique le principe « faire confiance, mais vérifier » : RGT recalcule le résultat à partir des valeurs parentes et rejette les valeurs incorrectes avant leur insertion.
 3. **Obsolescence** : quand un fichier source change, ses nœuds (et tout ce qui en est dérivé) sont marqués obsolètes, ce qui permet de demander à l'agent de relire le fichier.
 
@@ -156,23 +158,50 @@ Trois stratégies garantissent la fiabilité du graphe :
 
 ### Initialisation et hooks
 ```bash
-rgt init [-g] [--force] [--agent <name>]   # configure les hooks, détecte les agents installés
+rgt init [-g] [--force] [--agent <name>] [--number-format <us|eu|auto>]  # configure les hooks, détecte les agents installés
 rgt hook pre|post [--agent <name>]         # capture passive depuis le JSON d'événement de l'agent (stdin)
 ```
 
+`--number-format` enregistre la locale utilisée pour analyser les nombres (séparateurs `.`/`,` et signes) pour le chemin du hook passif. Valeurs valides : `us` (décimale `.`, milliers `,`), `eu` (décimale `,`, milliers `.`) ou `auto` (déduite par fichier — la valeur par défaut).
+
+`rgt init` **ne détruit jamais votre configuration existante**. Il fusionne les entrées de hook de RGT dans la configuration de votre agent de manière additive — les fichiers JSON/JSONC (commentaires et virgules finales tolérés et préservés), les configurations TOML et les fichiers de règles conservent chaque autre hook, raccourci clavier, plugin et note octet pour octet. Ré-exécuter sans `--force` est sans effet ; `--force` actualise uniquement le bloc délimité de RGT. Si un fichier de configuration ne peut pas être analysé ou fusionné en toute sécurité, cet agent est signalé avec une erreur récupérable et une sortie non nulle — les autres agents sont quand même configurés, et une sauvegarde `<fichier>.rgt.bak` est conservée avant toute réécriture d'un fichier existant.
+Codes de sortie : `0` = succès, `1` = au moins un agent a échoué, `2` = nom `--agent` invalide.
+
+`rgt init` écrit des commandes de hook qui invoquent le CLI par **chemin absolu** (résolu depuis le binaire en cours d'exécution), afin que la capture ne dépende pas du PATH du shell que votre outil IA lance. Si vous déplacez le binaire (ex. une mise à jour du gestionnaire de paquets l'installe ailleurs), ré-exécutez `rgt init` pour actualiser les chemins écrits.
+
+### Doctor
+
+```bash
+rgt doctor   # diagnostique l'installation des hooks et la santé de la capture
+```
+
+`rgt doctor` est un diagnostic de type `brew doctor`. Sortie `0` en cas de bon état ou d'avertissements, `1` en cas de problème sans ambiguïté (ex. le magasin n'est pas initialisé). Lorsque des hooks sont installés mais qu'aucune valeur n'a jamais été enregistrée, il avertit que la capture n'est peut-être pas active et vous demande de vérifier que `rgt` est résolvable dans le contexte shell que votre outil IA utilise (les sous-processus de hook échouent sans bloquer, donc un PATH cassé n'enregistre rien silencieusement).
+
+### Mise à jour
+```bash
+rgt update [--check] [--yes] [--version <tag>] [--skip-checksum] [--skip-attestation]
+```
+
+`rgt update` n'installe que des binaires **vérifiés** : chaque téléchargement est contrôlé contre le `checksums.txt` de la release (SHA-256) **et** son GitHub Artifact Attestation — une ancre de confiance émise indépendamment des ressources de la release elle-même (vérification Sigstore intégrée, aucun `gh` requis). Une release à laquelle il manque l'une ou l'autre vérification est refusée avec une sortie non nulle ; `--skip-checksum` / `--skip-attestation` sont des options explicites, documentées comme non sécurisées, jamais activées par défaut. La comparaison de versions utilise la sémantique de versioning : un tag plus ancien ou égal n'est jamais installé (pas de rétrogradation silencieuse), et `--version <tag>` avertit lorsque le tag demandé est plus ancien que la version installée.
+
 ### Provenance
 ```bash
-rgt record <file>                          # extrait et suit les valeurs d'un fichier
+rgt record <file> [--number-format <us|eu|auto>]   # extrait et suit les valeurs d'un fichier
 rgt derive --parents <ids> --operation <op> --expression <expr> --result <val>
-                                           # vérifie et enregistre une dérivation
+                                            # vérifie et enregistre une dérivation
 rgt verify --parents <ids> --operation <op> --result <val>
-                                           # vérifie une valeur dérivée sans l'enregistrer
+                                            # vérifie une valeur dérivée sans l'enregistrer
 rgt status [--stale-only] [--json]         # état du graphe et obsolescence
 rgt query <node_id> [--json]               # lignée complète d'une valeur
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # exporte le graphe
+rgt gc [--vacuum]                          # supprime les nœuds obsolètes (obsolètes, sans dépendants)
 ```
 
-Opérations : `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM` et `DURATION_AVG`. `DATE_DIFF` calcule automatiquement la durée écoulée entre deux dates ordonnées ; la somme et la moyenne acceptent de 2 à 26 Durations distinctes. Les résultats sont stockés en secondes entières exactes. Une moyenne qui ne donne pas un nombre entier de secondes est rejetée.
+`rgt record --number-format` remplace le format enregistré pour un appel ; sinon, le paramètre enregistré (depuis `rgt init`) est utilisé, en retombant sur `auto`. L'analyse des nombres tient compte de la locale : un `-` initial et les parenthèses comptables `(N)` font partie de la valeur, les séparateurs de milliers/décimales sont respectés selon le format actif, et les valeurs qui ne peuvent pas être analysées dans ce format sont ignorées (avec un avertissement) plutôt que divisées en nœuds erronés.
+
+`rgt gc` supprime les **nœuds obsolètes** — valeurs marquées obsolètes dont rien ne dérive — et indique combien il en a supprimés. Il ne touche jamais aux nœuds non obsolètes ni à rien dont on dépend encore. `rgt gc --vacuum` récupère en plus les pages disque libérées avec `VACUUM` SQLite (optionnel ; l'exécution par défaut ne supprime que des lignes).
+
+Opérations : `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM` et `DURATION_AVG`. `DATE_DIFF` calcule automatiquement la durée écoulée entre deux dates ordonnées ; la somme et la moyenne acceptent de 2 à 26 Durations distinctes. Les résultats sont stockés en secondes entières exactes. Une moyenne qui ne donne pas un nombre entier de secondes est rejetée. Les variables parentes correspondent à `parent[0]=a, parent[1]=b, ...` (au plus 26, `a`–`z`).
 
 Les unités fixes d’affichage sont `seconds`, `minutes`, `hours`, `days` et `weeks` ; les mois et années calendaires ne sont pas pris en charge. `--result-unit` qualifie la valeur fournie, tandis que `--unit` ne change que l’affichage. Exemples :
 
@@ -183,6 +212,8 @@ rgt query <duration_id> --unit days [--json]
 ```
 
 La requête conserve `value` et ajoute `duration_seconds` exact sous forme de texte ainsi que `selected_unit_display` uniquement au nœud demandé. Les conversions décimales périodiques sont marquées comme approximatives ; les secondes restent exactes. `EXPRESSION` interprète les dates comme des secondes Unix et les Durations comme des secondes écoulées, renvoie un Number et affiche un avertissement.
+
+`--operation` est sensible à la casse (`EXPRESSION`/`DATE_DIFF`/`DURATION_SUM`/`DURATION_AVG`) ; toute autre valeur est rejetée avec le code de sortie 2 — la vérification n'est jamais silencieusement ignorée. `--expression` est limitée à 4096 octets et 256 niveaux d'imbrication de parenthèses (une entrée au-delà de la limite est rejetée avec le code 2, jamais un plantage). Les expressions sont évaluées avec les fonctions intégrées désactivées — seules vos variables parentes et `+ - * / % ^` et les parenthèses sont disponibles, l'évaluation est donc déterministe.
 
 ## Outils pris en charge
 

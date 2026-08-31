@@ -149,6 +149,8 @@ rgt graph --format ttl      # PROV-O Turtle로 내보내기
 그래프를 신뢰할 수 있게 만드는 세 가지 전략:
 
 1. **캡처**: 네이티브 훅/플러그인이 에이전트가 읽는 모든 파일을 `rgt record`로 보내므로, 에이전트가 신경 쓰지 않아도 값이 그래프에 들어갑니다.
+
+> **비텍스트 소스(PDF·Excel·이미지)**: RGT의 수동 훅은 바이너리 파일 내부를 볼 수 없습니다. PDF/이미지 해석은 모델 내부에서 이루어지며 로컬 텍스트 파일로는 존재하지 않습니다. RGT가 에이전트에 작성하는 지시는 `echo "금액: 1234.56" | rgt record --stdin`(또는 중간 `.txt`/`.md` 파일)으로 이러한 값을 명시적으로 보고하도록 요구합니다. 일반 텍스트·CSV·JSON·Markdown 파일은 자동 캡처되므로 아무 조치도 필요 없습니다. 바이너리 파일에 대한 `rgt record`는 이 경로를 안내하는 명확한 "지원되지 않는 파일 형식" 오류를 반환합니다.
 2. **검증**: 모든 `rgt derive`는 "신뢰하되 검증한다"는 원칙을 따릅니다. RGT는 부모 값에서 결과를 다시 계산하고 잘못된 값을 삽입 전에 거부합니다.
 3. **최신성**: 소스 파일이 바뀌면 그 노드(및 그로부터 도출된 모든 값)가 오래된 상태로 표시되어 에이전트가 다시 읽도록 안내할 수 있습니다.
 
@@ -156,23 +158,50 @@ rgt graph --format ttl      # PROV-O Turtle로 내보내기
 
 ### 초기화 및 훅
 ```bash
-rgt init [-g] [--force] [--agent <name>]   # 훅 구성, 설치된 에이전트 감지
+rgt init [-g] [--force] [--agent <name>] [--number-format <us|eu|auto>]  # 훅 구성, 설치된 에이전트 감지
 rgt hook pre|post [--agent <name>]         # 에이전트 이벤트 JSON(stdin)에서 자동 수집
 ```
 
+`--number-format`은 수동 훅 경로에서 숫자 분석에 사용하는 로케일(`.`/`,` 구분자와 부호)을 영구 저장합니다. 유효한 값: `us`(소수점 `.`, 천 단위 `,`), `eu`(소수점 `,`, 천 단위 `.`), 또는 `auto`(파일별로 추론 — 기본값).
+
+`rgt init`은 기존 구성을 절대 파괴하지 않습니다. RGT의 훅 항목을 에이전트 구성에 추가 방식으로 병합합니다 — JSON/JSONC 파일(주석과 후행 쉼표 허용·보존), TOML 구성, 규칙 파일은 다른 모든 훅·키바인딩·플러그인·메모를 바이트 단위로 유지합니다. `--force` 없이 다시 실행하면 아무 변화가 없습니다. `--force`는 RGT 전용 구분 블록만 새로 고칩니다. 구성 파일을 파싱하거나 안전하게 병합할 수 없으면 해당 에이전트가 복구 가능한 오류와 0이 아닌 종료 코드로 보고됩니다 — 다른 에이전트는 계속 구성되고, 기존 파일을 덮어쓰기 전에 `<파일>.rgt.bak` 백업이 보관됩니다.
+종료 코드: `0` = 성공, `1` = 하나 이상의 에이전트 실패, `2` = 잘못된 `--agent` 이름.
+
+`rgt init`은 실행 중인 바이너리에서 확인한 **절대 경로**로 CLI를 호출하는 훅 명령을 작성하므로, AI 도구가 실행하는 셸의 PATH에 의존하지 않습니다. 바이너리를 옮긴 경우(예: 패키지 관리자 업그레이드가 새 경로에 설치), `rgt init`을 다시 실행하여 작성된 경로를 갱신하세요.
+
+### Doctor
+
+```bash
+rgt doctor   # 훅 설치 및 캡처 상태 진단
+```
+
+`rgt doctor`는 `brew doctor` 스타일의 진단입니다. 정상이거나 권고 경고가 있으면 종료 `0`, 명확한 문제(예: 저장소가 초기화되지 않음)가 있으면 `1`입니다. 훅이 설치되었지만 값이 한 번도 기록되지 않은 경우 캡처가 활성화되지 않았을 수 있다고 경고하며, AI 도구가 사용하는 셸 컨텍스트에서 `rgt`이 해석 가능한지 확인하라고 안내합니다(훅 서브프로세스는 페일오픈이라 PATH가 깨지면 아무것도 기록하지 않고 조용히 실패합니다).
+
+### 업데이트
+```bash
+rgt update [--check] [--yes] [--version <tag>] [--skip-checksum] [--skip-attestation]
+```
+
+`rgt update`는 **검증된** 바이너리만 설치합니다. 모든 다운로드는 릴리스의 `checksums.txt`(SHA-256) **및** GitHub Artifact Attestation에 대해 확인됩니다 — 릴리스 자체 자산과 독립적으로 발급된 신뢰 앵커입니다(내장 Sigstore 검증, `gh` 불필요). 두 검증 중 하나라도 없는 릴리스는 0이 아닌 종료로 거부됩니다. `--skip-checksum` / `--skip-attestation`은 명시적이고 안전하지 않음으로 문서화된 옵트아웃이며 기본값이 아닙니다. 버전 비교는 시맨틱 버저닝을 사용합니다. 같거나 이전 태그는 절대 설치되지 않습니다(조용한 다운그레이드 없음). `--version <tag>`는 요청한 태그가 설치된 버전보다 이전이면 경고합니다.
+
 ### 출처 추적
 ```bash
-rgt record <file>                          # 파일에서 값을 추출하여 추적
+rgt record <file> [--number-format <us|eu|auto>]   # 파일에서 값을 추출하여 추적
 rgt derive --parents <ids> --operation <op> --expression <expr> --result <val>
-                                           # 도출을 검증하고 기록
+                                            # 도출을 검증하고 기록
 rgt verify --parents <ids> --operation <op> --result <val>
-                                           # 기록하지 않고 도출값 검증
+                                            # 기록하지 않고 도출값 검증
 rgt status [--stale-only] [--json]         # 그래프 상태와 최신성
 rgt query <node_id> [--json]               # 값의 전체 계보
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # 그래프 내보내기
+rgt gc [--vacuum]                          # 폐기 노드(오래되고 파생이 없는 값) 제거
 ```
 
-연산: `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM`, `DURATION_AVG`. `DATE_DIFF`는 순서가 있는 두 날짜 사이의 경과 시간을 자동 계산합니다. 합계와 평균은 중복되지 않는 2~26개의 Duration을 받습니다. 결과는 정확한 정수 초로 저장하며 정수 초가 아닌 평균은 거부합니다.
+`rgt record --number-format`은 한 번의 호출에 대해 저장된 형식을 재정의합니다. 그 외에는(`rgt init`의) 저장된 설정을 사용하고 `auto`로 폴백합니다. 숫자 분석은 로케일을 인식합니다. 선행 `-`와 회계 괄호 `(N)`는 값의 일부이고, 활성 형식에 따라 천/소수 구분자가 존중되며, 해당 형식으로 분석할 수 없는 값은 (경고와 함께) 건너뛰고 잘못된 노드로 분할되지 않습니다.
+
+`rgt gc`는 **폐기 노드** — 오래된 것으로 표시되고 아무것도 파생되지 않는 값 — 을 제거하고 제거 개수를 보고합니다. 오래되지 않은 노드나 아직 의존되는 것은 건드리지 않습니다. `rgt gc --vacuum`은 추가로 SQLite `VACUUM`으로 해제된 디스크 페이지를 회수합니다(선택 사항; 기본 실행은 행 삭제만).
+
+연산: `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM`, `DURATION_AVG`. `DATE_DIFF`는 순서가 있는 두 날짜 사이의 경과 시간을 자동 계산합니다. 합계와 평균은 중복되지 않는 2~26개의 Duration을 받습니다. 결과는 정확한 정수 초로 저장하며 정수 초가 아닌 평균은 거부합니다. 부모 변수는 `parent[0]=a, parent[1]=b, ...`로 매핑됩니다(최대 26개, `a`–`z`).
 
 고정 표시 단위는 `seconds`, `minutes`, `hours`, `days`, `weeks`입니다. 달력의 월과 연도는 길이가 달라 지원하지 않습니다. `--result-unit`은 입력한 결과의 단위를 지정하고 `--unit`은 표시만 바꿉니다.
 
@@ -183,6 +212,8 @@ rgt query <duration_id> --unit days [--json]
 ```
 
 쿼리는 기존 `value`를 유지하고 요청한 노드에만 정확한 초를 문자열로 담은 `duration_seconds`와 `selected_unit_display`를 추가합니다. 순환 소수 변환은 근삿값으로 표시하지만 초 값은 정확합니다. `EXPRESSION`은 날짜를 Unix 타임스탬프 초, Duration을 경과 초로 해석하고 Number를 반환하며 경고를 출력합니다.
+
+`--operation`은 대소문자를 구분합니다(`EXPRESSION`/`DATE_DIFF`/`DURATION_SUM`/`DURATION_AVG`); 그 외에는 종료 코드 2로 거부되어 검증이 조용히 건너뛰어지지 않습니다. `--expression`은 4096바이트와 괄호 중첩 256단계로 제한됩니다(초과 시 충돌이 아니라 종료 코드 2로 거부). 표현식은 내장 함수를 비활성화한 채 평가되므로 부모 변수와 `+ - * / % ^`, 괄호만 사용할 수 있어 결정적입니다.
 
 ## 지원 AI 도구
 

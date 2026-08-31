@@ -149,6 +149,8 @@ rgt graph --format ttl      # 导出 PROV-O Turtle
 三种策略保证图的可靠性：
 
 1. **采集**：原生钩子/插件将代理读取的每个文件通过 `rgt record` 录入，无需代理记得调用。
+
+> **非文本来源（PDF、Excel、图片）**：RGT 的被动钩子无法查看二进制文件内部——PDF/图片的解读发生在模型内部，从不以本地文本文件的形式存在。RGT 写入代理的指令要求其通过 `echo "金额: 1234.56" | rgt record --stdin`（或中间 `.txt`/`.md` 文件）显式上报此类值。纯文本/CSV/JSON/Markdown 文件无需任何操作——它们会被自动采集。对二进制文件执行 `rgt record` 会返回一条明确的"不支持的文件格式"错误，说明这一路径。
 2. **验证**：每次 `rgt derive` 都是"信任但要验证"：RGT 从父值重新计算结果，在插入前拒绝错误值。
 3. **过期**：源文件变化时，其节点（以及所有派生值）被标记为过期，从而可以提示代理重新读取。
 
@@ -156,23 +158,50 @@ rgt graph --format ttl      # 导出 PROV-O Turtle
 
 ### 初始化与钩子
 ```bash
-rgt init [-g] [--force] [--agent <name>]   # 配置钩子，检测已安装代理
+rgt init [-g] [--force] [--agent <name>] [--number-format <us|eu|auto>]  # 配置钩子，检测已安装代理
 rgt hook pre|post [--agent <name>]         # 从代理事件 JSON（stdin）被动采集
 ```
 
+`--number-format` 为被动钩子路径持久化解析数字所用的区域设置（`.`/`,` 分隔符与符号）。有效值：`us`（小数点 `.`，千分位 `,`）、`eu`（小数点 `,`，千分位 `.`）或 `auto`（按文件推断——默认值）。
+
+`rgt init` **绝不会破坏你现有的配置**。它以追加方式将 RGT 的钩子条目合并进代理配置——JSON/JSONC 文件（容忍并保留注释和尾随逗号）、TOML 配置和规则文件会逐字节保留其他所有钩子、按键绑定、插件和备注。未加 `--force` 重新运行是无操作；`--force` 仅刷新 RGT 自己的分隔块。如果某个配置文件无法解析或安全合并，该代理会以可恢复的错误和非零退出码报告——其他代理仍会被配置，且在重写任何现有文件之前会保留 `<文件>.rgt.bak` 备份。
+退出码：`0` = 成功，`1` = 至少一个代理失败，`2` = 无效的 `--agent` 名称。
+
+`rgt init` 写入的钩子命令通过**绝对路径**（从正在运行的二进制解析）调用 CLI，因此采集不依赖 AI 工具所启动 shell 的 PATH。如果移动了二进制（例如包管理器升级安装到新路径），请重新运行 `rgt init` 以刷新写入的路径。
+
+### Doctor
+
+```bash
+rgt doctor   # 诊断钩子安装与采集健康状况
+```
+
+`rgt doctor` 是 `brew doctor` 风格的诊断工具。健康或仅有建议性警告时退出 `0`，存在明确问题（如存储未初始化）时退出 `1`。当钩子已安装但从未记录过任何值时，它会警告采集可能未激活，并提示你验证在 AI 工具使用的 shell 上下文中能否解析 `rgt`（钩子子进程失败即放行，因此 PATH 损坏时会在静默中不记录任何内容）。
+
+### 更新
+```bash
+rgt update [--check] [--yes] [--version <tag>] [--skip-checksum] [--skip-attestation]
+```
+
+`rgt update` 只安装**已验证**的二进制：每次下载都会对照发布版的 `checksums.txt`（SHA-256）**以及**其 GitHub Artifact Attestation 进行检查——这是独立于发布版自身资产签发的信任锚点（内置 Sigstore 验证，无需 `gh`）。缺少任一验证的发布版会被以非零退出码拒绝；`--skip-checksum` / `--skip-attestation` 是显式、被记录为不安全的退出开关，绝非常规默认。版本比较使用语义化版本：相同或更旧的标签绝不会被安装（不会静默降级），`--version <tag>` 在请求的标签旧于已安装版本时会发出警告。
+
 ### 溯源
 ```bash
-rgt record <file>                          # 提取并追踪文件中的值
+rgt record <file> [--number-format <us|eu|auto>]   # 提取并追踪文件中的值
 rgt derive --parents <ids> --operation <op> --expression <expr> --result <val>
-                                           # 验证并记录一条推导
+                                            # 验证并记录一条推导
 rgt verify --parents <ids> --operation <op> --result <val>
-                                           # 验证派生值而不记录
+                                            # 验证派生值而不记录
 rgt status [--stale-only] [--json]         # 图状态与过期情况
 rgt query <node_id> [--json]               # 某个值的完整谱系
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # 导出依赖图
+rgt gc [--vacuum]                          # 移除过期（陈旧且无派生的）节点
 ```
 
-操作类型：`EXPRESSION`、`DATE_DIFF`、`DURATION_SUM` 和 `DURATION_AVG`。`DATE_DIFF` 会自动计算两个有序日期之间的经过时间；求和和平均接受 2 到 26 个互不重复的 Duration。结果以精确的整数秒存储；无法得到整数秒的平均值会被拒绝。
+`rgt record --number-format` 仅对单次调用覆盖持久化格式；否则使用（来自 `rgt init` 的）持久化设置，并回退到 `auto`。数字解析是区域感知的：前导 `-` 和会计括号 `(N)` 属于值的一部分，按当前格式尊重千分位/小数点分隔符，而无法在该格式下解析的值会被跳过（带警告），而不是被拆分成错误的节点。
+
+`rgt gc` 移除**过期节点**——被标记为过期且没有任何派生的值——并报告移除了多少个。它绝不会触碰非过期节点或仍被依赖的内容。`rgt gc --vacuum` 额外用 SQLite `VACUUM` 回收释放的磁盘页（可选；默认运行仅删除行）。
+
+操作类型：`EXPRESSION`、`DATE_DIFF`、`DURATION_SUM` 和 `DURATION_AVG`。`DATE_DIFF` 会自动计算两个有序日期之间的经过时间；求和和平均接受 2 到 26 个互不重复的 Duration。结果以精确的整数秒存储；无法得到整数秒的平均值会被拒绝。父变量映射为 `parent[0]=a, parent[1]=b, ...`（最多 26 个，`a`–`z`）。
 
 固定显示单位为 `seconds`、`minutes`、`hours`、`days` 和 `weeks`。日历月和年长度不固定，因此不支持。`--result-unit` 指定输入结果的单位，`--unit` 只改变显示方式。
 
@@ -183,6 +212,8 @@ rgt query <duration_id> --unit days [--json]
 ```
 
 查询会保留现有 `value`，并且只为请求的节点添加以字符串表示的精确秒数 `duration_seconds` 和 `selected_unit_display`。循环小数转换会标记为近似值，但秒数仍然精确。`EXPRESSION` 将日期解释为 Unix 时间戳秒、将 Duration 解释为经过秒，结果类型是 Number，并会输出警告。
+
+`--operation` 区分大小写（`EXPRESSION`/`DATE_DIFF`/`DURATION_SUM`/`DURATION_AVG`）；其他值一律以退出码 2 拒绝——验证绝不会被静默跳过。`--expression` 限制为 4096 字节和 256 层括号嵌套（超出限制的输入以退出码 2 拒绝，绝不会崩溃）。表达式以内置函数禁用方式求值——只有你的父变量和 `+ - * / % ^` 及括号可用，因此求值是确定性的。
 
 ## 支持的 AI 工具
 
