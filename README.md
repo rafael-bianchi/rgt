@@ -14,6 +14,7 @@
   <a href="https://github.com/rafael-bianchi/rgt/actions/workflows/ci.yml"><img src="https://github.com/rafael-bianchi/rgt/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/rafael-bianchi/rgt/releases"><img src="https://img.shields.io/github/v/release/rafael-bianchi/rgt" alt="Release"></a>
   <a href="#license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0"></a>
+  <a href="https://github.com/rafael-bianchi/rgt/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/coverage-measured_in_CI-brightgreen.svg" alt="Coverage: measured per-PR in CI"></a>
 </p>
 
 <p align="center">
