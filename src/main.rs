@@ -4,6 +4,7 @@ mod export;
 mod extract;
 mod graph;
 mod hooks;
+mod mcp;
 mod query;
 mod store;
 mod types;
@@ -125,6 +126,8 @@ enum Commands {
     },
     /// Diagnose hook installation and capture health (0 = healthy/warnings, 1 = error)
     Doctor,
+    /// Run as a Model Context Protocol (MCP) server over stdio, exposing record/verify/derive/query/status as MCP tools
+    Mcp,
     /// Remove obsolete (stale, dependent-free) nodes from the provenance graph
     Gc {
         /// Reclaim physical disk space with VACUUM after collection
@@ -306,6 +309,20 @@ fn main() {
                 std::process::exit(1);
             }
         },
+        Commands::Mcp => {
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("Error: MCP runtime error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = rt.block_on(mcp::serve_stdio()) {
+                eprintln!("Error: MCP server: {}", e);
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Commands::Gc { vacuum } => cli::execute_gc(vacuum),
         Commands::Verify {
             parents,

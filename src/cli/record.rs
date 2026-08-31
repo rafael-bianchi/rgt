@@ -10,6 +10,17 @@ use std::path::Path;
 
 const VALUE_LIMIT: usize = 10_000;
 
+/// Structured outcome of a record operation (spec 041): returned by the core
+/// so the CLI wrapper and the MCP `record_values` tool can both report the same
+/// result without printing inside the logic.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RecordOutcome {
+    pub count: usize,
+    pub skipped_limit: bool,
+    pub skipped_malformed: usize,
+    pub number_format: String,
+}
+
 /// Resolves the active number format: an explicit CLI flag wins, then the
 /// persisted `number_format` setting, then `Auto` (FR-003).
 pub fn resolve_number_format(
@@ -44,6 +55,33 @@ pub fn execute_record(
     stdin: bool,
     explicit_format: Option<NumberFormat>,
 ) -> Result<(), String> {
+    let outcome = execute_record_with_outcome(file, stdin, explicit_format)?;
+    if outcome.skipped_limit {
+        eprintln!(
+            "Warning: value limit ({}) reached, excess values skipped for {}",
+            VALUE_LIMIT, file
+        );
+    }
+    if outcome.skipped_malformed > 0 {
+        println!(
+            "Warning: {} number(s) in {} could not be parsed as {} and were skipped (not split into bogus nodes)",
+            outcome.skipped_malformed,
+            file,
+            outcome.number_format
+        );
+    }
+    println!("Recorded {} values from {}", outcome.count, file);
+    Ok(())
+}
+
+/// Core record operation returning a structured [`RecordOutcome`] (no printing;
+/// spec 041 FR-004). The CLI wrapper prints from the outcome; the MCP
+/// `record_values` tool returns it.
+pub fn execute_record_with_outcome(
+    file: &str,
+    stdin: bool,
+    explicit_format: Option<NumberFormat>,
+) -> Result<RecordOutcome, String> {
     let path_obj = Path::new(file);
 
     if !path_obj.exists() {
@@ -126,23 +164,10 @@ pub fn execute_record(
     tx.commit()
         .map_err(|e| format!("failed to commit transaction: {}", e))?;
 
-    if skipped {
-        eprintln!(
-            "Warning: value limit ({}) reached, excess values skipped for {}",
-            VALUE_LIMIT, file
-        );
-    }
-
-    if skipped_malformed > 0 {
-        println!(
-            "Warning: {} number(s) in {} could not be parsed as {} and were skipped (not split into bogus nodes)",
-            skipped_malformed,
-            file,
-            number_format.as_str()
-        );
-    }
-
-    println!("Recorded {} values from {}", count, file);
-
-    Ok(())
+    Ok(RecordOutcome {
+        count,
+        skipped_limit: skipped,
+        skipped_malformed,
+        number_format: number_format.as_str().to_string(),
+    })
 }

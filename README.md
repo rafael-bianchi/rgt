@@ -228,6 +228,7 @@ rgt query <node_id> [--json]               # full lineage for a value
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths]
                                            # export the dependency graph
 rgt gc [--vacuum]                          # remove obsolete (stale, dependent-free) nodes
+rgt mcp                                   # run as a Model Context Protocol server over stdio
 ```
 
 `rgt record --number-format` overrides the persisted format for one call; otherwise the persisted setting (from `rgt init`) is used, falling back to `auto`. Number parsing is locale-aware: a leading `-` and accounting parentheses `(N)` are part of the value, thousands/decimal separators are honored per the active format, and values that can't be parsed under that format are skipped (with a warning) rather than split into bogus nodes.
@@ -276,6 +277,30 @@ rgt query <duration_id> --unit days [--json]
 The fixed elapsed-time units are `seconds`, `minutes`, `hours`, `days`, and `weeks`. Temporal values and claims must resolve to exact whole seconds; averages or claims that require fractional seconds are rejected without rounding. Calendar months and years are unsupported because their lengths vary. `--result-unit` only qualifies a claim, and `--unit` only selects a display. Neither unit is persisted as node metadata.
 
 Query keeps its existing `value`, adds exact `duration_seconds` as a decimal string, and includes `selected_unit_display` only on the requested node. Repeating conversions are marked approximate; exact seconds remain available. Querying a Date or Number with `--unit` is rejected. Legacy `EXPRESSION` calculations with Date or Duration parents still return a Number and emit a warning: Dates are interpreted as Unix timestamp seconds and Durations as elapsed seconds. Use `DATE_DIFF`, `DURATION_SUM`, or `DURATION_AVG` when a typed Duration result is intended.
+
+### MCP Server
+
+`rgt mcp` runs RGT as a [Model Context Protocol](https://modelcontextprotocol.io/) server over stdio, exposing the same operations as MCP tools — one documented integration surface instead of per-agent hook formats. It works with any MCP-capable client (Claude Code, Cursor, VS Code, ChatGPT, ...):
+
+| Tool | What it does |
+|------|--------------|
+| `query_provenance` | Trace a value's full lineage |
+| `get_status` | Graph state (total/active/stale nodes) |
+| `record_values` | Record values from file content |
+| `verify_only` | Verify a derivation without recording |
+| `derive_and_verify` | Verify a derivation, then record it |
+
+Configure your MCP client to launch it as a stdio subprocess in your project directory, e.g.:
+
+```json
+{
+  "mcpServers": {
+    "rgt": { "command": "rgt", "args": ["mcp"] }
+  }
+}
+```
+
+The server runs from the project directory it is launched in (the same assumption every hook integration makes). Any invalid input returns to the client as a tool error — the server never exits on tool failure.
 
 ## Supported AI Tools
 

@@ -27,7 +27,7 @@ fn execute_status_with(
     db: &DbStore,
     cascade: &mut InvalidationCascade,
     invalidate: impl FnOnce(&mut InvalidationCascade, &DbStore) -> rusqlite::Result<usize>,
-    stale_only: bool,
+    _stale_only: bool,
     json_output: bool,
 ) -> Result<(), String> {
     // FR-004: propagate the staleness-check result instead of discarding it.
@@ -35,41 +35,20 @@ fn execute_status_with(
 
     let conn = db.conn();
     let all_nodes = list_all_nodes(conn).map_err(|e| e.to_string())?;
-    let stale_nodes = if stale_only {
-        list_stale_nodes(conn).map_err(|e| e.to_string())?
-    } else {
-        list_stale_nodes(conn).map_err(|e| e.to_string())?
-    };
+    let stale_nodes = list_stale_nodes(conn).map_err(|e| e.to_string())?;
+
+    let summary = build_status_summary(&all_nodes, &stale_nodes);
 
     if json_output {
-        let stale_details: Vec<_> = stale_nodes
-            .iter()
-            .map(|n| {
-                json!({
-                    "node_id": n.id,
-                    "value_kind": n.value_kind.to_string(),
-                    "value": n.value.to_string_repr(),
-                    "stale_reason": n.stale_reason,
-                })
-            })
-            .collect();
-
-        let output = json!({
-            "total_nodes": all_nodes.len(),
-            "active_nodes": all_nodes.len() - stale_nodes.len(),
-            "stale_nodes": stale_nodes.len(),
-            "stale_details": stale_details,
-        });
-
         println!(
             "{}",
-            serde_json::to_string_pretty(&output).unwrap_or_default()
+            serde_json::to_string_pretty(&summary).unwrap_or_default()
         );
     } else {
         println!("=== RGT Provenance Graph Status ===");
-        println!("Total Nodes:  {}", all_nodes.len());
-        println!("Active Nodes: {}", all_nodes.len() - stale_nodes.len());
-        println!("Stale Nodes:  {}", stale_nodes.len());
+        println!("Total Nodes:  {}", summary["total_nodes"]);
+        println!("Active Nodes: {}", summary["active_nodes"]);
+        println!("Stale Nodes:  {}", summary["stale_nodes"]);
         println!();
 
         if stale_nodes.is_empty() {
@@ -89,6 +68,32 @@ fn execute_status_with(
     }
 
     Ok(())
+}
+
+/// Builds the graph-state summary JSON (spec 041 FR-004): returned as a value so
+/// the CLI's `--json` branch and the MCP `get_status` tool share one construction.
+pub fn build_status_summary(
+    all_nodes: &[crate::types::TrackedNode],
+    stale_nodes: &[crate::types::TrackedNode],
+) -> serde_json::Value {
+    let stale_details: Vec<_> = stale_nodes
+        .iter()
+        .map(|n| {
+            json!({
+                "node_id": n.id,
+                "value_kind": n.value_kind.to_string(),
+                "value": n.value.to_string_repr(),
+                "stale_reason": n.stale_reason,
+            })
+        })
+        .collect();
+
+    json!({
+        "total_nodes": all_nodes.len(),
+        "active_nodes": all_nodes.len() - stale_nodes.len(),
+        "stale_nodes": stale_nodes.len(),
+        "stale_details": stale_details,
+    })
 }
 
 #[cfg(test)]

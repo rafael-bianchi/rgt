@@ -46,6 +46,8 @@ attestation-verify = "=0.1.0"
 self-replace = "1.5.0"
 base64 = "0.23"
 pdf-extract = "0.12"
+rmcp = { version = "=3.1.4", features = ["server", "macros", "transport-io"] }
+schemars = "1.2.2"
 
 [dev-dependencies]
 oxrdf = "=0.3.4"
@@ -235,6 +237,10 @@ path = "tests/integration/test_duration_performance.rs"
 [[test]]
 name = "test_query_contract"
 path = "tests/contract/test_query_contract.rs"
+
+[[test]]
+name = "test_mcp_contract"
+path = "tests/contract/test_mcp_contract.rs"
 [[bench]]
 name = "bench_detection"
 harness = false

@@ -493,7 +493,7 @@ mod tests {
             "EXPRESSION",
             &ValueData::Number(7.0),
         );
-        let error = rgt::cli::derive::execute_derive(
+        let error = rgt::cli::derive::execute_derive_core(
             "parent-a,parent-b",
             "EXPRESSION",
             Some("a + b"),
@@ -521,5 +521,277 @@ mod tests {
             .unwrap();
         assert_eq!(child_count, 0);
         assert_eq!(edge_count, 0);
+    }
+    // -----------------------------------------------------------------------
+    // 041 / US2 (T006): explicit exit-code assertions for every refactored
+    // process::exit call site (derive + verify), preserving CLI behavior
+    // -----------------------------------------------------------------------
+
+    fn run_cmd(args: &[&str]) -> std::process::Output {
+        std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args(args)
+            .current_dir(".")
+            .output()
+            .expect("spawn rgt")
+    }
+
+    #[test]
+    fn derive_empty_parents_exits_2() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
+
+        let out = run_cmd(&[
+            "derive",
+            "--parents",
+            "",
+            "--operation",
+            "EXPRESSION",
+            "--expression",
+            "a + b",
+            "--result",
+            "1",
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("at least one node ID"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn derive_unknown_operation_exits_2() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
+
+        let out = run_cmd(&[
+            "derive",
+            "--parents",
+            "x",
+            "--operation",
+            "bogus",
+            "--result",
+            "1",
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("unknown operation"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn derive_missing_expression_exits_2() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
+
+        let out = run_cmd(&[
+            "derive",
+            "--parents",
+            "x",
+            "--operation",
+            "EXPRESSION",
+            "--result",
+            "1",
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("Missing --expression"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn derive_missing_parent_node_exits_2() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
+
+        let out = run_cmd(&[
+            "derive",
+            "--parents",
+            "node_does_not_exist",
+            "--operation",
+            "EXPRESSION",
+            "--expression",
+            "a",
+            "--result",
+            "1",
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("not found"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn derive_verification_failure_exits_1() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
+
+        // A real parent value: record 10, then derive an a*2 with wrong result.
+        let file_path = dir.path().join("n.csv");
+        let mut f = fs::File::create(&file_path).unwrap();
+        writeln!(f, "x,10\n").unwrap();
+        let path_str = file_path.to_string_lossy().to_string();
+        assert!(execute_record(&path_str, false, None).is_ok());
+
+        let nodes = recorded_numbers();
+        assert_eq!(nodes.len(), 1);
+        let parent = node_id_for_value(10.0);
+
+        let out = run_cmd(&[
+            "derive",
+            "--parents",
+            &parent,
+            "--operation",
+            "EXPRESSION",
+            "--expression",
+            "a * 2",
+            "--result",
+            "99",
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("verification failed"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn verify_unknown_operation_exits_2() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
+
+        let out = run_cmd(&[
+            "verify",
+            "--parents",
+            "x",
+            "--operation",
+            "bogus",
+            "--result",
+            "1",
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("unknown operation"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn verify_empty_parents_exits_2() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
+
+        let out = run_cmd(&[
+            "verify",
+            "--parents",
+            "",
+            "--operation",
+            "EXPRESSION",
+            "--expression",
+            "a",
+            "--result",
+            "1",
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn verify_verification_failure_exits_1() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
+
+        let file_path = dir.path().join("n.csv");
+        let mut f = fs::File::create(&file_path).unwrap();
+        writeln!(f, "x,10\n").unwrap();
+        let path_str = file_path.to_string_lossy().to_string();
+        assert!(execute_record(&path_str, false, None).is_ok());
+
+        let parent = node_id_for_value(10.0);
+        let out = run_cmd(&[
+            "verify",
+            "--parents",
+            &parent,
+            "--operation",
+            "EXPRESSION",
+            "--expression",
+            "a * 2",
+            "--result",
+            "99",
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("verification failed"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn node_id_for_value(v: f64) -> String {
+        use rgt::store::queries::list_all_nodes;
+        use rgt::store::DbStore;
+        let db = DbStore::open_in_project(".").expect("open store");
+        let conn = db.conn();
+        list_all_nodes(conn)
+            .expect("list nodes")
+            .into_iter()
+            .find(|n| n.value.to_string_repr() == format!("{}", v))
+            .expect("node with value")
+            .id
     }
 }

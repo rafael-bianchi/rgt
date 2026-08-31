@@ -10,6 +10,16 @@ pub enum QueryError {
     Error(String),
 }
 
+impl std::fmt::Display for QueryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QueryError::InvalidInput(s) | QueryError::Error(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl std::error::Error for QueryError {}
+
 /// Queries the complete provenance lineage for a node using BFS traversal.
 ///
 /// Returns JSON with the node and its `lineage_steps`, `total_ancestors`, and `is_stale`.

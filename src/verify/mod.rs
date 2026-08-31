@@ -85,74 +85,83 @@ pub fn verify_temporal_claim(
     }
 }
 
-/// CLI entry point for `rgt verify`. Handles DB access, error formatting, and exit codes.
-pub fn run_verify_cli(
+pub mod error;
+pub use error::VerifyDeriveError;
+
+/// Core verification logic shared by the CLI and MCP server mode.
+/// Returns a typed error separating invalid input (CLI exit 2) from verification
+/// failures (CLI exit 1) without calling `process::exit`.
+pub fn run_verify_core(
     parents: &str,
     operation: &str,
     expression: Option<&str>,
     result: &str,
     result_unit: Option<&str>,
-) {
-    // FR-002 / FR-001 / FR-005: validate operation, expression (for
-    // EXPRESSION), and parent count up front — invalid input is exit 2, never
-    // a silent pass-through.
+) -> Result<(), VerifyDeriveError> {
     if !valid_operation(operation) {
-        eprintln!(
-            "Error: unknown operation '{}' — valid operations: EXPRESSION, DATE_DIFF, DURATION_SUM, DURATION_AVG",
+        return Err(VerifyDeriveError::InvalidInput(format!(
+            "unknown operation '{}' — valid operations: EXPRESSION, DATE_DIFF, DURATION_SUM, DURATION_AVG",
             operation
-        );
-        process::exit(2);
+        )));
     }
     if operation == "EXPRESSION" {
         if result_unit.is_some() {
-            eprintln!("Error: --result-unit is not valid for EXPRESSION");
-            process::exit(2);
+            return Err(VerifyDeriveError::InvalidInput(
+                "--result-unit is not valid for EXPRESSION".into(),
+            ));
         }
         if let Some(expr) = expression {
             if let Err(e) = expression::validate_expression(expr) {
-                eprintln!("Error: invalid --expression: {}", e);
-                process::exit(2);
+                return Err(VerifyDeriveError::InvalidInput(format!(
+                    "invalid --expression: {}",
+                    e
+                )));
             }
         } else {
-            eprintln!("Error: Missing --expression for EXPRESSION operation");
-            process::exit(2);
+            return Err(VerifyDeriveError::InvalidInput(
+                "Missing --expression for EXPRESSION operation".into(),
+            ));
         }
     }
 
     let claim = if matches!(operation, "DATE_DIFF" | "DURATION_SUM" | "DURATION_AVG") {
         let unit = DurationUnit::parse(result_unit.unwrap_or("seconds"))
-            .unwrap_or_else(|error| invalid_input(error));
-        Some(DurationClaim::parse(result, unit).unwrap_or_else(|error| invalid_input(error)))
+            .map_err(VerifyDeriveError::InvalidInput)?;
+        Some(DurationClaim::parse(result, unit).map_err(VerifyDeriveError::InvalidInput)?)
     } else {
         None
     };
 
-    let parent_ids: Vec<String> = parents.split(',').map(|s| s.trim().to_string()).collect();
+    let parent_ids: Vec<String> = parents
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
 
-    if parent_ids.len() > MAX_PARENTS {
-        invalid_input(format!(
-            "at most {MAX_PARENTS} parents supported (variables a-z), got {}",
-            parent_ids.len()
+    if parent_ids.is_empty() {
+        return Err(VerifyDeriveError::InvalidInput(
+            "--parents must contain at least one node ID".into(),
         ));
     }
+    if parent_ids.len() > MAX_PARENTS {
+        return Err(VerifyDeriveError::InvalidInput(format!(
+            "at most {MAX_PARENTS} parents supported (variables a-z), got {}",
+            parent_ids.len()
+        )));
+    }
     if operation == "DATE_DIFF" && parent_ids.len() != 2 {
-        invalid_input(format!(
+        return Err(VerifyDeriveError::InvalidInput(format!(
             "DATE_DIFF requires exactly 2 Date parents, got {}",
             parent_ids.len()
-        ));
+        )));
     }
     if matches!(operation, "DURATION_SUM" | "DURATION_AVG") {
         validate_duration_parent_ids(operation, &parent_ids)
-            .unwrap_or_else(|error| invalid_input(error));
+            .map_err(VerifyDeriveError::InvalidInput)?;
     }
 
-    let db = match crate::store::DbStore::open_in_project(".") {
-        Ok(db) => db,
-        Err(e) => {
-            eprintln!("Error: failed to open database: {}", e);
-            process::exit(2);
-        }
-    };
+    let db = crate::store::DbStore::open_in_project(".")
+        .map_err(|e| VerifyDeriveError::Internal(format!("failed to open database: {}", e)))?;
     let conn = db.conn();
 
     let mut parent_values = Vec::new();
@@ -160,12 +169,16 @@ pub fn run_verify_cli(
         match crate::store::queries::get_tracked_node(conn, pid) {
             Ok(Some(node)) => parent_values.push(node.value),
             Ok(None) => {
-                eprintln!("Error: parent node '{}' not found in database", pid);
-                process::exit(2);
+                return Err(VerifyDeriveError::InvalidInput(format!(
+                    "parent node '{}' not found in database",
+                    pid
+                )));
             }
             Err(e) => {
-                eprintln!("Error: failed to load parent node '{}': {}", pid, e);
-                process::exit(2);
+                return Err(VerifyDeriveError::InvalidInput(format!(
+                    "failed to load parent node '{}': {}",
+                    pid, e
+                )));
             }
         }
     }
@@ -176,43 +189,51 @@ pub fn run_verify_cli(
         }
     }
 
-    let verification = match operation {
+    match operation {
         "EXPRESSION" => {
-            let parsed = result.parse::<f64>().unwrap_or_else(|_| {
-                invalid_input("--result for EXPRESSION must be numeric".into())
-            });
+            let parsed = result.parse::<f64>().map_err(|_| {
+                VerifyDeriveError::InvalidInput("--result for EXPRESSION must be numeric".into())
+            })?;
             if !parsed.is_finite() {
-                invalid_input("--result for EXPRESSION must be finite".into());
+                return Err(VerifyDeriveError::InvalidInput(
+                    "--result for EXPRESSION must be finite".into(),
+                ));
             }
             verify(&parent_values, operation, expression, parsed)
+                .map_err(VerifyDeriveError::VerificationFailed)
         }
         "DATE_DIFF" | "DURATION_SUM" | "DURATION_AVG" => verify_temporal_claim(
             &parent_values,
             operation,
             claim.as_ref().expect("temporal claim parsed"),
-        ),
+        )
+        .map_err(VerifyDeriveError::VerificationFailed),
         _ => unreachable!("valid_operation rejected unsupported operation"),
-    };
-
-    match verification {
-        Ok(()) => {
-            process::exit(0);
-        }
-        Err(msg) => {
-            eprintln!(
-                "Error: verification failed for {} \"{}\"\n  {}\n  hint: retry with the correct result",
-                operation,
-                expression.unwrap_or(""),
-                msg
-            );
-            process::exit(1);
-        }
     }
 }
 
-fn invalid_input(message: String) -> ! {
-    eprintln!("Error: {message}");
-    process::exit(2);
+/// Convenience verify function for numeric/MCP callers.
+pub fn run_verify(
+    parents: &str,
+    operation: &str,
+    expression: Option<&str>,
+    result: f64,
+) -> Result<(), VerifyDeriveError> {
+    run_verify_core(parents, operation, expression, &result.to_string(), None)
+}
+
+/// CLI entry point for `rgt verify`. Handles DB access, error formatting, and exit codes.
+pub fn run_verify_cli(
+    parents: &str,
+    operation: &str,
+    expression: Option<&str>,
+    result: &str,
+    result_unit: Option<&str>,
+) {
+    if let Err(e) = run_verify_core(parents, operation, expression, result, result_unit) {
+        e.print_cli(operation, expression);
+        process::exit(e.exit_code());
+    }
 }
 
 #[cfg(test)]

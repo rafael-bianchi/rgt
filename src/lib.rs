@@ -4,6 +4,7 @@ pub mod export;
 pub mod extract;
 pub mod graph;
 pub mod hooks;
+pub mod mcp;
 pub mod query;
 pub mod store;
 pub mod types;
