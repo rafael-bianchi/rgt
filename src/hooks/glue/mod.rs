@@ -127,17 +127,22 @@ pub const CLINE_RULES: &str = "\n## RGT Integration\n\
     ### Recording Values\n\
     After reading a data file containing numbers or dates, record its values:\n\
     - `rgt record <file>`: extracts and tracks numeric/date values from file content\n\
+    - `rgt record <file> --number-format <us|eu|auto>`: parse numbers with a specific locale (`.`/`,` separator convention); default is the project's persisted setting, then `auto`\n\
     - Run `rgt status` to check what's tracked\n\
     \n\
     ### Recording Derivations\n\
     After computing a derived value from tracked root nodes:\n\
     - `rgt derive --parents <id1>,<id2> --operation EXPRESSION --expression \"a - b\" --result <val>`\n\
     - The derivation is verified before recording; wrong results are rejected (exit 1)\n\
+    - Temporal values: `rgt derive --parents <date1>,<date2> --operation DATE_DIFF [--unit days]`: elapsed gap (`date2 - date1`) as an exact Duration\n\
+    - `rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM|DURATION_AVG [--unit minutes]`: typed Duration aggregate\n\
     \n\
     ### Inspecting the Graph\n\
     - `rgt status`: see all tracked nodes and staleness state\n\
     - `rgt query <node_id>`: trace provenance lineage for a value\n\
-    - `rgt graph`: export the dependency graph as text or mermaid\n\
+    - `rgt graph`: export the dependency graph as text, mermaid, DOT, or Turtle (`--format ttl`)\n\
+    - `rgt gc [--vacuum]`: remove obsolete (stale, dependent-free) nodes\n\
+    - `rgt doctor`: diagnose hook installation and capture health (0 = healthy/warnings, 1 = error)\n\
     \n\
     Run `rgt --help` for all available commands.\n";
 
@@ -148,17 +153,22 @@ pub const ANTIGRAVITY_RULES: &str = "# RGT Integration\n\
     ## Recording Values\n\
     After reading a data file containing numbers or dates, record its values:\n\
     - `rgt record <file>`: extracts and tracks numeric/date values from file content\n\
+    - `rgt record <file> --number-format <us|eu|auto>`: parse numbers with a specific locale (`.`/`,` separator convention); default is the project's persisted setting, then `auto`\n\
     - Run `rgt status` to check what's tracked\n\
     \n\
     ## Recording Derivations\n\
     After computing a derived value from tracked root nodes:\n\
     - `rgt derive --parents <id1>,<id2> --operation EXPRESSION --expression \"a - b\" --result <val>`\n\
     - The derivation is verified before recording; wrong results are rejected (exit 1)\n\
+    - Temporal values: `rgt derive --parents <date1>,<date2> --operation DATE_DIFF [--unit days]`: elapsed gap (`date2 - date1`) as an exact Duration\n\
+    - `rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM|DURATION_AVG [--unit minutes]`: typed Duration aggregate\n\
     \n\
     ## Inspecting the Graph\n\
     - `rgt status`: see all tracked nodes and staleness state\n\
     - `rgt query <node_id>`: trace provenance lineage for a value\n\
-    - `rgt graph`: export the dependency graph as text or mermaid\n\
+    - `rgt graph`: export the dependency graph as text, mermaid, DOT, or Turtle (`--format ttl`)\n\
+    - `rgt gc [--vacuum]`: remove obsolete (stale, dependent-free) nodes\n\
+    - `rgt doctor`: diagnose hook installation and capture health (0 = healthy/warnings, 1 = error)\n\
     \n\
     Run `rgt --help` for all available commands.\n";
 
@@ -169,17 +179,22 @@ pub const KILO_RULES: &str = "# RGT Integration\n\
     ## Recording Values\n\
     After reading a data file containing numbers or dates, record its values:\n\
     - `rgt record <file>`: extracts and tracks numeric/date values from file content\n\
+    - `rgt record <file> --number-format <us|eu|auto>`: parse numbers with a specific locale (`.`/`,` separator convention); default is the project's persisted setting, then `auto`\n\
     - Run `rgt status` to check what's tracked\n\
     \n\
     ## Recording Derivations\n\
     After computing a derived value from tracked root nodes:\n\
     - `rgt derive --parents <id1>,<id2> --operation EXPRESSION --expression \"a - b\" --result <val>`\n\
     - The derivation is verified before recording; wrong results are rejected (exit 1)\n\
+    - Temporal values: `rgt derive --parents <date1>,<date2> --operation DATE_DIFF [--unit days]`: elapsed gap (`date2 - date1`) as an exact Duration\n\
+    - `rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM|DURATION_AVG [--unit minutes]`: typed Duration aggregate\n\
     \n\
     ## Inspecting the Graph\n\
     - `rgt status`: see all tracked nodes and staleness state\n\
     - `rgt query <node_id>`: trace provenance lineage for a value\n\
-    - `rgt graph`: export the dependency graph as text or mermaid\n\
+    - `rgt graph`: export the dependency graph as text, mermaid, DOT, or Turtle (`--format ttl`)\n\
+    - `rgt gc [--vacuum]`: remove obsolete (stale, dependent-free) nodes\n\
+    - `rgt doctor`: diagnose hook installation and capture health (0 = healthy/warnings, 1 = error)\n\
     \n\
     Run `rgt --help` for all available commands.\n";
 
@@ -193,17 +208,22 @@ pub const COPILOT_CLI_RULES: &str = "\n## RGT Integration\n\
     ### Recording Values\n\
     After reading a data file containing numbers or dates, record its values:\n\
     - `rgt record <file>`: extracts and tracks numeric/date values from file content\n\
+    - `rgt record <file> --number-format <us|eu|auto>`: parse numbers with a specific locale (`.`/`,` separator convention); default is the project's persisted setting, then `auto`\n\
     - Run `rgt status` to check what's tracked\n\
     \n\
     ### Recording Derivations\n\
     After computing a derived value from tracked root nodes:\n\
     - `rgt derive --parents <id1>,<id2> --operation EXPRESSION --expression \"a - b\" --result <val>`\n\
     - The derivation is verified before recording; wrong results are rejected (exit 1)\n\
+    - Temporal values: `rgt derive --parents <date1>,<date2> --operation DATE_DIFF [--unit days]`: elapsed gap (`date2 - date1`) as an exact Duration\n\
+    - `rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM|DURATION_AVG [--unit minutes]`: typed Duration aggregate\n\
     \n\
     ### Inspecting the Graph\n\
     - `rgt status`: see all tracked nodes and staleness state\n\
     - `rgt query <node_id>`: trace provenance lineage for a value\n\
-    - `rgt graph`: export the dependency graph as text or mermaid\n\
+    - `rgt graph`: export the dependency graph as text, mermaid, DOT, or Turtle (`--format ttl`)\n\
+    - `rgt gc [--vacuum]`: remove obsolete (stale, dependent-free) nodes\n\
+    - `rgt doctor`: diagnose hook installation and capture health (0 = healthy/warnings, 1 = error)\n\
     \n\
     Run `rgt --help` for all available commands.\n";
 

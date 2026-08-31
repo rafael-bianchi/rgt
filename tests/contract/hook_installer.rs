@@ -279,6 +279,7 @@ fn existing_four_agents_write_with_markers() {
     assert!(agents_md.starts_with("# RGT Agents Instructions"));
     assert!(agents_md.contains("## RGT Integration"));
     assert!(agents_md.contains("rgt record <file>"));
+    assert_teaches_temporal_and_turtle(&agents_md, "codex AGENTS.md");
     assert!(agents_md.contains("<!-- /RGT Integration -->"));
 
     let windsurf = read(&PathBuf::from(".windsurfrules"));
@@ -444,6 +445,142 @@ fn rules_writers_create_files() {
     );
     assert!(kilo.contains("RGT Integration"));
     assert!(kilo.contains("<!-- /RGT Integration -->"));
+}
+
+// ---------------------------------------------------------------------------
+// 039 / US1: installed instructions teach the full feature set (doctor, gc,
+// --number-format) for every rules/prompt/instructions-file agent
+// ---------------------------------------------------------------------------
+
+/// Asserts an installed instruction artifact teaches the v0.7.0 temporal and
+/// Turtle-export surface (spec 039 parity with the canonical AGENTS.md).
+fn assert_teaches_temporal_and_turtle(text: &str, label: &str) {
+    for needle in ["DATE_DIFF", "DURATION_SUM", "--format ttl"] {
+        assert!(text.contains(needle), "{label} must mention {needle}");
+    }
+}
+
+#[test]
+fn all_installed_instruction_artifacts_teach_the_full_feature_set() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
+    run(&home, &config_dir, false, true, "cline");
+    let cline = read(&PathBuf::from(".clinerules"));
+    assert!(cline.contains("doctor"), ".clinerules must mention doctor");
+    assert!(cline.contains("rgt gc"), ".clinerules must mention rgt gc");
+    assert!(
+        cline.contains("number-format"),
+        ".clinerules must mention --number-format"
+    );
+    assert!(cline.contains("rgt record <file>"));
+    assert_teaches_temporal_and_turtle(&cline, ".clinerules");
+    assert!(cline.contains("<!-- /RGT Integration -->"));
+
+    run(&home, &config_dir, false, true, "antigravity");
+    let ag = read(
+        &PathBuf::from(".agents")
+            .join("rules")
+            .join("antigravity-rgt-rules.md"),
+    );
+    assert!(
+        ag.contains("doctor"),
+        "antigravity rules must mention doctor"
+    );
+    assert!(
+        ag.contains("rgt gc"),
+        "antigravity rules must mention rgt gc"
+    );
+    assert!(
+        ag.contains("number-format"),
+        "antigravity rules must mention --number-format"
+    );
+    assert_teaches_temporal_and_turtle(&ag, "antigravity rules");
+
+    run(&home, &config_dir, false, true, "kilocode");
+    let kilo = read(
+        &PathBuf::from(".kilocode")
+            .join("rules")
+            .join("rgt-rules.md"),
+    );
+    assert!(kilo.contains("doctor"), "kilo rules must mention doctor");
+    assert!(kilo.contains("rgt gc"), "kilo rules must mention rgt gc");
+    assert!(
+        kilo.contains("number-format"),
+        "kilo rules must mention --number-format"
+    );
+    assert_teaches_temporal_and_turtle(&kilo, "kilo rules");
+
+    run(&home, &config_dir, false, true, "windsurf");
+    let windsurf = read(&PathBuf::from(".windsurfrules"));
+    assert!(
+        windsurf.contains("doctor"),
+        "windsurf rules must mention doctor"
+    );
+    assert!(
+        windsurf.contains("rgt gc"),
+        "windsurf rules must mention rgt gc"
+    );
+    assert!(
+        windsurf.contains("number-format"),
+        "windsurf rules must mention --number-format"
+    );
+    assert!(
+        windsurf.contains("DATE_DIFF") && windsurf.contains("--format ttl"),
+        "windsurf rules must mention DATE_DIFF and --format ttl"
+    );
+}
+
+#[test]
+fn codex_written_agents_md_teaches_full_feature_set() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
+    run(&home, &config_dir, false, true, "codex");
+    let agents_md = read(&PathBuf::from("AGENTS.md"));
+    assert!(
+        agents_md.contains("doctor"),
+        "codex AGENTS.md must mention doctor"
+    );
+    assert!(
+        agents_md.contains("rgt gc"),
+        "codex AGENTS.md must mention rgt gc"
+    );
+    assert!(
+        agents_md.contains("number-format"),
+        "codex AGENTS.md must mention --number-format"
+    );
+    assert!(agents_md.contains("rgt record <file>"));
+    assert!(agents_md.contains("<!-- /RGT Integration -->"));
+}
+
+#[test]
+fn copilot_cli_instructions_teach_full_feature_set() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
+    run(&home, &config_dir, true, true, "copilot");
+    let rules = read(&copilot_cli_config_dir(&home, &config_dir).join("AGENTS.md"));
+    assert!(
+        rules.contains("doctor"),
+        "copilot CLI rules must mention doctor"
+    );
+    assert!(
+        rules.contains("rgt gc"),
+        "copilot CLI rules must mention rgt gc"
+    );
+    assert!(
+        rules.contains("number-format"),
+        "copilot CLI rules must mention --number-format"
+    );
+    assert!(rules.contains("rgt record <file>"));
+    assert_teaches_temporal_and_turtle(&rules, "copilot CLI rules");
 }
 
 // ---------------------------------------------------------------------------
