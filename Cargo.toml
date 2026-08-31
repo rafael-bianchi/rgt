@@ -231,6 +231,10 @@ path = "tests/contract/test_duration_query_contract.rs"
 [[test]]
 name = "test_duration_performance"
 path = "tests/integration/test_duration_performance.rs"
+
+[[test]]
+name = "test_query_contract"
+path = "tests/contract/test_query_contract.rs"
 [[bench]]
 name = "bench_detection"
 harness = false

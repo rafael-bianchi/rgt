@@ -73,19 +73,21 @@ fn json_output(output: std::process::Output) -> serde_json::Value {
 }
 
 #[test]
-fn query_without_unit_preserves_default_and_json_wrappers() {
+fn query_without_unit_prints_text_by_default_and_clean_json_with_flag() {
     let directory = fixture();
-    let wrapped = json_output(run(&directory, &["query", "duration-days"]));
-    let direct = json_output(run(&directory, &["query", "duration-days", "--json"]));
+    let text = run(&directory, &["query", "duration-days"]);
+    assert!(text.status.success());
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(text.contains("=== RGT Provenance Lineage ==="));
+    assert!(text.contains("45d"));
+    assert!(!text.contains("display:"));
 
-    assert!(wrapped.get("lineage").is_some());
+    let direct = json_output(run(&directory, &["query", "duration-days", "--json"]));
     assert!(direct.get("lineage").is_none());
-    for response in [&wrapped["lineage"], &direct] {
-        let step = &response["lineage_steps"][0];
-        assert_eq!(step["value"], "45d");
-        assert!(step.get("duration_seconds").is_none());
-        assert!(step.get("selected_unit_display").is_none());
-    }
+    let step = &direct["lineage_steps"][0];
+    assert_eq!(step["value"], "45d");
+    assert!(step.get("duration_seconds").is_none());
+    assert!(step.get("selected_unit_display").is_none());
 }
 
 #[test]
