@@ -20,9 +20,16 @@ After computing a derived value from tracked root nodes:
 ### Inspecting the Graph
 - `rgt status`: see all tracked nodes and staleness state
 - `rgt query <node_id>`: trace provenance lineage for a value
-- `rgt graph`: export the dependency graph as text or mermaid
+- `rgt graph`: export the dependency graph as text, mermaid, DOT, or Turtle
+- `rgt graph --format ttl [--include-absolute-paths]`: export project-scoped PROV-O Turtle; absolute source paths are opt-in and sensitive
 - `rgt gc [--vacuum]`: remove obsolete (stale, dependent-free) nodes
 - `rgt doctor`: diagnose hook installation and capture health (0 = healthy/warnings, 1 = error)
+
+Turtle export is bounded to 10,000 values, 30,000 derivation edges, 64 MiB,
+and a one-second command deadline. Its RDF union keeps separate projects'
+same-spelled local node IDs distinct. Capture attribution identifies which of
+the eight event-capable hook/plugin agents recorded a value; it does not mean
+the agent authored the source or calculated a derivation.
 
 > **Copilot CLI note**: RGT's Copilot CLI event-shape handling is an assumption
 > pending live verification against the real tool — the dual-dialect parser is

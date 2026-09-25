@@ -229,9 +229,9 @@ pub const RGT_END_MARKER_LINE: &str = "\n<!-- /RGT Integration -->\n";
 /// already auto-captured. Spliced into every rules/instructions artifact RGT
 /// writes (findings §6).
 pub const NON_TEXT_SOURCE_INSTRUCTION: &str = "\n### Recording Values from Non-Text Sources (PDF, Excel, images, scanned documents)\n\
-    RGT's passive hook can only capture plain-text file content — it cannot see inside PDF, Excel (.xlsx), image, or other binary files, even when you read them directly. This is a platform limitation (PDF/image interpretation happens inside the model itself, never as a local text file), not something RGT's hook can intercept.\n\
+    RGT's passive hook can only capture plain-text file content — it cannot see inside Excel (.xlsx), image, or other binary files, even when you read them directly. For Claude Code, native PDF reads are captured automatically: the hook decodes the PDF's base64 envelope and extracts the text layer locally. This is a platform limitation (PDF/image interpretation happens inside the model itself, never as a local text file), not something RGT's hook can intercept for every format.\n\
     \n\
-    After reading a PDF, Excel, image, or other non-text source, you must report its values explicitly:\n\
+    After reading an Excel, image, or other non-text source (or a PDF where automatic capture did not apply), you must report its values explicitly:\n\
     - Extract the numeric values and dates from what you just read.\n\
     - Pipe them to RGT in plain text form: `echo \"Amount: 1234.56\" | rgt record --stdin`\n\
     - (Alternative: write your extraction to an intermediate `.txt`/`.md` file — that file's own read/write will be captured automatically, since it is plain text.)\n\

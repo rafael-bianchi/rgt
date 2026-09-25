@@ -128,6 +128,7 @@ rgt derive --parents node_raw_X,node_raw_Y --operation EXPRESSION --expression "
                             # agent records a verified derivation
 rgt query node_drv_Z        # trace the derived value's lineage
 rgt graph --format mermaid  # export the dependency graph
+rgt graph --format ttl      # export interoperable PROV-O Turtle
 ```
 
 ## How It Works
@@ -151,7 +152,7 @@ Three strategies keep the graph trustworthy:
 
 1. **Capture**: native hooks/plugins push every file an agent reads through `rgt record`, so values land in the graph without the agent remembering to call it.
 
-> **Non-text sources (PDF, Excel, images)**: RGT's passive hook cannot see inside binary files — PDF/image interpretation happens inside the model itself, never as a local text file. The RGT instructions RGT writes to agents tell them to explicitly report such values via `echo "Amount: 1234.56" | rgt record --stdin` (or an intermediate `.txt`/`.md` file). Plain-text/CSV/JSON/Markdown need no such action — they're captured automatically. `rgt record` on a binary file returns a clear "unsupported file format" error naming this path.
+> **Non-text sources (PDF, Excel, images)**: RGT's passive hook cannot see inside binary files — PDF/image interpretation happens inside the model itself, never as a local text file. For **Claude Code PDF reads**, RGT now decodes the PDF's base64 envelope, extracts the text layer locally, and records its values automatically (and injects the real extracted text back via `PostToolUse` `additionalContext`). For Excel, images, and other agents, the RGT instructions RGT writes to agents tell them to explicitly report such values via `echo "Amount: 1234.56" | rgt record --stdin` (or an intermediate `.txt`/`.md` file). Plain-text/CSV/JSON/Markdown need no such action — they're captured automatically. `rgt record` on a binary file returns a clear "unsupported file format" error naming this path.
 2. **Verification**: every `rgt derive` is trust-but-verify: RGT re-computes the result from parent values and rejects wrong ones before insertion.
 3. **Staleness**: when a source file changes, its nodes (and everything derived from them) are flagged stale, so the agent can be told to re-read. Change detection is two-tier (mtime+size, then BLAKE3) with a time-bounded forced re-hash, and distinguishes a genuinely deleted file (`FILE_DELETED`) from a permission/lock error (`CHECK_FAILED`, which does not mark values stale).
 
@@ -218,11 +219,36 @@ rgt verify --parents <ids> --operation <op> --result <val>
                                            # verify a derived value without recording
 rgt status [--stale-only] [--json]         # graph state and staleness
 rgt query <node_id> [--json]               # full lineage for a value
-rgt graph [-f text|mermaid|dot]            # export the dependency DAG
+rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths]
+                                           # export the dependency graph
 rgt gc [--vacuum]                          # remove obsolete (stale, dependent-free) nodes
 ```
 
 `rgt record --number-format` overrides the persisted format for one call; otherwise the persisted setting (from `rgt init`) is used, falling back to `auto`. Number parsing is locale-aware: a leading `-` and accounting parentheses `(N)` are part of the value, thousands/decimal separators are honored per the active format, and values that can't be parsed under that format are skipped (with a warning) rather than split into bogus nodes.
+
+#### Turtle provenance export
+
+`rgt graph --format ttl` writes deterministic Turtle using PROV-O entities,
+activities, usages, and coding-tool agents. Project-scoped value IRIs keep
+matching local node IDs from independent stores distinct when exports are
+combined as an RDF union; copying a store preserves its project identity. The
+original node ID remains available as `rgt:localNodeId`.
+
+By default, source documents have path-free IRIs. A safely verified project
+relative path is included when the file is available; outside, missing, or
+unclassifiable paths have no path literal. The opt-in
+`--include-absolute-paths` flag adds available absolute source paths and may
+expose usernames or local directory names. Preserved free-text expressions can
+also contain path-like text.
+
+Turtle export is limited to 10,000 recorded values, 30,000 derivation edges,
+64 MiB of rendered UTF-8, and a one-second command deadline. A limit or
+pre-write error produces no Turtle on stdout. Uncertain derivation groups keep
+their direct parent links but omit the activity and consolidated operation or
+expression claims, with a warning on stderr. Capture activities record which
+of the eight event-capable hook/plugin agents captured a value; they do not
+claim source authorship or derivation responsibility. Other graph formats
+retain their existing output and have no new Turtle limits.
 
 `rgt gc` removes **obsolete nodes** — values marked stale that nothing derives from — and reports how many it removed. It never touches non-stale nodes or anything still depended on. `rgt gc --vacuum` additionally reclaims freed disk pages with SQLite `VACUUM` (opt-in; the default run only deletes rows).
 

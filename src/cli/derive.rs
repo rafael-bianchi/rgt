@@ -121,12 +121,17 @@ pub fn execute_derive(
         updated_at: now,
     };
 
-    insert_tracked_node(conn, &node)
-        .map_err(|e| format!("failed to insert derived node: {}", e))?;
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("failed to begin derivation transaction: {e}"))?;
+    insert_tracked_node(&tx, &node).map_err(|e| format!("failed to insert derived node: {e}"))?;
 
     for pid in &parent_ids {
-        insert_derivation_edge(conn, pid, &node_id, operation, expression)?;
+        insert_derivation_edge(&tx, pid, &node_id, operation, expression)
+            .map_err(|e| format!("failed to insert edge: {e}"))?;
     }
+    tx.commit()
+        .map_err(|e| format!("failed to commit derivation transaction: {e}"))?;
 
     println!("Derived node: {}", node_id);
 

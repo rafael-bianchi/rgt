@@ -460,4 +460,60 @@ mod tests {
         assert!(execute_record(&path_str, false, None).is_ok());
         assert_eq!(recorded_numbers(), vec![1234.56]);
     }
+
+    #[test]
+    fn derive_write_failure_rolls_back_child_and_every_parent_edge() {
+        use rgt::store::DbStore;
+        use rgt::types::{TrackedNode, ValueData};
+
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        let db = DbStore::open_in_project(".").unwrap();
+        for (id, value) in [("parent-a", 3.0), ("parent-b", 4.0)] {
+            db.conn()
+                .execute(
+                    "INSERT INTO tracked_nodes (id,node_type,value_kind,number_val,is_stale,created_at,updated_at)
+                     VALUES (?1,'ROOT','NUMBER',?2,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
+                    rusqlite::params![id, value],
+                )
+                .unwrap();
+        }
+        db.conn()
+            .execute_batch(
+                "CREATE TRIGGER fail_second_derivation_edge
+                 BEFORE INSERT ON derivation_edges
+                 WHEN NEW.parent_node_id = 'parent-b'
+                 BEGIN SELECT RAISE(ABORT, 'injected edge failure'); END;",
+            )
+            .unwrap();
+        drop(db);
+
+        let expected_id = TrackedNode::generate_derived_id(
+            &["parent-a".into(), "parent-b".into()],
+            "EXPRESSION",
+            &ValueData::Number(7.0),
+        );
+        let error =
+            rgt::cli::derive::execute_derive("parent-a,parent-b", "EXPRESSION", Some("a + b"), 7.0)
+                .unwrap_err();
+        assert!(error.to_string().contains("injected edge failure"));
+
+        let db = DbStore::open_in_project(".").unwrap();
+        let child_count: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM tracked_nodes WHERE id = ?1",
+                [&expected_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let edge_count: i64 = db
+            .conn()
+            .query_row("SELECT count(*) FROM derivation_edges", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(child_count, 0);
+        assert_eq!(edge_count, 0);
+    }
 }

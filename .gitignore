@@ -13,6 +13,9 @@ wheels/
 /target
 debug/
 release/
+*.rs.bk
+*.rlib
+*.prof*
 
 # RGT store & logs
 .rgt/store.db
@@ -21,6 +24,9 @@ release/
 # OS & Editor
 .DS_Store
 Thumbs.db
+.idea/
+*.log
+.env*
 
 # Development tooling
 .kilo/

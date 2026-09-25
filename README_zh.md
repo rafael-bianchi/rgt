@@ -126,6 +126,7 @@ rgt derive --parents node_raw_X,node_raw_Y --operation EXPRESSION --expression "
                             # 代理记录一条已验证的推导
 rgt query node_drv_Z        # 追踪派生值的谱系
 rgt graph --format mermaid  # 导出依赖图
+rgt graph --format ttl      # 导出 PROV-O Turtle
 ```
 
 ## 工作原理
@@ -168,7 +169,7 @@ rgt verify --parents <ids> --operation <op> --result <val>
                                            # 验证派生值而不记录
 rgt status [--stale-only] [--json]         # 图状态与过期情况
 rgt query <node_id> [--json]               # 某个值的完整谱系
-rgt graph [-f text|mermaid|dot]            # 导出依赖 DAG
+rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # 导出依赖图
 ```
 
 操作类型：`EXPRESSION`（如 `a + b * c` 的公式）和 `DATE_DIFF`（日期运算，如 `date2 - date1`）。父变量映射为 `parent[0]=a, parent[1]=b, ...`。
