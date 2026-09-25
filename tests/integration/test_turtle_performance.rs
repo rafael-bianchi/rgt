@@ -121,6 +121,10 @@ fn blocked_stdout_pipe() {
         "expected final-write timeout, got: {}",
         String::from_utf8_lossy(&stderr)
     );
+    // A Windows anonymous-pipe WriteFile can remain pending without making a
+    // partial buffer visible to the reader. The deadline, nonzero exit, and
+    // final-write error above are the portable contract.
+    #[cfg(not(windows))]
     assert!(
         !partial.is_empty(),
         "the pipe must have received a partial write before stalling"

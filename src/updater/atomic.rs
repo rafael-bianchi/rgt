@@ -58,6 +58,9 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    // The Windows updater replaces the running executable via self_replace;
+    // this arbitrary-target fixture exercises only the POSIX rename path.
+    #[cfg(unix)]
     #[test]
     fn test_atomic_replace_installs_new_binary() {
         let dir = tempfile::tempdir().unwrap();
