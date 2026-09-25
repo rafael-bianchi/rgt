@@ -126,6 +126,7 @@ rgt derive --parents node_raw_X,node_raw_Y --operation EXPRESSION --expression "
                             # 에이전트가 검증된 도출을 기록
 rgt query node_drv_Z        # 도출값의 계보 추적
 rgt graph --format mermaid  # 의존성 그래프 내보내기
+rgt graph --format ttl      # PROV-O Turtle로 내보내기
 ```
 
 ## 동작 원리
@@ -168,7 +169,7 @@ rgt verify --parents <ids> --operation <op> --result <val>
                                            # 기록하지 않고 도출값 검증
 rgt status [--stale-only] [--json]         # 그래프 상태와 최신성
 rgt query <node_id> [--json]               # 값의 전체 계보
-rgt graph [-f text|mermaid|dot]            # 의존성 DAG 내보내기
+rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # 그래프 내보내기
 ```
 
 연산: `EXPRESSION`(`a + b * c` 같은 수식)과 `DATE_DIFF`(`date2 - date1` 같은 날짜 연산). 부모 변수는 `parent[0]=a, parent[1]=b, ...`로 매핑됩니다.

@@ -1,6 +1,7 @@
 use crate::types::{DerivationEdge, NodeType, SourceDocument, TrackedNode, ValueData, ValueKind};
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, Connection, Result};
+use uuid::Uuid;
 
 /// Inserts or updates a source document row by file path (or, when identity is
 /// available, by dev/ino). Returns the upserted document.
@@ -138,6 +139,38 @@ pub fn insert_tracked_node(conn: &Connection, node: &TrackedNode) -> Result<()> 
     )?;
 
     Ok(())
+}
+
+/// Records that a known hook-capable coding agent captured a value. Repeated
+/// observations by the same agent are idempotent; a different agent adds one
+/// separate association. This is intended to run in the value insert's
+/// transaction.
+pub fn insert_capture_association(
+    conn: &Connection,
+    node_id: &str,
+    agent_name: &str,
+) -> Result<()> {
+    if !crate::hooks::installer::is_capture_capable_agent(agent_name) {
+        return Err(rusqlite::Error::InvalidParameterName(format!(
+            "unsupported capture agent '{agent_name}'"
+        )));
+    }
+    conn.execute(
+        "INSERT INTO capture_associations (node_id, agent_name) VALUES (?1, ?2)
+         ON CONFLICT(node_id, agent_name) DO NOTHING",
+        params![node_id, agent_name],
+    )?;
+    Ok(())
+}
+
+/// Lists durable capture associations in stable `(node_id, agent_name)` order.
+#[allow(dead_code)]
+pub fn list_capture_associations(conn: &Connection) -> Result<Vec<(String, String)>> {
+    let mut statement = conn.prepare(
+        "SELECT node_id, agent_name FROM capture_associations ORDER BY node_id, agent_name",
+    )?;
+    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
 }
 
 /// Fetches a tracked node by ID, if it exists.
@@ -382,6 +415,31 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
         params![key, value],
     )?;
     Ok(())
+}
+
+/// Returns the immutable, per-store RDF project token, creating it once on
+/// first use. Concurrent openers race through `ON CONFLICT DO NOTHING`, then
+/// all read the same committed value.
+pub fn get_or_create_rdf_project_id(conn: &Connection) -> Result<String> {
+    let candidate = Uuid::new_v4().simple().to_string();
+    conn.execute(
+        "INSERT INTO project_settings (key, value) VALUES ('rdf_project_id', ?1)
+         ON CONFLICT(key) DO NOTHING",
+        params![candidate],
+    )?;
+    let project_id =
+        get_setting(conn, "rdf_project_id")?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+    if project_id.len() != 32
+        || !project_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+            Some("invalid rdf_project_id: expected 32 lowercase hexadecimal characters".into()),
+        ));
+    }
+    Ok(project_id)
 }
 
 /// Deletes obsolete nodes — stale nodes with no derived dependents (not a

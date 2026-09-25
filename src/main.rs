@@ -1,5 +1,7 @@
 mod cli;
 mod detection;
+mod export;
+mod extract;
 mod graph;
 mod hooks;
 mod query;
@@ -65,9 +67,13 @@ enum Commands {
     },
     /// Export or visualize the dependency graph structure
     Graph {
-        /// Export format: text, mermaid, dot
+        /// Export format: text, mermaid, dot, ttl
         #[arg(short, long, default_value = "text")]
         format: String,
+
+        /// Include available absolute source paths in Turtle output (privacy-sensitive)
+        #[arg(long)]
+        include_absolute_paths: bool,
     },
     /// Process passive execution hooks (PreToolUse / PostToolUse)
     Hook {
@@ -168,8 +174,10 @@ fn parse_number_format(s: Option<&str>) -> Option<NumberFormat> {
     s.and_then(|raw| raw.parse().ok())
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // Reserve time for process-launch and scheduling overhead so a blocked
+    // stdout write remains observable as a sub-second CLI failure.
+    let command_deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
     let cli = Cli::parse();
 
     let result = match cli.command {
@@ -190,7 +198,16 @@ async fn main() {
         },
         Commands::Status { stale_only, json } => cli::execute_status(stale_only, json),
         Commands::Query { node_id, json } => cli::execute_query(&node_id, json),
-        Commands::Graph { format } => cli::execute_graph(&format),
+        Commands::Graph {
+            format,
+            include_absolute_paths,
+        } => {
+            if include_absolute_paths && !format.eq_ignore_ascii_case("ttl") {
+                eprintln!("error: --include-absolute-paths is only valid with --format ttl");
+                std::process::exit(2);
+            }
+            cli::execute_graph_with_options(&format, include_absolute_paths, command_deadline)
+        }
         Commands::Hook { event, agent } => {
             if let Err(e) = hooks::handle_passive_hook_event(&event, agent.as_deref()) {
                 eprintln!("Hook warning: {}", e);

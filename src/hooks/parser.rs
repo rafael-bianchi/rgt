@@ -92,6 +92,9 @@ impl From<ExtractionResult> for Vec<ExtractedValue> {
 pub struct NormalizedCapture {
     pub path: Option<String>,
     pub content: Option<String>,
+    /// Base64 PDF envelope bytes (spec 033). When present, the hook decodes and
+    /// locally extracts the PDF instead of falling back to a disk read.
+    pub pdf_base64: Option<String>,
 }
 
 /// Parses a hook event JSON payload from stdin into a structured `HookPayload`.
@@ -327,7 +330,13 @@ pub fn normalize_agent_event(agent: Option<&str>, stdin: &str) -> Option<Normali
 }
 
 /// Default dialect: `tool_input.path`/`file_path` + `tool_response.content`
-/// (reuses the structured Claude Code compatible payload shape).
+/// (reuses the structured Claude Code compatible payload shape). When
+/// `tool_response.content` is absent but the response carries the structured
+/// binary envelope shape (`type == "pdf"` with a `file.base64` field — the
+/// empirically captured shape for native PDF reads), the base64 is surfaced in
+/// `pdf_base64` so the hook can decode and extract it locally (spec 033). The
+/// shape is an undocumented internal detail, so any mismatch falls through with
+/// the content-less capture unchanged (fail open).
 fn default_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
     let payload = parse_hook_payload(&value.to_string()).ok()?;
     let path = payload
@@ -338,7 +347,30 @@ fn default_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
         .tool_response
         .as_ref()
         .and_then(|r| r.content.clone());
-    Some(NormalizedCapture { path, content })
+    // Inspect the raw JSON, not the round-tripped struct: HookToolResponse only
+    // carries `content`, so the envelope's `type`/`file` fields survive only on
+    // the original value.
+    let pdf_base64 = value.get("tool_response").and_then(pdf_envelope_base64);
+    Some(NormalizedCapture {
+        path,
+        content,
+        pdf_base64,
+    })
+}
+
+/// Returns the base64 string of a PDF envelope inside a `tool_response` value
+/// when the shape matches the empirically captured `{type: "pdf", file:
+/// {filePath, base64, originalSize}}` (spec 033 §1). `None` otherwise.
+fn pdf_envelope_base64(tool_response: &serde_json::Value) -> Option<String> {
+    let is_pdf = tool_response.get("type").and_then(|t| t.as_str()) == Some("pdf");
+    if !is_pdf {
+        return None;
+    }
+    tool_response
+        .get("file")
+        .and_then(|f| f.get("base64"))
+        .and_then(|b| b.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Copilot dual dialect: VS Code Chat (snake_case, default shape) or Copilot
@@ -358,12 +390,14 @@ fn copilot_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
                 return Some(NormalizedCapture {
                     path: Some(path.to_string()),
                     content: None,
+                    ..Default::default()
                 });
             }
             if let Some(cmd) = args.get("command").and_then(|c| c.as_str()) {
                 return Some(NormalizedCapture {
                     path: extract_path_from_command(cmd),
                     content: None,
+                    ..Default::default()
                 });
             }
         }
@@ -394,7 +428,11 @@ fn command_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
         .and_then(|s| s.as_str())
         .filter(|s| !s.trim().is_empty())
         .map(|s| s.to_string());
-    Some(NormalizedCapture { path, content })
+    Some(NormalizedCapture {
+        path,
+        content,
+        ..Default::default()
+    })
 }
 
 /// Extracts a path argument of a read-style command (`cat`, `read`, `less`,

@@ -126,6 +126,7 @@ rgt derive --parents node_raw_X,node_raw_Y --operation EXPRESSION --expression "
                             # エージェントが検証済みの導出を記録
 rgt query node_drv_Z        # 派生値の系譜を追跡
 rgt graph --format mermaid  # 依存グラフをエクスポート
+rgt graph --format ttl      # PROV-O Turtle でエクスポート
 ```
 
 ## 動作の仕組み
@@ -168,7 +169,7 @@ rgt verify --parents <ids> --operation <op> --result <val>
                                            # 記録せずに派生値を検証
 rgt status [--stale-only] [--json]         # グラフの状態とデータの古さ
 rgt query <node_id> [--json]               # 値の完全な系譜
-rgt graph [-f text|mermaid|dot]            # 依存 DAG をエクスポート
+rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # 依存グラフを出力
 ```
 
 操作：`EXPRESSION`（`a + b * c` のような式）と `DATE_DIFF`（`date2 - date1` のような日付演算）。親変数は `parent[0]=a, parent[1]=b, ...` と対応します。

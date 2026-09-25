@@ -1,5 +1,7 @@
 pub mod cli;
 pub mod detection;
+pub mod export;
+pub mod extract;
 pub mod graph;
 pub mod hooks;
 pub mod query;

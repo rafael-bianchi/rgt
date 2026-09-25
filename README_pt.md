@@ -126,6 +126,7 @@ rgt derive --parents node_raw_X,node_raw_Y --operation EXPRESSION --expression "
                             # o agente registra uma derivação verificada
 rgt query node_drv_Z        # rastreie a linhagem do valor derivado
 rgt graph --format mermaid  # exporte o grafo de dependências
+rgt graph --format ttl      # exporta Turtle PROV-O
 ```
 
 ## Como funciona
@@ -168,7 +169,7 @@ rgt verify --parents <ids> --operation <op> --result <val>
                                            # verifica um valor derivado sem registrar
 rgt status [--stale-only] [--json]         # estado do grafo e obsolescência
 rgt query <node_id> [--json]               # linhagem completa de um valor
-rgt graph [-f text|mermaid|dot]            # exporta o DAG de dependências
+rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # exporta o grafo
 ```
 
 Operações: `EXPRESSION` (fórmulas como `a + b * c`) e `DATE_DIFF` (aritmética de datas, ex. `date2 - date1`). As variáveis pai correspondem a `parent[0]=a, parent[1]=b, ...`.

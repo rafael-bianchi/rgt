@@ -7,6 +7,20 @@ mod tests {
     use rgt::updater::platform::{Arch, Os, Platform};
     use std::path::Path;
 
+    /// Derives a release tag that is strictly newer than `current` under SemVer
+    /// precedence (bump the minor component), so tests exercising the "proceeds
+    /// past gating" path stay green regardless of CARGO_PKG_VERSION.
+    fn newer_tag_for(current: &str) -> String {
+        let cur = semver::Version::parse(current.trim_start_matches('v'))
+            .expect("newer_tag_for: input must be a valid semver version");
+        format!("v{}.{}.0", cur.major, cur.minor + 1)
+    }
+
+    /// The tag a "genuinely newer" release would carry for the installed version.
+    fn newer_stub_tag() -> String {
+        newer_tag_for(env!("CARGO_PKG_VERSION"))
+    }
+
     fn stub_release(tag: &str, checksums: bool) -> GitHubRelease {
         let platform = Platform::detect();
         let asset_name = platform.asset_name(tag);
@@ -100,6 +114,31 @@ mod tests {
     // -----------------------------------------------------------------------
     // US1 (T008): refuse unverified installs
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn newer_tag_for_is_strictly_newer_across_version_shapes() {
+        for current in ["0.5.0", "1.2.3", "0.0.1", "0.5.0-rc.1"] {
+            let derived = newer_tag_for(current);
+            let is_newer = rgt::updater::version::latest_is_newer(&derived, current)
+                .unwrap_or_else(|e| panic!("comparing {derived} vs {current}: {e}"));
+            assert!(
+                is_newer,
+                "derived tag {derived} must be strictly newer than {current}"
+            );
+        }
+    }
+
+    #[test]
+    fn newer_stub_tag_is_strictly_newer_than_current_version() {
+        let derived = newer_stub_tag();
+        let current = env!("CARGO_PKG_VERSION");
+        let is_newer = rgt::updater::version::latest_is_newer(&derived, current)
+            .unwrap_or_else(|e| panic!("comparing {derived} vs {current}: {e}"));
+        assert!(
+            is_newer,
+            "derived tag {derived} must be strictly newer than {current}"
+        );
+    }
 
     #[test]
     fn missing_checksums_is_a_hard_refusal() {
@@ -203,7 +242,7 @@ mod tests {
     fn genuine_newer_tag_proceeds_past_gating() {
         let io = StubIo {
             download_ok: false,
-            ..StubIo::new(stub_release("v0.4.1", true))
+            ..StubIo::new(stub_release(&newer_stub_tag(), true))
         };
         let err = run(None, false, false, &io).unwrap_err();
         assert_eq!(err.message, "Download failed", "must proceed to download");
@@ -241,9 +280,10 @@ mod tests {
     #[test]
     fn failed_verification_never_reaches_replace() {
         // Checksum mismatch: the pipeline must stop before replace.
+        let newer = newer_stub_tag();
         let io = StubIo {
             checksum_result: Some(false),
-            ..StubIo::new(stub_release("v0.4.1", true))
+            ..StubIo::new(stub_release(&newer, true))
         };
         let err = run(None, false, false, &io).unwrap_err();
         assert!(err.message.contains("Checksum verification FAILED"));
@@ -252,7 +292,7 @@ mod tests {
         // Attestation failure: same ordering guarantee.
         let io2 = StubIo {
             attestation_result: Err("rejected".to_string()),
-            ..StubIo::new(stub_release("v0.4.1", true))
+            ..StubIo::new(stub_release(&newer, true))
         };
         let err2 = run(None, false, false, &io2).unwrap_err();
         assert!(err2.message.contains("attestation verification failed"));
