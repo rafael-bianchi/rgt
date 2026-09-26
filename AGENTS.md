@@ -17,9 +17,17 @@ After computing a derived value from tracked root nodes:
 - `rgt derive --parents <id1>,<id2> --operation EXPRESSION --expression "a - b" --result <val>`
 - The derivation is verified before recording; wrong results are rejected (exit 1)
 
+For temporal values, prefer typed operations so the graph preserves Duration semantics:
+- `rgt derive --parents <date1>,<date2> --operation DATE_DIFF [--unit days]`: computes the ordered elapsed gap automatically; parent order is `date2 - date1`
+- `rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM|DURATION_AVG [--unit minutes]`: computes a typed Duration from 2–26 distinct Duration parents
+- Optional `--result <value> --result-unit <seconds|minutes|hours|days|weeks>` checks a claim before writing; claims default to seconds. Stored values remain exact whole seconds, and claims or averages that require fractional seconds are rejected without rounding.
+- The fixed elapsed-time units are seconds, minutes, hours, days, and weeks. Calendar months and years are unsupported because their lengths vary. Claim and display units are transient: neither is persisted as node metadata; the graph stores exact seconds.
+- Legacy `EXPRESSION` with Date or Duration parents remains numeric: Dates are Unix timestamp seconds, Durations are elapsed seconds, and the result is a Number. RGT emits a warning; use `DATE_DIFF` or typed Duration operations when a Duration result is intended.
+
 ### Inspecting the Graph
 - `rgt status`: see all tracked nodes and staleness state
 - `rgt query <node_id>`: trace provenance lineage for a value
+- `rgt query <duration_node_id> --unit days [--json]`: redisplay a Duration without changing its stored value; the requested lineage entry keeps `value` and adds exact `duration_seconds` (decimal string) plus `selected_unit_display`. Read `duration_seconds` for calculations, not the rounded display decimal.
 - `rgt graph`: export the dependency graph as text, mermaid, DOT, or Turtle
 - `rgt graph --format ttl [--include-absolute-paths]`: export project-scoped PROV-O Turtle; absolute source paths are opt-in and sensitive
 - `rgt gc [--vacuum]`: remove obsolete (stale, dependent-free) nodes

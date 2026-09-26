@@ -172,7 +172,17 @@ rgt query <node_id> [--json]               # linhagem completa de um valor
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # exporta o grafo
 ```
 
-Operações: `EXPRESSION` (fórmulas como `a + b * c`) e `DATE_DIFF` (aritmética de datas, ex. `date2 - date1`). As variáveis pai correspondem a `parent[0]=a, parent[1]=b, ...`.
+Operações: `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM` e `DURATION_AVG`. `DATE_DIFF` calcula automaticamente o tempo decorrido entre duas datas ordenadas; soma e média aceitam de 2 a 26 Durações distintas. Os resultados são armazenados como segundos inteiros exatos. A média que não resulta em um segundo inteiro é rejeitada.
+
+As unidades fixas de exibição são `seconds`, `minutes`, `hours`, `days` e `weeks`; meses e anos de calendário não são aceitos. `--result-unit` qualifica o valor informado, enquanto `--unit` só altera a exibição. Por exemplo:
+
+```bash
+rgt derive --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days --unit hours
+rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM --unit minutes
+rgt query <duration_id> --unit days [--json]
+```
+
+A consulta mantém `value` e acrescenta `duration_seconds` exato como texto e `selected_unit_display` apenas ao nó solicitado. Conversões decimais repetidas são marcadas como aproximadas; os segundos continuam exatos. `EXPRESSION` com datas usa segundos Unix e com Durações usa segundos decorridos, retorna um Number e emite um aviso.
 
 ## Ferramentas de IA compatíveis
 

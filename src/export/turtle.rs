@@ -724,19 +724,96 @@ fn classify_derivation_group(
         }
         parent_ids.push(edge.parent_node_id.clone());
     }
-    let complete_id = TrackedNode::generate_derived_id(&parent_ids, &operation_type, &child.value);
-    let id_matches = child.id == complete_id
-        || (complete_id.starts_with("node_drv_")
-            && child.id.len() == "node_drv_".len() + 12
-            && child.id == complete_id[.."node_drv_".len() + 12]);
+    let mut activity_parent_ids = parent_ids.clone();
+    let id_matches = match &child.value {
+        ValueData::Duration(duration) => {
+            // A repeated DATE_DIFF operand has one stored lineage edge, so its
+            // ordered two-operand identity can only be recovered from a zero
+            // result and a matching canonical or historical ID.
+            if operation_type == "DATE_DIFF"
+                && parent_ids.len() == 1
+                && *duration == Duration::zero()
+            {
+                activity_parent_ids = vec![parent_ids[0].clone(), parent_ids[0].clone()];
+            }
+            if !supported_duration_derivation(
+                &operation_type,
+                &expression,
+                &activity_parent_ids,
+                nodes,
+            ) {
+                return None;
+            }
+            let canonical = TrackedNode::generate_duration_derived_id(
+                &activity_parent_ids,
+                &operation_type,
+                duration.num_seconds(),
+            )
+            .ok();
+            if canonical.as_deref() == Some(child.id.as_str()) {
+                true
+            } else if operation_type == "DATE_DIFF" {
+                let historical = TrackedNode::generate_derived_id(
+                    &activity_parent_ids,
+                    &operation_type,
+                    &child.value,
+                );
+                child.id == historical
+                    || (child.id.len() == "node_drv_".len() + 12
+                        && historical.starts_with(&child.id))
+            } else {
+                false
+            }
+        }
+        ValueData::Number(_) if operation_type == "EXPRESSION" => {
+            let historical =
+                TrackedNode::generate_derived_id(&parent_ids, &operation_type, &child.value);
+            child.id == historical
+                || (child.id.len() == "node_drv_".len() + 12
+                    && child.id == historical[.."node_drv_".len() + 12])
+        }
+        _ => false,
+    };
     if !id_matches {
         return None;
     }
     Some(DerivationActivity {
-        parent_ids,
+        parent_ids: activity_parent_ids,
         operation_type,
         expression,
     })
+}
+
+fn supported_duration_derivation(
+    operation: &str,
+    expression: &Option<String>,
+    parent_ids: &[String],
+    nodes: &HashMap<String, ExportNode>,
+) -> bool {
+    if expression.is_some() {
+        return false;
+    }
+    match operation {
+        "DATE_DIFF" => {
+            parent_ids.len() == 2
+                && parent_ids.iter().all(|parent_id| {
+                    nodes
+                        .get(parent_id)
+                        .map(|node| matches!(&node.value, ValueData::Date(_)))
+                        .unwrap_or(false)
+                })
+        }
+        "DURATION_SUM" | "DURATION_AVG" => {
+            (2..=26).contains(&parent_ids.len())
+                && parent_ids.iter().all(|parent_id| {
+                    nodes
+                        .get(parent_id)
+                        .map(|node| matches!(&node.value, ValueData::Duration(_)))
+                        .unwrap_or(false)
+                })
+        }
+        _ => false,
+    }
 }
 
 pub fn render_turtle(

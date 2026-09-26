@@ -2,6 +2,7 @@
 mod tests {
     use chrono::{DateTime, Duration, Utc};
     use rgt::types::ValueData;
+    use rgt::verify::compute_date_diff_seconds;
 
     #[test]
     fn test_date_difference_calculation() {
@@ -70,5 +71,54 @@ mod tests {
     fn test_duration_to_string_negative_seconds() {
         let dur = Duration::seconds(-30);
         assert_eq!(ValueData::Duration(dur).to_string_repr(), "-30s");
+    }
+
+    fn parsed(value: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn date_diff_computes_exact_whole_seconds_and_zero() {
+        let parents = vec![
+            ValueData::Date(parsed("2026-01-01T00:00:00Z")),
+            ValueData::Date(parsed("2026-02-15T00:00:00Z")),
+        ];
+        assert_eq!(compute_date_diff_seconds(&parents).unwrap(), 3_888_000);
+
+        let same = vec![parents[0].clone(), parents[0].clone()];
+        assert_eq!(compute_date_diff_seconds(&same).unwrap(), 0);
+    }
+
+    #[test]
+    fn date_diff_rejects_positive_and_negative_fractional_seconds() {
+        let positive = vec![
+            ValueData::Date(parsed("2026-01-01T00:00:00.000000001Z")),
+            ValueData::Date(parsed("2026-01-01T00:00:00.000000002Z")),
+        ];
+        assert!(compute_date_diff_seconds(&positive)
+            .unwrap_err()
+            .contains("whole number of seconds"));
+
+        let negative_fraction = vec![
+            ValueData::Date(parsed("2026-01-01T00:00:00.000000002Z")),
+            ValueData::Date(parsed("2026-01-01T00:00:00.000000001Z")),
+        ];
+        assert!(compute_date_diff_seconds(&negative_fraction)
+            .unwrap_err()
+            .contains("negative"));
+    }
+
+    #[test]
+    fn date_diff_rejects_reversed_order_and_non_date_parents() {
+        let reversed = vec![
+            ValueData::Date(parsed("2026-01-02T00:00:00Z")),
+            ValueData::Date(parsed("2026-01-01T00:00:00Z")),
+        ];
+        assert!(compute_date_diff_seconds(&reversed)
+            .unwrap_err()
+            .contains("negative"));
+        assert!(compute_date_diff_seconds(&[ValueData::Number(1.0)]).is_err());
     }
 }

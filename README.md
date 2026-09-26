@@ -252,9 +252,24 @@ retain their existing output and have no new Turtle limits.
 
 `rgt gc` removes **obsolete nodes** — values marked stale that nothing derives from — and reports how many it removed. It never touches non-stale nodes or anything still depended on. `rgt gc --vacuum` additionally reclaims freed disk pages with SQLite `VACUUM` (opt-in; the default run only deletes rows).
 
-Operations: `EXPRESSION` (formulas like `a + b * c`) and `DATE_DIFF` (date arithmetic, e.g. `date2 - date1`). Parent variables map as `parent[0]=a, parent[1]=b, ...` (at most 26, `a`–`z`).
+Operations: `EXPRESSION` (formulas like `a + b * c`), `DATE_DIFF`, `DURATION_SUM`, and `DURATION_AVG`. Parent variables map as `parent[0]=a, parent[1]=b, ...` (at most 26, `a`–`z`).
 
-`--operation` is case-sensitive (`EXPRESSION`/`DATE_DIFF`); anything else is rejected with exit code 2 — verification is never silently skipped. `--expression` is limited to 4096 bytes and 256 levels of parenthesis nesting (over-limit input is rejected with exit 2, never a crash). Expressions evaluate with built-in functions disabled — only your parent variables and `+ - * / % ^` and parentheses are available, so evaluation is deterministic. `DATE_DIFF` requires `--parents <date1>,<date2>` and computes `date2 - date1`; a negative result (possible swapped order) is rejected.
+`--operation` is case-sensitive; unsupported operations are rejected with exit code 2 — verification is never silently skipped. `--expression` is limited to 4096 bytes and 256 levels of parenthesis nesting (over-limit input is rejected with exit 2, never a crash). Expressions evaluate with built-in functions disabled — only your parent variables and `+ - * / % ^` and parentheses are available, so evaluation is deterministic. Legacy `EXPRESSION` still returns a Number when given Date or Duration parents and warns on stderr: Dates are Unix timestamp seconds, Durations are elapsed seconds.
+
+### Duration calculations and display
+
+`DATE_DIFF` automatically computes the elapsed Duration between two ordered Date parents (`date2 - date1`). Negative or fractional-second gaps are rejected. `DURATION_SUM` and `DURATION_AVG` accept 2–26 distinct Duration parents; averages must resolve to a whole second. All three operations store exact signed whole seconds in a typed Duration node. Claims are optional for `derive` and use seconds by default; `--result-unit` qualifies a supplied claim without changing storage:
+
+```bash
+rgt derive --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days --unit hours
+rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM --unit minutes
+rgt verify --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days
+rgt query <duration_id> --unit days [--json]
+```
+
+The fixed elapsed-time units are `seconds`, `minutes`, `hours`, `days`, and `weeks`. Temporal values and claims must resolve to exact whole seconds; averages or claims that require fractional seconds are rejected without rounding. Calendar months and years are unsupported because their lengths vary. `--result-unit` only qualifies a claim, and `--unit` only selects a display. Neither unit is persisted as node metadata.
+
+Query keeps its existing `value`, adds exact `duration_seconds` as a decimal string, and includes `selected_unit_display` only on the requested node. Repeating conversions are marked approximate; exact seconds remain available. Querying a Date or Number with `--unit` is rejected. Legacy `EXPRESSION` calculations with Date or Duration parents still return a Number and emit a warning: Dates are interpreted as Unix timestamp seconds and Durations as elapsed seconds. Use `DATE_DIFF`, `DURATION_SUM`, or `DURATION_AVG` when a typed Duration result is intended.
 
 ## Supported AI Tools
 
