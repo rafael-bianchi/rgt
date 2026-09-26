@@ -172,7 +172,17 @@ rgt query <node_id> [--json]               # lignée complète d'une valeur
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # exporte le graphe
 ```
 
-Opérations : `EXPRESSION` (formules comme `a + b * c`) et `DATE_DIFF` (arithmétique de dates, ex. `date2 - date1`). Les variables parentes correspondent à `parent[0]=a, parent[1]=b, ...`.
+Opérations : `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM` et `DURATION_AVG`. `DATE_DIFF` calcule automatiquement la durée écoulée entre deux dates ordonnées ; la somme et la moyenne acceptent de 2 à 26 Durations distinctes. Les résultats sont stockés en secondes entières exactes. Une moyenne qui ne donne pas un nombre entier de secondes est rejetée.
+
+Les unités fixes d’affichage sont `seconds`, `minutes`, `hours`, `days` et `weeks` ; les mois et années calendaires ne sont pas pris en charge. `--result-unit` qualifie la valeur fournie, tandis que `--unit` ne change que l’affichage. Exemples :
+
+```bash
+rgt derive --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days --unit hours
+rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM --unit minutes
+rgt query <duration_id> --unit days [--json]
+```
+
+La requête conserve `value` et ajoute `duration_seconds` exact sous forme de texte ainsi que `selected_unit_display` uniquement au nœud demandé. Les conversions décimales périodiques sont marquées comme approximatives ; les secondes restent exactes. `EXPRESSION` interprète les dates comme des secondes Unix et les Durations comme des secondes écoulées, renvoie un Number et affiche un avertissement.
 
 ## Outils pris en charge
 

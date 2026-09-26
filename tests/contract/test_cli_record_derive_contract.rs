@@ -104,7 +104,7 @@ mod tests {
         );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
-            stderr.contains("valid operations: EXPRESSION, DATE_DIFF"),
+            stderr.contains("valid operations: EXPRESSION, DATE_DIFF, DURATION_SUM, DURATION_AVG"),
             "{}",
             stderr
         );
@@ -493,9 +493,15 @@ mod tests {
             "EXPRESSION",
             &ValueData::Number(7.0),
         );
-        let error =
-            rgt::cli::derive::execute_derive("parent-a,parent-b", "EXPRESSION", Some("a + b"), 7.0)
-                .unwrap_err();
+        let error = rgt::cli::derive::execute_derive(
+            "parent-a,parent-b",
+            "EXPRESSION",
+            Some("a + b"),
+            Some("7.0"),
+            None,
+            None,
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("injected edge failure"));
 
         let db = DbStore::open_in_project(".").unwrap();

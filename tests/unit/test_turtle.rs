@@ -412,6 +412,121 @@ fn derivation_activity_accepts_historical_48_bit_id_and_rejects_ambiguous_edges(
     assert!(classify_derivation(&child, &edges, &parents).is_none());
 }
 
+fn duration_activity_case(
+    operation: &str,
+    parent_values: Vec<ValueData>,
+    expression: Option<&str>,
+) -> Option<rgt::export::turtle::DerivationActivity> {
+    let parent_ids = (0..parent_values.len())
+        .map(|index| format!("parent-{index}"))
+        .collect::<Vec<_>>();
+    let seconds = 60;
+    let child_value = ValueData::Duration(chrono::Duration::seconds(seconds));
+    let child_id = TrackedNode::generate_duration_derived_id(&parent_ids, operation, seconds)
+        .unwrap_or_else(|_| TrackedNode::generate_derived_id(&parent_ids, operation, &child_value));
+    let child = node(child_id.clone(), NodeType::Derived, child_value);
+    let parents = parent_ids
+        .iter()
+        .cloned()
+        .zip(parent_values)
+        .map(|(id, value)| (id.clone(), node(id, NodeType::Root, value)))
+        .collect::<HashMap<_, _>>();
+    let edges = parent_ids
+        .iter()
+        .enumerate()
+        .map(|(index, parent_id)| ExportEdge {
+            id: index as i64 + 1,
+            parent_node_id: parent_id.clone(),
+            child_node_id: child_id.clone(),
+            operation_type: operation.into(),
+            expression: expression.map(str::to_string),
+        })
+        .collect::<Vec<_>>();
+    classify_derivation(&child, &edges, &parents)
+}
+
+#[test]
+fn duration_activity_requires_supported_operation_parent_evidence_and_no_expression() {
+    use chrono::{TimeZone, Utc};
+
+    let date = || ValueData::Date(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap());
+    let duration = || ValueData::Duration(chrono::Duration::seconds(30));
+
+    assert!(duration_activity_case("DATE_DIFF", vec![date(), date()], None).is_some());
+    assert!(
+        duration_activity_case("DATE_DIFF", vec![ValueData::Number(1.0), date()], None).is_none()
+    );
+    assert!(duration_activity_case("DATE_DIFF", vec![date()], None).is_none());
+    assert!(duration_activity_case("DATE_DIFF", vec![date(), date(), date()], None).is_none());
+
+    assert!(duration_activity_case("DURATION_SUM", vec![duration(), duration()], None).is_some());
+    assert!(duration_activity_case("DURATION_SUM", vec![date(), duration()], None).is_none());
+    assert!(duration_activity_case("DURATION_AVG", vec![duration()], None).is_none());
+    assert!(
+        duration_activity_case("DURATION_SUM", vec![duration(), duration()], Some("a + b"))
+            .is_none()
+    );
+    assert!(
+        duration_activity_case("EXPRESSION", vec![duration(), duration()], Some("a + b")).is_none()
+    );
+}
+
+#[test]
+fn turtle_keeps_direct_lineage_when_duration_activity_has_a_wrong_parent_kind() {
+    let project = tempfile::tempdir().unwrap();
+    let project_id = "0123456789abcdef0123456789abcdef";
+    let parent_ids = vec!["number-parent".to_string(), "duration-parent".to_string()];
+    let child_value = ValueData::Duration(chrono::Duration::seconds(60));
+    let child_id =
+        TrackedNode::generate_duration_derived_id(&parent_ids, "DURATION_SUM", 60).unwrap();
+    let nodes = vec![
+        node(
+            parent_ids[0].clone(),
+            NodeType::Root,
+            ValueData::Number(30.0),
+        ),
+        node(
+            parent_ids[1].clone(),
+            NodeType::Root,
+            ValueData::Duration(chrono::Duration::seconds(30)),
+        ),
+        node(child_id.clone(), NodeType::Derived, child_value),
+    ];
+    let edges = parent_ids
+        .iter()
+        .enumerate()
+        .map(|(index, parent_id)| ExportEdge {
+            id: index as i64 + 1,
+            parent_node_id: parent_id.clone(),
+            child_node_id: child_id.clone(),
+            operation_type: "DURATION_SUM".into(),
+            expression: None,
+        })
+        .collect();
+    let output = render_turtle(
+        &ExportSnapshot {
+            project_id: project_id.into(),
+            nodes,
+            sources: vec![],
+            edges,
+            captures: vec![],
+        },
+        project.path(),
+        false,
+        Instant::now() + Duration::from_secs(1),
+    )
+    .unwrap();
+    let child_iri = node_iri(project_id, &child_id).unwrap();
+    for parent_id in parent_ids {
+        let parent_iri = node_iri(project_id, &parent_id).unwrap();
+        assert!(output.turtle.contains(&format!(
+            "<{child_iri}> prov:wasDerivedFrom <{parent_iri}> ."
+        )));
+    }
+    assert!(!output.turtle.contains("prov:wasGeneratedBy"));
+    assert_eq!(output.ambiguous_children, vec![child_id]);
+}
+
 #[test]
 fn turtle_quota_accepts_the_exact_byte_boundary_and_rejects_one_byte_less() {
     let temp = tempfile::tempdir().unwrap();

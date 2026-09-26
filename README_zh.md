@@ -172,7 +172,17 @@ rgt query <node_id> [--json]               # 某个值的完整谱系
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # 导出依赖图
 ```
 
-操作类型：`EXPRESSION`（如 `a + b * c` 的公式）和 `DATE_DIFF`（日期运算，如 `date2 - date1`）。父变量映射为 `parent[0]=a, parent[1]=b, ...`。
+操作类型：`EXPRESSION`、`DATE_DIFF`、`DURATION_SUM` 和 `DURATION_AVG`。`DATE_DIFF` 会自动计算两个有序日期之间的经过时间；求和和平均接受 2 到 26 个互不重复的 Duration。结果以精确的整数秒存储；无法得到整数秒的平均值会被拒绝。
+
+固定显示单位为 `seconds`、`minutes`、`hours`、`days` 和 `weeks`。日历月和年长度不固定，因此不支持。`--result-unit` 指定输入结果的单位，`--unit` 只改变显示方式。
+
+```bash
+rgt derive --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days --unit hours
+rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM --unit minutes
+rgt query <duration_id> --unit days [--json]
+```
+
+查询会保留现有 `value`，并且只为请求的节点添加以字符串表示的精确秒数 `duration_seconds` 和 `selected_unit_display`。循环小数转换会标记为近似值，但秒数仍然精确。`EXPRESSION` 将日期解释为 Unix 时间戳秒、将 Duration 解释为经过秒，结果类型是 Number，并会输出警告。
 
 ## 支持的 AI 工具
 

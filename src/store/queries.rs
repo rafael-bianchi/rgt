@@ -1,6 +1,9 @@
-use crate::types::{DerivationEdge, NodeType, SourceDocument, TrackedNode, ValueData, ValueKind};
+use crate::types::{
+    exact_duration_seconds, DerivationEdge, NodeType, SourceDocument, TrackedNode, ValueData,
+    ValueKind,
+};
 use chrono::{DateTime, Duration, Utc};
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, types::Type, Connection, Result};
 use uuid::Uuid;
 
 /// Inserts or updates a source document row by file path (or, when identity is
@@ -104,7 +107,15 @@ pub fn insert_tracked_node(conn: &Connection, node: &TrackedNode) -> Result<()> 
     let (num_val, date_val, dur_val) = match &node.value {
         ValueData::Number(n) => (Some(*n), None, None),
         ValueData::Date(d) => (None, Some(d.to_rfc3339()), None),
-        ValueData::Duration(dur) => (None, None, Some(dur.num_seconds())),
+        ValueData::Duration(duration) => {
+            let seconds = exact_duration_seconds(duration).map_err(|error| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    error,
+                )))
+            })?;
+            (None, None, Some(seconds))
+        }
     };
 
     conn.execute(
@@ -139,6 +150,125 @@ pub fn insert_tracked_node(conn: &Connection, node: &TrackedNode) -> Result<()> 
     )?;
 
     Ok(())
+}
+
+/// Atomically inserts a new canonical Duration or reuses a complete matching
+/// historical/canonical result. Unlike `insert_tracked_node`, this path never
+/// overwrites a node whose identity already belongs to another value/lineage.
+pub fn insert_or_reuse_duration(
+    conn: &mut Connection,
+    node: &TrackedNode,
+    parent_ids: &[String],
+    operation: &str,
+    legacy_candidates: &[String],
+) -> Result<String, String> {
+    let seconds = match &node.value {
+        ValueData::Duration(duration) => exact_duration_seconds(duration)?,
+        _ => return Err("Duration insertion requires a Duration value".into()),
+    };
+    if node.value_kind != ValueKind::Duration || node.node_type != NodeType::Derived {
+        return Err("Duration insertion requires a derived Duration node".into());
+    }
+    let canonical_id = TrackedNode::generate_duration_derived_id(parent_ids, operation, seconds)?;
+    if node.id != canonical_id {
+        return Err(format!(
+            "Duration node ID '{}' does not match its canonical identity '{canonical_id}'",
+            node.id
+        ));
+    }
+    let mut expected_parents = parent_ids.to_vec();
+    if matches!(operation, "DURATION_SUM" | "DURATION_AVG") {
+        expected_parents.sort();
+    }
+    // Identity keeps DATE_DIFF's ordered operand list, including a repeated
+    // Date ID. The graph stores one edge per distinct parent ID.
+    let mut expected_edge_parents = Vec::with_capacity(expected_parents.len());
+    for parent_id in &expected_parents {
+        if !expected_edge_parents.contains(parent_id) {
+            expected_edge_parents.push(parent_id.clone());
+        }
+    }
+
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|error| format!("failed to begin Duration transaction: {error}"))?;
+
+    for candidate in legacy_candidates {
+        if candidate == &canonical_id {
+            continue;
+        }
+        if let Some(existing) = get_tracked_node(&tx, candidate).map_err(|error| {
+            format!("failed to inspect historical Duration '{candidate}': {error}")
+        })? {
+            if duration_lineage_matches(
+                &tx,
+                &existing,
+                &node.value,
+                operation,
+                &expected_edge_parents,
+            )? {
+                tx.commit()
+                    .map_err(|error| format!("failed to finish Duration reuse: {error}"))?;
+                return Ok(candidate.clone());
+            }
+        }
+    }
+
+    if let Some(existing) = get_tracked_node(&tx, &canonical_id).map_err(|error| {
+        format!("failed to inspect canonical Duration '{canonical_id}': {error}")
+    })? {
+        if duration_lineage_matches(
+            &tx,
+            &existing,
+            &node.value,
+            operation,
+            &expected_edge_parents,
+        )? {
+            tx.commit()
+                .map_err(|error| format!("failed to finish Duration reuse: {error}"))?;
+            return Ok(canonical_id);
+        }
+        return Err(format!(
+            "canonical Duration ID collision at '{canonical_id}': stored value or parent evidence conflicts; existing data was left untouched"
+        ));
+    }
+
+    insert_tracked_node(&tx, node)
+        .map_err(|error| format!("failed to insert Duration '{canonical_id}': {error}"))?;
+    for parent_id in &expected_edge_parents {
+        insert_derivation_edge(&tx, parent_id, &canonical_id, operation, None)?;
+    }
+    tx.commit()
+        .map_err(|error| format!("failed to commit Duration derivation: {error}"))?;
+    Ok(canonical_id)
+}
+
+fn duration_lineage_matches(
+    conn: &Connection,
+    existing: &TrackedNode,
+    expected_value: &ValueData,
+    operation: &str,
+    expected_parents: &[String],
+) -> Result<bool, String> {
+    if existing.node_type != NodeType::Derived
+        || existing.value_kind != ValueKind::Duration
+        || &existing.value != expected_value
+        || existing.source_doc_id.is_some()
+        || existing.line_number.is_some()
+    {
+        return Ok(false);
+    }
+    let edges = get_parent_edges(conn, &existing.id)
+        .map_err(|error| format!("failed to inspect Duration parent edges: {error}"))?;
+    if edges.len() != expected_parents.len() {
+        return Ok(false);
+    }
+    Ok(edges.iter().zip(expected_parents).all(|(edge, expected)| {
+        edge.parent_node_id == *expected
+            && edge.child_node_id == existing.id
+            && edge.operation_type == operation
+            && edge.expression.is_none()
+    }))
 }
 
 /// Records that a known hook-capable coding agent captured a value. Repeated
@@ -190,17 +320,76 @@ pub fn get_tracked_node(conn: &Connection, id: &str) -> Result<Option<TrackedNod
         let dur_secs: Option<i64> = row.get(5)?;
         let is_stale_int: i32 = row.get(8)?;
 
-        let value_kind = value_kind_str.parse().unwrap_or(ValueKind::Number);
+        let value_kind = value_kind_str.parse().map_err(|error: String| {
+            value_conversion_error(2, Type::Text, format!("invalid value_kind: {error}"))
+        })?;
         let value = match value_kind {
-            ValueKind::Number => ValueData::Number(num_val.unwrap_or(0.0)),
+            ValueKind::Number => {
+                if date_val.is_some() || dur_secs.is_some() {
+                    return Err(value_conversion_error(
+                        2,
+                        Type::Text,
+                        "number row has conflicting typed columns".into(),
+                    ));
+                }
+                let number = num_val.ok_or_else(|| {
+                    value_conversion_error(3, Type::Null, "number row is missing number_val".into())
+                })?;
+                if !number.is_finite() {
+                    return Err(value_conversion_error(
+                        3,
+                        Type::Real,
+                        "number_val is not finite".into(),
+                    ));
+                }
+                ValueData::Number(number)
+            }
             ValueKind::Date => {
-                let dt_str = date_val.unwrap_or_default();
+                if num_val.is_some() || dur_secs.is_some() {
+                    return Err(value_conversion_error(
+                        2,
+                        Type::Text,
+                        "date row has conflicting typed columns".into(),
+                    ));
+                }
+                let dt_str = date_val.ok_or_else(|| {
+                    value_conversion_error(4, Type::Null, "date row is missing date_val".into())
+                })?;
                 let dt = DateTime::parse_from_rfc3339(&dt_str)
-                    .map(|d| d.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now());
+                    .map_err(|error| {
+                        value_conversion_error(
+                            4,
+                            Type::Text,
+                            format!("date_val is invalid: {error}"),
+                        )
+                    })?
+                    .with_timezone(&Utc);
                 ValueData::Date(dt)
             }
-            ValueKind::Duration => ValueData::Duration(Duration::seconds(dur_secs.unwrap_or(0))),
+            ValueKind::Duration => {
+                if num_val.is_some() || date_val.is_some() {
+                    return Err(value_conversion_error(
+                        2,
+                        Type::Text,
+                        "duration row has conflicting typed columns".into(),
+                    ));
+                }
+                let seconds = dur_secs.ok_or_else(|| {
+                    value_conversion_error(
+                        5,
+                        Type::Null,
+                        "duration row is missing duration_secs".into(),
+                    )
+                })?;
+                let duration = Duration::try_seconds(seconds).ok_or_else(|| {
+                    value_conversion_error(
+                        5,
+                        Type::Integer,
+                        format!("duration_secs '{seconds}' is out of range"),
+                    )
+                })?;
+                ValueData::Duration(duration)
+            }
         };
 
         let created_at_str: String = row.get(10)?;
@@ -225,6 +414,17 @@ pub fn get_tracked_node(conn: &Connection, id: &str) -> Result<Option<TrackedNod
     } else {
         Ok(None)
     }
+}
+
+fn value_conversion_error(index: usize, column_type: Type, message: String) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        index,
+        column_type,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message,
+        )),
+    )
 }
 
 /// Inserts a derivation edge between a parent node and a derived node.
@@ -313,7 +513,7 @@ pub fn get_child_edges(conn: &Connection, parent_id: &str) -> Result<Vec<Derivat
 pub fn get_parent_edges(conn: &Connection, child_id: &str) -> Result<Vec<DerivationEdge>> {
     let mut stmt = conn.prepare(
         "SELECT id, parent_node_id, child_node_id, operation_type, expression
-         FROM derivation_edges WHERE child_node_id = ?1",
+         FROM derivation_edges WHERE child_node_id = ?1 ORDER BY id",
     )?;
 
     let rows = stmt.query_map(params![child_id], |row| {

@@ -172,7 +172,17 @@ rgt query <node_id> [--json]               # 값의 전체 계보
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # 그래프 내보내기
 ```
 
-연산: `EXPRESSION`(`a + b * c` 같은 수식)과 `DATE_DIFF`(`date2 - date1` 같은 날짜 연산). 부모 변수는 `parent[0]=a, parent[1]=b, ...`로 매핑됩니다.
+연산: `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM`, `DURATION_AVG`. `DATE_DIFF`는 순서가 있는 두 날짜 사이의 경과 시간을 자동 계산합니다. 합계와 평균은 중복되지 않는 2~26개의 Duration을 받습니다. 결과는 정확한 정수 초로 저장하며 정수 초가 아닌 평균은 거부합니다.
+
+고정 표시 단위는 `seconds`, `minutes`, `hours`, `days`, `weeks`입니다. 달력의 월과 연도는 길이가 달라 지원하지 않습니다. `--result-unit`은 입력한 결과의 단위를 지정하고 `--unit`은 표시만 바꿉니다.
+
+```bash
+rgt derive --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days --unit hours
+rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM --unit minutes
+rgt query <duration_id> --unit days [--json]
+```
+
+쿼리는 기존 `value`를 유지하고 요청한 노드에만 정확한 초를 문자열로 담은 `duration_seconds`와 `selected_unit_display`를 추가합니다. 순환 소수 변환은 근삿값으로 표시하지만 초 값은 정확합니다. `EXPRESSION`은 날짜를 Unix 타임스탬프 초, Duration을 경과 초로 해석하고 Number를 반환하며 경고를 출력합니다.
 
 ## 지원 AI 도구
 

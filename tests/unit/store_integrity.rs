@@ -3,7 +3,9 @@
 //! value-column updates on re-record.
 
 use chrono::Utc;
-use rgt::store::queries::{get_tracked_node, insert_derivation_edge, insert_tracked_node};
+use rgt::store::queries::{
+    get_tracked_node, insert_derivation_edge, insert_or_reuse_duration, insert_tracked_node,
+};
 use rgt::store::DbStore;
 use rgt::types::{NodeType, TrackedNode, ValueData};
 
@@ -235,4 +237,192 @@ fn equal_version_is_a_noop() {
     use rgt::store::schema::{schema_version, SCHEMA_VERSION};
     let db = DbStore::open_in_memory().unwrap();
     assert_eq!(schema_version(db.conn()).unwrap(), SCHEMA_VERSION);
+}
+
+// ---- Duration feature T005: temporal columns fail closed on corrupt rows ----
+
+#[test]
+fn missing_date_column_is_not_replaced_with_current_time() {
+    use chrono::{TimeZone, Utc};
+    let db = DbStore::open_in_memory().unwrap();
+    let conn = db.conn();
+    let date = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    insert_tracked_node(
+        conn,
+        &root_node("date-missing", ValueData::Date(date), None, None),
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE tracked_nodes SET date_val = NULL WHERE id = 'date-missing'",
+        [],
+    )
+    .unwrap();
+    let error = get_tracked_node(conn, "date-missing").unwrap_err();
+    assert!(error.to_string().contains("missing date_val"), "{error}");
+}
+
+#[test]
+fn malformed_date_column_is_reported() {
+    use chrono::{TimeZone, Utc};
+    let db = DbStore::open_in_memory().unwrap();
+    let conn = db.conn();
+    let date = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    insert_tracked_node(
+        conn,
+        &root_node("date-malformed", ValueData::Date(date), None, None),
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE tracked_nodes SET date_val = 'not-a-date' WHERE id = 'date-malformed'",
+        [],
+    )
+    .unwrap();
+    let error = get_tracked_node(conn, "date-malformed").unwrap_err();
+    assert!(error.to_string().contains("date_val is invalid"), "{error}");
+}
+
+#[test]
+fn missing_duration_column_is_not_replaced_with_zero() {
+    use chrono::Duration;
+    let db = DbStore::open_in_memory().unwrap();
+    let conn = db.conn();
+    insert_tracked_node(
+        conn,
+        &root_node(
+            "duration-missing",
+            ValueData::Duration(Duration::seconds(45)),
+            None,
+            None,
+        ),
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE tracked_nodes SET duration_secs = NULL WHERE id = 'duration-missing'",
+        [],
+    )
+    .unwrap();
+    let error = get_tracked_node(conn, "duration-missing").unwrap_err();
+    assert!(
+        error.to_string().contains("missing duration_secs"),
+        "{error}"
+    );
+}
+
+#[test]
+fn malformed_duration_column_is_reported() {
+    let db = DbStore::open_in_memory().unwrap();
+    let conn = db.conn();
+    conn.execute(
+        "INSERT INTO tracked_nodes (id, node_type, value_kind, duration_secs, is_stale, created_at, updated_at)
+         VALUES ('duration-malformed', 'ROOT', 'DURATION', 'not-seconds', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+    let error = get_tracked_node(conn, "duration-malformed").unwrap_err();
+    assert!(error.to_string().contains("duration_secs"), "{error}");
+}
+
+#[test]
+fn out_of_range_duration_column_is_reported() {
+    let db = DbStore::open_in_memory().unwrap();
+    let conn = db.conn();
+    conn.execute(
+        "INSERT INTO tracked_nodes (id, node_type, value_kind, duration_secs, is_stale, created_at, updated_at)
+         VALUES ('duration-range', 'ROOT', 'DURATION', 9223372036854775807, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+    let error = get_tracked_node(conn, "duration-range").unwrap_err();
+    assert!(error.to_string().contains("out of range"), "{error}");
+}
+
+fn graph_row_counts(conn: &rusqlite::Connection) -> (i64, i64) {
+    let nodes = conn
+        .query_row("SELECT COUNT(*) FROM tracked_nodes", [], |row| row.get(0))
+        .unwrap();
+    let edges = conn
+        .query_row("SELECT COUNT(*) FROM derivation_edges", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    (nodes, edges)
+}
+
+#[test]
+fn tracked_node_insert_rejects_fractional_duration_without_graph_writes() {
+    use chrono::Duration;
+
+    let db = DbStore::open_in_memory().unwrap();
+    let conn = db.conn();
+    let before = graph_row_counts(conn);
+    for (id, duration) in [
+        ("duration-positive-fraction", Duration::milliseconds(1_500)),
+        ("duration-negative-fraction", Duration::milliseconds(-1_500)),
+    ] {
+        let error = insert_tracked_node(
+            conn,
+            &root_node(id, ValueData::Duration(duration), None, None),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:?}").contains("whole number of seconds"),
+            "unexpected error: {error:?}"
+        );
+    }
+    assert_eq!(graph_row_counts(conn), before);
+}
+
+#[test]
+fn duration_derive_insert_rejects_fractional_result_without_graph_writes() {
+    use chrono::Duration;
+
+    let mut db = DbStore::open_in_memory().unwrap();
+    for (id, seconds) in [("parent-a", 10), ("parent-b", 20)] {
+        insert_tracked_node(
+            db.conn(),
+            &root_node(
+                id,
+                ValueData::Duration(Duration::seconds(seconds)),
+                None,
+                None,
+            ),
+        )
+        .unwrap();
+    }
+    let parent_ids = vec!["parent-a".to_string(), "parent-b".to_string()];
+    let before = graph_row_counts(db.conn());
+
+    for duration in [
+        Duration::milliseconds(1_500),
+        Duration::milliseconds(-1_500),
+    ] {
+        let value = ValueData::Duration(duration);
+        let id = TrackedNode::generate_duration_derived_id(
+            &parent_ids,
+            "DURATION_SUM",
+            duration.num_seconds(),
+        )
+        .unwrap();
+        let now = Utc::now();
+        let node = TrackedNode {
+            id,
+            node_type: NodeType::Derived,
+            value_kind: value.kind(),
+            value,
+            source_doc_id: None,
+            line_number: None,
+            is_stale: false,
+            stale_reason: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let error =
+            insert_or_reuse_duration(db.conn_mut(), &node, &parent_ids, "DURATION_SUM", &[])
+                .unwrap_err();
+        assert!(
+            error.contains("whole number of seconds"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(graph_row_counts(db.conn()), before);
+    }
 }

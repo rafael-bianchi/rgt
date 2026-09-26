@@ -1,4 +1,28 @@
 use crate::types::ValueData;
+
+/// Describes the legacy numeric coercion used by EXPRESSION for temporal inputs.
+pub fn temporal_coercion_warning(parents: &[ValueData]) -> Option<String> {
+    let has_date = parents
+        .iter()
+        .any(|value| matches!(value, ValueData::Date(_)));
+    let has_duration = parents
+        .iter()
+        .any(|value| matches!(value, ValueData::Duration(_)));
+    if !has_date && !has_duration {
+        return None;
+    }
+    let mut details = Vec::new();
+    if has_date {
+        details.push("Date parents are interpreted as Unix timestamp seconds");
+    }
+    if has_duration {
+        details.push("Duration parents are interpreted as elapsed seconds");
+    }
+    Some(format!(
+        "Warning: legacy EXPRESSION coercion: {}; the expression result is a Number. Use DATE_DIFF or typed duration operations when you need Duration values.",
+        details.join("; ")
+    ))
+}
 use evalexpr::{Context, ContextWithMutableVariables};
 
 /// Maximum `--expression` length in bytes. Exceeding it is invalid input

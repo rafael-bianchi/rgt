@@ -100,7 +100,10 @@ pub fn execute_init(
     println!();
     println!("Verify derived calculations: rgt verify --parents <ids> --operation EXPRESSION --expression \"a + b\" --result <val>");
     println!("  Variables: parent[0]=a, parent[1]=b, parent[2]=c, ...");
-    println!("  Supported operations: EXPRESSION, DATE_DIFF");
+    println!("  Supported operations: EXPRESSION, DATE_DIFF, DURATION_SUM, DURATION_AVG");
+    println!("  DATE_DIFF computes ordered Date gaps; duration sums and averages use exact whole seconds.");
+    println!("  Duration units: seconds, minutes, hours, days, weeks; --result-unit qualifies claims and --unit selects display.");
+    println!("  Query a Duration with: rgt query <node_id> --unit days [--json]");
     println!("  Exit codes: 0=match, 1=mismatch (retry with correct result), 2=invalid input");
 
     if failed > 0 {

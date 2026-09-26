@@ -105,3 +105,13 @@ impl ValueData {
         *date2 - *date1
     }
 }
+
+/// Returns a Duration's canonical whole seconds, rejecting subsecond values
+/// instead of truncating them through `num_seconds()`.
+pub(crate) fn exact_duration_seconds(duration: &Duration) -> Result<i64, String> {
+    let seconds = duration.num_seconds();
+    if *duration != Duration::seconds(seconds) {
+        return Err("Duration must represent a whole number of seconds".into());
+    }
+    Ok(seconds)
+}
