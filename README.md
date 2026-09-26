@@ -128,6 +128,7 @@ rgt derive --parents node_raw_X,node_raw_Y --operation EXPRESSION --expression "
                             # agent records a verified derivation
 rgt query node_drv_Z        # trace the derived value's lineage
 rgt graph --format mermaid  # export the dependency graph
+rgt graph --format ttl      # export interoperable PROV-O Turtle
 ```
 
 ## How It Works
@@ -151,7 +152,7 @@ Three strategies keep the graph trustworthy:
 
 1. **Capture**: native hooks/plugins push every file an agent reads through `rgt record`, so values land in the graph without the agent remembering to call it.
 
-> **Non-text sources (PDF, Excel, images)**: RGT's passive hook cannot see inside binary files — PDF/image interpretation happens inside the model itself, never as a local text file. The RGT instructions RGT writes to agents tell them to explicitly report such values via `echo "Amount: 1234.56" | rgt record --stdin` (or an intermediate `.txt`/`.md` file). Plain-text/CSV/JSON/Markdown need no such action — they're captured automatically. `rgt record` on a binary file returns a clear "unsupported file format" error naming this path.
+> **Non-text sources (PDF, Excel, images)**: RGT's passive hook cannot see inside binary files — PDF/image interpretation happens inside the model itself, never as a local text file. For **Claude Code PDF reads**, RGT now decodes the PDF's base64 envelope, extracts the text layer locally, and records its values automatically (and injects the real extracted text back via `PostToolUse` `additionalContext`). For Excel, images, and other agents, the RGT instructions RGT writes to agents tell them to explicitly report such values via `echo "Amount: 1234.56" | rgt record --stdin` (or an intermediate `.txt`/`.md` file). Plain-text/CSV/JSON/Markdown need no such action — they're captured automatically. `rgt record` on a binary file returns a clear "unsupported file format" error naming this path.
 2. **Verification**: every `rgt derive` is trust-but-verify: RGT re-computes the result from parent values and rejects wrong ones before insertion.
 3. **Staleness**: when a source file changes, its nodes (and everything derived from them) are flagged stale, so the agent can be told to re-read. Change detection is two-tier (mtime+size, then BLAKE3) with a time-bounded forced re-hash, and distinguishes a genuinely deleted file (`FILE_DELETED`) from a permission/lock error (`CHECK_FAILED`, which does not mark values stale).
 
@@ -218,17 +219,57 @@ rgt verify --parents <ids> --operation <op> --result <val>
                                            # verify a derived value without recording
 rgt status [--stale-only] [--json]         # graph state and staleness
 rgt query <node_id> [--json]               # full lineage for a value
-rgt graph [-f text|mermaid|dot]            # export the dependency DAG
+rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths]
+                                           # export the dependency graph
 rgt gc [--vacuum]                          # remove obsolete (stale, dependent-free) nodes
 ```
 
 `rgt record --number-format` overrides the persisted format for one call; otherwise the persisted setting (from `rgt init`) is used, falling back to `auto`. Number parsing is locale-aware: a leading `-` and accounting parentheses `(N)` are part of the value, thousands/decimal separators are honored per the active format, and values that can't be parsed under that format are skipped (with a warning) rather than split into bogus nodes.
 
+#### Turtle provenance export
+
+`rgt graph --format ttl` writes deterministic Turtle using PROV-O entities,
+activities, usages, and coding-tool agents. Project-scoped value IRIs keep
+matching local node IDs from independent stores distinct when exports are
+combined as an RDF union; copying a store preserves its project identity. The
+original node ID remains available as `rgt:localNodeId`.
+
+By default, source documents have path-free IRIs. A safely verified project
+relative path is included when the file is available; outside, missing, or
+unclassifiable paths have no path literal. The opt-in
+`--include-absolute-paths` flag adds available absolute source paths and may
+expose usernames or local directory names. Preserved free-text expressions can
+also contain path-like text.
+
+Turtle export is limited to 10,000 recorded values, 30,000 derivation edges,
+64 MiB of rendered UTF-8, and a one-second command deadline. A limit or
+pre-write error produces no Turtle on stdout. Uncertain derivation groups keep
+their direct parent links but omit the activity and consolidated operation or
+expression claims, with a warning on stderr. Capture activities record which
+of the eight event-capable hook/plugin agents captured a value; they do not
+claim source authorship or derivation responsibility. Other graph formats
+retain their existing output and have no new Turtle limits.
+
 `rgt gc` removes **obsolete nodes** — values marked stale that nothing derives from — and reports how many it removed. It never touches non-stale nodes or anything still depended on. `rgt gc --vacuum` additionally reclaims freed disk pages with SQLite `VACUUM` (opt-in; the default run only deletes rows).
 
-Operations: `EXPRESSION` (formulas like `a + b * c`) and `DATE_DIFF` (date arithmetic, e.g. `date2 - date1`). Parent variables map as `parent[0]=a, parent[1]=b, ...` (at most 26, `a`–`z`).
+Operations: `EXPRESSION` (formulas like `a + b * c`), `DATE_DIFF`, `DURATION_SUM`, and `DURATION_AVG`. Parent variables map as `parent[0]=a, parent[1]=b, ...` (at most 26, `a`–`z`).
 
-`--operation` is case-sensitive (`EXPRESSION`/`DATE_DIFF`); anything else is rejected with exit code 2 — verification is never silently skipped. `--expression` is limited to 4096 bytes and 256 levels of parenthesis nesting (over-limit input is rejected with exit 2, never a crash). Expressions evaluate with built-in functions disabled — only your parent variables and `+ - * / % ^` and parentheses are available, so evaluation is deterministic. `DATE_DIFF` requires `--parents <date1>,<date2>` and computes `date2 - date1`; a negative result (possible swapped order) is rejected.
+`--operation` is case-sensitive; unsupported operations are rejected with exit code 2 — verification is never silently skipped. `--expression` is limited to 4096 bytes and 256 levels of parenthesis nesting (over-limit input is rejected with exit 2, never a crash). Expressions evaluate with built-in functions disabled — only your parent variables and `+ - * / % ^` and parentheses are available, so evaluation is deterministic. Legacy `EXPRESSION` still returns a Number when given Date or Duration parents and warns on stderr: Dates are Unix timestamp seconds, Durations are elapsed seconds.
+
+### Duration calculations and display
+
+`DATE_DIFF` automatically computes the elapsed Duration between two ordered Date parents (`date2 - date1`). Negative or fractional-second gaps are rejected. `DURATION_SUM` and `DURATION_AVG` accept 2–26 distinct Duration parents; averages must resolve to a whole second. All three operations store exact signed whole seconds in a typed Duration node. Claims are optional for `derive` and use seconds by default; `--result-unit` qualifies a supplied claim without changing storage:
+
+```bash
+rgt derive --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days --unit hours
+rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM --unit minutes
+rgt verify --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days
+rgt query <duration_id> --unit days [--json]
+```
+
+The fixed elapsed-time units are `seconds`, `minutes`, `hours`, `days`, and `weeks`. Temporal values and claims must resolve to exact whole seconds; averages or claims that require fractional seconds are rejected without rounding. Calendar months and years are unsupported because their lengths vary. `--result-unit` only qualifies a claim, and `--unit` only selects a display. Neither unit is persisted as node metadata.
+
+Query keeps its existing `value`, adds exact `duration_seconds` as a decimal string, and includes `selected_unit_display` only on the requested node. Repeating conversions are marked approximate; exact seconds remain available. Querying a Date or Number with `--unit` is rejected. Legacy `EXPRESSION` calculations with Date or Duration parents still return a Number and emit a warning: Dates are interpreted as Unix timestamp seconds and Durations as elapsed seconds. Use `DATE_DIFF`, `DURATION_SUM`, or `DURATION_AVG` when a typed Duration result is intended.
 
 ## Supported AI Tools
 

@@ -1,5 +1,7 @@
 mod cli;
 mod detection;
+mod export;
+mod extract;
 mod graph;
 mod hooks;
 mod query;
@@ -55,6 +57,9 @@ enum Commands {
         json: bool,
     },
     /// Query provenance lineage or value status by node ID
+    #[command(
+        long_about = "Query provenance lineage or value status by node ID.\n\nDuration display units are fixed elapsed-time units: seconds, minutes, hours, days, and weeks. Stored Durations remain exact whole seconds; calendar months and years are unsupported. Selecting --unit changes only this response and is not stored as node metadata. Legacy EXPRESSION calculations with Date or Duration parents still return a Number and emit a warning: Dates are Unix timestamp seconds and Durations are elapsed seconds."
+    )]
     Query {
         /// Target node ID to query
         node_id: String,
@@ -62,12 +67,20 @@ enum Commands {
         /// Output lineage as JSON
         #[arg(long)]
         json: bool,
+
+        /// Response-only Duration display: seconds, minutes, hours, days, or weeks; not stored
+        #[arg(long, value_parser = ["seconds", "minutes", "hours", "days", "weeks"])]
+        unit: Option<String>,
     },
     /// Export or visualize the dependency graph structure
     Graph {
-        /// Export format: text, mermaid, dot
+        /// Export format: text, mermaid, dot, ttl
         #[arg(short, long, default_value = "text")]
         format: String,
+
+        /// Include available absolute source paths in Turtle output (privacy-sensitive)
+        #[arg(long)]
+        include_absolute_paths: bool,
     },
     /// Process passive execution hooks (PreToolUse / PostToolUse)
     Hook {
@@ -111,12 +124,15 @@ enum Commands {
         vacuum: bool,
     },
     /// Verify that a derived value matches its parent nodes
+    #[command(
+        long_about = "Verify a derived value against its parent nodes.\n\nTemporal claims use exact whole-second Duration values and the fixed elapsed-time units seconds, minutes, hours, days, and weeks. Calendar months and years are unsupported. --result-unit qualifies a claim only for verification and is not stored as node metadata. Legacy EXPRESSION calculations with Date or Duration parents still return a Number and emit a warning: Dates are Unix timestamp seconds and Durations are elapsed seconds. Use DATE_DIFF or typed Duration operations when a Duration result is intended."
+    )]
     Verify {
         /// Comma-separated parent node IDs in variable order (parent[0]=a, parent[1]=b, ...)
         #[arg(long)]
         parents: String,
 
-        /// Operation type: EXPRESSION or DATE_DIFF
+        /// Operation type: EXPRESSION, DATE_DIFF, DURATION_SUM, or DURATION_AVG
         #[arg(long)]
         operation: String,
 
@@ -124,9 +140,13 @@ enum Commands {
         #[arg(long)]
         expression: Option<String>,
 
-        /// Expected numeric result to verify
+        /// Expected result (seconds by default for temporal operations)
+        #[arg(long, allow_hyphen_values = true)]
+        result: String,
+
+        /// Claim unit: seconds, minutes, hours, days, or weeks; exact whole seconds only
         #[arg(long)]
-        result: f64,
+        result_unit: Option<String>,
     },
     /// Record numeric and date values from a file into the provenance graph
     Record {
@@ -142,12 +162,15 @@ enum Commands {
         number_format: Option<String>,
     },
     /// Verify and record a derived value from parent nodes
+    #[command(
+        long_about = "Verify and record a derived value from parent nodes.\n\nTemporal operations store exact whole-second Duration values. Claims default to seconds; supported fixed elapsed-time units are seconds, minutes, hours, days, and weeks. Calendar months and years are unsupported. --result-unit and --unit qualify a claim or display only and are not stored as node metadata. Legacy EXPRESSION calculations with Date or Duration parents still return a Number and emit a warning: Dates are Unix timestamp seconds and Durations are elapsed seconds. Use DATE_DIFF or typed Duration operations when a Duration result is intended."
+    )]
     Derive {
         /// Comma-separated parent node IDs in variable order (parent[0]=a, parent[1]=b, ...)
         #[arg(long)]
         parents: String,
 
-        /// Operation type: EXPRESSION or DATE_DIFF
+        /// Operation type: EXPRESSION, DATE_DIFF, DURATION_SUM, or DURATION_AVG
         #[arg(long)]
         operation: String,
 
@@ -155,9 +178,17 @@ enum Commands {
         #[arg(long)]
         expression: Option<String>,
 
-        /// Expected numeric result to verify and record
+        /// Optional result claim (required for EXPRESSION)
+        #[arg(long, allow_hyphen_values = true)]
+        result: Option<String>,
+
+        /// Claim unit: seconds, minutes, hours, days, or weeks; exact whole seconds only
         #[arg(long)]
-        result: f64,
+        result_unit: Option<String>,
+
+        /// Display unit: seconds, minutes, hours, days, or weeks; response only, not stored
+        #[arg(long)]
+        unit: Option<String>,
     },
 }
 
@@ -168,8 +199,10 @@ fn parse_number_format(s: Option<&str>) -> Option<NumberFormat> {
     s.and_then(|raw| raw.parse().ok())
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // Reserve time for process-launch and scheduling overhead so a blocked
+    // stdout write remains observable as a sub-second CLI failure.
+    let command_deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
     let cli = Cli::parse();
 
     let result = match cli.command {
@@ -189,8 +222,35 @@ async fn main() {
             }
         },
         Commands::Status { stale_only, json } => cli::execute_status(stale_only, json),
-        Commands::Query { node_id, json } => cli::execute_query(&node_id, json),
-        Commands::Graph { format } => cli::execute_graph(&format),
+        Commands::Query {
+            node_id,
+            json,
+            unit,
+        } => {
+            let query_result = if let Some(unit) = unit.as_deref() {
+                cli::execute_query_with_unit(&node_id, json, Some(unit))
+            } else {
+                cli::execute_query(&node_id, json)
+            };
+            match query_result {
+                Ok(()) => Ok(()),
+                Err(crate::query::QueryError::InvalidInput(message)) => {
+                    eprintln!("Error: {message}");
+                    std::process::exit(2);
+                }
+                Err(crate::query::QueryError::Error(message)) => Err(message),
+            }
+        }
+        Commands::Graph {
+            format,
+            include_absolute_paths,
+        } => {
+            if include_absolute_paths && !format.eq_ignore_ascii_case("ttl") {
+                eprintln!("error: --include-absolute-paths is only valid with --format ttl");
+                std::process::exit(2);
+            }
+            cli::execute_graph_with_options(&format, include_absolute_paths, command_deadline)
+        }
         Commands::Hook { event, agent } => {
             if let Err(e) = hooks::handle_passive_hook_event(&event, agent.as_deref()) {
                 eprintln!("Hook warning: {}", e);
@@ -223,8 +283,15 @@ async fn main() {
             operation,
             expression,
             result,
+            result_unit,
         } => {
-            crate::verify::run_verify_cli(&parents, &operation, expression.as_deref(), result);
+            crate::verify::run_verify_cli(
+                &parents,
+                &operation,
+                expression.as_deref(),
+                &result,
+                result_unit.as_deref(),
+            );
             Ok(())
         }
         Commands::Record {
@@ -237,7 +304,16 @@ async fn main() {
             operation,
             expression,
             result,
-        } => cli::execute_derive(&parents, &operation, expression.as_deref(), result),
+            result_unit,
+            unit,
+        } => cli::execute_derive(
+            &parents,
+            &operation,
+            expression.as_deref(),
+            result.as_deref(),
+            result_unit.as_deref(),
+            unit.as_deref(),
+        ),
     };
 
     if let Err(err_msg) = result {

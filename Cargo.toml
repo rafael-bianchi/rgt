@@ -1,6 +1,6 @@
 [package]
 name = "rgt"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 authors = ["RGT Contributors"]
 description = "Rust Graph Tracker: Numeric and date provenance tracking for LLM coding agents"
@@ -41,10 +41,43 @@ jsonc-parser = { version = "0.33.1", features = ["cst"] }
 toml_edit = "0.25.13"
 semver = "1"
 snap = "1"
+uuid = { version = "1", features = ["v4"] }
 attestation-verify = "0.1.0"
 self-replace = "1.5.0"
+base64 = "0.23"
+pdf-extract = "0.12"
 
 [dev-dependencies]
+oxrdf = "=0.3.4"
+oxttl = "=0.2.4"
+
+[[test]]
+name = "test_turtle_contract"
+path = "tests/contract/test_turtle_contract.rs"
+
+[[test]]
+name = "test_turtle"
+path = "tests/unit/test_turtle.rs"
+
+[[test]]
+name = "test_turtle_identity_contract"
+path = "tests/contract/test_turtle_identity_contract.rs"
+
+[[test]]
+name = "test_turtle_identity"
+path = "tests/integration/test_turtle_identity.rs"
+
+[[test]]
+name = "test_turtle_migration"
+path = "tests/integration/test_turtle_migration.rs"
+
+[[test]]
+name = "test_turtle_capture"
+path = "tests/contract/test_turtle_capture.rs"
+
+[[test]]
+name = "test_turtle_performance"
+path = "tests/integration/test_turtle_performance.rs"
 
 [[test]]
 name = "test_invalidation"
@@ -130,6 +163,57 @@ path = "tests/integration/test_distribution_quickstart.rs"
 name = "test_distribution_performance"
 path = "tests/integration/test_distribution_performance.rs"
 
+[[test]]
+name = "test_pdf_extract"
+path = "tests/unit/test_pdf_extract.rs"
+
+[[test]]
+name = "test_pdf_capture_contract"
+path = "tests/contract/test_pdf_capture_contract.rs"
+
+[[test]]
+name = "test_duration_unit"
+path = "tests/unit/test_duration_unit.rs"
+
+[[test]]
+name = "test_duration_identity"
+path = "tests/unit/test_duration_identity.rs"
+
+[[test]]
+name = "test_duration_cli_contract"
+path = "tests/contract/test_duration_cli_contract.rs"
+
+[[test]]
+name = "test_duration_date_diff"
+path = "tests/integration/test_duration_date_diff.rs"
+
+[[test]]
+name = "test_duration_aggregate"
+path = "tests/unit/test_duration_aggregate.rs"
+
+[[test]]
+name = "test_duration_aggregate_contract"
+path = "tests/contract/test_duration_aggregate_contract.rs"
+
+[[test]]
+name = "test_duration_aggregate_graph"
+path = "tests/integration/test_duration_aggregate_graph.rs"
+
+[[test]]
+name = "test_duration_claim_contract"
+path = "tests/contract/test_duration_claim_contract.rs"
+
+[[test]]
+name = "test_duration_claim"
+path = "tests/unit/test_duration_claim.rs"
+
+[[test]]
+name = "test_duration_query_contract"
+path = "tests/contract/test_duration_query_contract.rs"
+
+[[test]]
+name = "test_duration_performance"
+path = "tests/integration/test_duration_performance.rs"
 [[bench]]
 name = "bench_detection"
 harness = false

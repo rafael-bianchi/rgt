@@ -126,6 +126,7 @@ rgt derive --parents node_raw_X,node_raw_Y --operation EXPRESSION --expression "
                             # el agente registra una derivación verificada
 rgt query node_drv_Z        # rastrea el linaje del valor derivado
 rgt graph --format mermaid  # exporta el grafo de dependencias
+rgt graph --format ttl      # exporta Turtle PROV-O
 ```
 
 ## Cómo funciona
@@ -168,10 +169,20 @@ rgt verify --parents <ids> --operation <op> --result <val>
                                            # verifica un valor derivado sin registrarlo
 rgt status [--stale-only] [--json]         # estado del grafo y obsolescencia
 rgt query <node_id> [--json]               # linaje completo de un valor
-rgt graph [-f text|mermaid|dot]            # exporta el DAG de dependencias
+rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # exporta el grafo
 ```
 
-Operaciones: `EXPRESSION` (fórmulas como `a + b * c`) y `DATE_DIFF` (aritmética de fechas, p. ej. `date2 - date1`). Las variables padre se asignan como `parent[0]=a, parent[1]=b, ...`.
+Operaciones: `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM` y `DURATION_AVG`. `DATE_DIFF` calcula automáticamente el tiempo transcurrido entre dos fechas ordenadas; la suma y el promedio aceptan de 2 a 26 Durations distintas. Los resultados se almacenan como segundos enteros exactos. Se rechaza un promedio que no dé un segundo entero.
+
+Las unidades fijas de visualización son `seconds`, `minutes`, `hours`, `days` y `weeks`; no se admiten meses ni años de calendario. `--result-unit` indica la unidad del valor proporcionado y `--unit` solo cambia la visualización. Por ejemplo:
+
+```bash
+rgt derive --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days --unit hours
+rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM --unit minutes
+rgt query <duration_id> --unit days [--json]
+```
+
+La consulta conserva `value` y añade `duration_seconds` exacto como texto y `selected_unit_display` solo al nodo solicitado. Las conversiones decimales periódicas se marcan como aproximadas; los segundos siguen siendo exactos. `EXPRESSION` interpreta las fechas como segundos Unix y las Durations como segundos transcurridos, devuelve un Number y muestra una advertencia.
 
 ## Herramientas de IA compatibles
 

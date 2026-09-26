@@ -1,17 +1,16 @@
 use rusqlite::{Connection, Result};
 
 /// The current supported store schema version, tracked via SQLite's
-/// `PRAGMA user_version` (FR-001). Version 1 is the initial versioned schema;
-/// future schema changes bump this and append to the migration list.
-pub const SCHEMA_VERSION: i32 = 1;
+/// `PRAGMA user_version`.
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// Reads the store's recorded schema version (`PRAGMA user_version`).
 pub fn schema_version(conn: &Connection) -> Result<i32> {
     conn.query_row("PRAGMA user_version", [], |row| row.get(0))
 }
 
-/// Stamps or migrates the store's schema version (FR-001/FR-002):
-/// - `0` (unversioned, fresh or pre-029 store) → stamped to `SCHEMA_VERSION`;
+/// Stamps or migrates the store's schema version:
+/// - `0` (unversioned, fresh or pre-029 store) → v1 stamp, then v2 migration;
 /// - `== SCHEMA_VERSION` → no-op;
 /// - `< SCHEMA_VERSION` → applies the ordered migrations for that range;
 /// - `> SCHEMA_VERSION` → error (a newer store cannot be opened by this build).
@@ -29,14 +28,49 @@ pub fn stamp_or_migrate_schema(conn: &Connection) -> Result<()> {
     if current == SCHEMA_VERSION {
         return Ok(());
     }
-    // Ordered, idempotent migrations from `current` up to `SCHEMA_VERSION`.
-    // The list is currently empty (SCHEMA_VERSION == 1 and `0` is a backfill
-    // stamp, not a migration); a future bump appends migrations here. Each
-    // migration runs inside the caller's transaction and bumps `user_version`.
-    if current == 0 {
-        conn.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION))?;
+
+    // Serialize concurrent first opens, recheck the version under the write
+    // lock, and commit the table plus version change as one migration.
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let migration = (|| {
+        let mut version = schema_version(conn)?;
+        if version > SCHEMA_VERSION {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(1),
+                Some(format!(
+                    "store schema version {} is newer than this build supports (max {}); upgrade `rgt`",
+                    version, SCHEMA_VERSION
+                )),
+            ));
+        }
+        if version == 0 {
+            conn.execute_batch("PRAGMA user_version = 1")?;
+            version = 1;
+        }
+        if version == 1 {
+            conn.execute_batch(
+                "CREATE TABLE capture_associations (
+                    node_id TEXT NOT NULL REFERENCES tracked_nodes(id) ON DELETE CASCADE,
+                    agent_name TEXT NOT NULL,
+                    PRIMARY KEY(node_id, agent_name)
+                 );
+                 PRAGMA user_version = 2;",
+            )?;
+            version = 2;
+        }
+        if version != SCHEMA_VERSION {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        Ok(())
+    })();
+
+    match migration {
+        Ok(()) => conn.execute_batch("COMMIT"),
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
     }
-    Ok(())
 }
 
 /// Initializes the SQLite schema (WAL mode, tables, indexes) idempotently.

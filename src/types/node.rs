@@ -93,6 +93,63 @@ impl TrackedNode {
         let hash_hex = hasher.finalize().to_hex();
         format!("node_drv_{}", &hash_hex[..32])
     }
+
+    /// Generates the versioned identity for a canonical Duration derivation.
+    /// Display formatting is deliberately absent from this preimage.
+    pub fn generate_duration_derived_id(
+        parents: &[String],
+        operation: &str,
+        seconds: i64,
+    ) -> Result<String, String> {
+        if chrono::Duration::try_seconds(seconds).is_none() {
+            return Err(format!(
+                "Duration seconds '{seconds}' are outside the supported range"
+            ));
+        }
+        let canonical_parents = match operation {
+            "DATE_DIFF" => {
+                if parents.len() != 2 {
+                    return Err(format!(
+                        "DATE_DIFF identity requires exactly two parents, got {}",
+                        parents.len()
+                    ));
+                }
+                parents.to_vec()
+            }
+            "DURATION_SUM" | "DURATION_AVG" => {
+                if !(2..=26).contains(&parents.len()) {
+                    return Err(format!(
+                        "{operation} identity requires 2 to 26 parents, got {}",
+                        parents.len()
+                    ));
+                }
+                let mut sorted = parents.to_vec();
+                sorted.sort();
+                if sorted.windows(2).any(|pair| pair[0] == pair[1]) {
+                    return Err(format!("{operation} does not accept repeated parent IDs"));
+                }
+                sorted
+            }
+            _ => return Err(format!("unsupported Duration operation '{operation}'")),
+        };
+
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"rgt:derived-duration:v2\0");
+        update_length_delimited(&mut hasher, b"DURATION");
+        update_length_delimited(&mut hasher, operation.as_bytes());
+        hasher.update(&seconds.to_be_bytes());
+        hasher.update(&(canonical_parents.len() as u64).to_be_bytes());
+        for parent in canonical_parents {
+            update_length_delimited(&mut hasher, parent.as_bytes());
+        }
+        let hash_hex = hasher.finalize().to_hex();
+        Ok(format!("node_drv_{}", &hash_hex[..32]))
+    }
+}
+
+fn update_length_delimited(hasher: &mut blake3::Hasher, value: &[u8]) {
+    hasher.update(&(value.len() as u64).to_be_bytes());
+    hasher.update(value);
 }
 
 #[cfg(test)]

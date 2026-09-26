@@ -126,6 +126,7 @@ rgt derive --parents node_raw_X,node_raw_Y --operation EXPRESSION --expression "
                             # エージェントが検証済みの導出を記録
 rgt query node_drv_Z        # 派生値の系譜を追跡
 rgt graph --format mermaid  # 依存グラフをエクスポート
+rgt graph --format ttl      # PROV-O Turtle でエクスポート
 ```
 
 ## 動作の仕組み
@@ -168,10 +169,20 @@ rgt verify --parents <ids> --operation <op> --result <val>
                                            # 記録せずに派生値を検証
 rgt status [--stale-only] [--json]         # グラフの状態とデータの古さ
 rgt query <node_id> [--json]               # 値の完全な系譜
-rgt graph [-f text|mermaid|dot]            # 依存 DAG をエクスポート
+rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # 依存グラフを出力
 ```
 
-操作：`EXPRESSION`（`a + b * c` のような式）と `DATE_DIFF`（`date2 - date1` のような日付演算）。親変数は `parent[0]=a, parent[1]=b, ...` と対応します。
+操作：`EXPRESSION`、`DATE_DIFF`、`DURATION_SUM`、`DURATION_AVG`。`DATE_DIFF` は順序付きの2つの日付から経過時間を自動計算します。合計と平均は、重複しない2〜26個の Duration を受け取ります。結果は正確な整数秒として保存され、整数秒にならない平均は拒否されます。
+
+表示単位は `seconds`、`minutes`、`hours`、`days`、`weeks` です。暦上の月と年は長さが変わるためサポートしません。`--result-unit` は入力した値の単位を指定し、`--unit` は表示だけを変えます。
+
+```bash
+rgt derive --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days --unit hours
+rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM --unit minutes
+rgt query <duration_id> --unit days [--json]
+```
+
+クエリは既存の `value` を保持し、要求したノードだけに正確な秒数を文字列で示す `duration_seconds` と `selected_unit_display` を追加します。循環小数の変換には近似の印が付きますが、秒数は常に正確です。`EXPRESSION` は日付を Unix タイムスタンプ秒、Duration を経過秒として扱い、Number を返して警告を出します。
 
 ## 対応 AI ツール
 

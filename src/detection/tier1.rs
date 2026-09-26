@@ -5,11 +5,10 @@ use std::path::Path;
 pub struct MetadataSnapshot {
     pub mtime_nsec: i64,
     pub file_size: u64,
-    /// Resolved-target device id (Unix `st_dev`; Windows volume serial number).
-    /// `None` on platforms without identity.
+    /// Resolved-target device id (Unix `st_dev`). `None` on platforms without
+    /// a stable identity API.
     pub dev: Option<u64>,
-    /// Resolved-target inode (Unix `st_ino`; Windows file index). `None` when
-    /// unavailable.
+    /// Resolved-target inode (Unix `st_ino`). `None` when unavailable.
     pub ino: Option<u64>,
 }
 
@@ -34,18 +33,8 @@ pub fn get_metadata_snapshot<P: AsRef<Path>>(path: P) -> io::Result<MetadataSnap
             .unwrap_or_default();
         let mtime_nsec = duration.as_nanos() as i64;
 
-        // `volume_serial_number`/`file_index` (`windows_by_handle`) are stable
-        // only on the MSVC target; the GNU target compiles on stable by falling
-        // back to no on-disk identity (path-based dedup).
-        #[cfg(all(windows, target_env = "msvc"))]
-        let (dev, ino) = {
-            use std::os::windows::fs::MetadataExt;
-            (
-                meta.volume_serial_number().map(|v| v as u64),
-                meta.file_index(),
-            )
-        };
-        #[cfg(not(all(windows, target_env = "msvc")))]
+        // Stable Rust does not expose resolved-target file identity on Windows.
+        // Keep the existing path-based fallback on all non-Unix targets.
         let (dev, ino) = (None, None);
 
         (mtime_nsec, dev, ino)

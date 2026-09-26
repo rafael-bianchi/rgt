@@ -127,6 +127,14 @@ pub fn resolve_agent_name(name: &str) -> Option<String> {
     None
 }
 
+/// Whether an already-canonical agent has an event-capable hook or plugin
+/// integration and can therefore be attached to a captured value.
+pub fn is_capture_capable_agent(name: &str) -> bool {
+    AGENTS
+        .iter()
+        .any(|agent| agent.canonical == name && matches!(agent.tier, Tier::Hook | Tier::Plugin))
+}
+
 /// Whether `name` is an accepted `--agent` spelling.
 /// All accepted `--agent` spellings (13 canonical + 3 aliases) for error
 /// messages and documentation parity (SC-005).
