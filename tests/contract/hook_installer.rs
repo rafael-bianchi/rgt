@@ -1,8 +1,9 @@
+use base64::Engine;
 use rgt::hooks::installer::{
     detect_and_configure_hooks_with_config_and_exe, resolve_agent_name, valid_agent_names,
     AgentOutcome, InstallReport,
 };
-use rgt::hooks::paths::copilot_cli_config_dir;
+use rgt::hooks::paths::{copilot_cli_config_dir, copilot_user_settings, windsurf_user_hooks_json};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tempfile::tempdir;
@@ -57,13 +58,12 @@ fn run_none(home: &Path, config_dir: &Path, global: bool, force: bool) -> Instal
 
 /// The shell-quoted absolute path prefix expected in command hooks.
 fn exe_prefix() -> String {
-    format!("\"{}\"", injected_exe().display())
+    format!("'{}'", injected_exe().display())
 }
 
-/// Same as [`exe_prefix`], but JSON-escaped for raw file-content assertions
-/// (serde_json escapes embedded quotes as `\"` in the serialized command).
+/// Same as [`exe_prefix`]; JSON strings keep POSIX single quotes unescaped.
 fn exe_prefix_json() -> String {
-    format!("\\\"{}\\\"", injected_exe().display())
+    format!("'{}'", injected_exe().display())
 }
 
 fn configured(report: &InstallReport) -> Vec<String> {
@@ -71,7 +71,9 @@ fn configured(report: &InstallReport) -> Vec<String> {
         .outcomes
         .iter()
         .filter_map(|o| match o {
-            AgentOutcome::Configured { agent, .. } => Some(agent.clone()),
+            AgentOutcome::Configured { agent, .. } | AgentOutcome::Migrated { agent, .. } => {
+                Some(agent.clone())
+            }
             _ => None,
         })
         .collect()
@@ -82,7 +84,7 @@ fn skipped(report: &InstallReport) -> Vec<String> {
         .outcomes
         .iter()
         .filter_map(|o| match o {
-            AgentOutcome::Skipped { agent } => Some(agent.clone()),
+            AgentOutcome::AlreadyCurrent { agent, .. } => Some(agent.clone()),
             _ => None,
         })
         .collect()
@@ -93,7 +95,9 @@ fn failed(report: &InstallReport) -> Vec<String> {
         .outcomes
         .iter()
         .filter_map(|o| match o {
-            AgentOutcome::Failed { agent, .. } => Some(agent.clone()),
+            AgentOutcome::Failed { agent, .. } | AgentOutcome::Conflict { agent, .. } => {
+                Some(agent.clone())
+            }
             _ => None,
         })
         .collect()
@@ -205,7 +209,15 @@ fn copilot_writer_merges_chat_hooks_into_user_settings() {
     );
     let hooks = &parsed["github.copilot.chat.hooks"]["PostToolUse"][0];
     let cmd = hooks["hooks"][0]["command"].as_str().unwrap();
-    assert_eq!(cmd, &format!("{} hook post --agent copilot", exe_prefix()));
+    assert_eq!(
+        cmd,
+        rgt::hooks::installer::direct_hook_command_for_platform(
+            &injected_exe(),
+            "post",
+            "copilot",
+            cfg!(windows),
+        )
+    );
 }
 
 #[test]
@@ -313,7 +325,7 @@ fn gemini_writer_creates_hooks_toml() {
 }
 
 #[test]
-fn vibe_writer_creates_hooks_toml_and_prompt() {
+fn vibe_writer_creates_hooks_toml_and_loaded_guidance() {
     let dir = tempdir().unwrap();
     let _guard = set_cwd(dir.path());
     let home = dir.path().join("home");
@@ -326,12 +338,13 @@ fn vibe_writer_creates_hooks_toml_and_prompt() {
     assert!(toml.contains("[[pre_tool]]"));
     assert!(toml.contains("match = \"bash\""));
     assert!(toml.contains("strict = false"));
-    assert!(toml.contains(&format!("{} hook post --agent vibe", exe_prefix())));
+    assert!(toml.contains(&format!("{} hook pre --agent vibe", exe_prefix())));
     let _: toml_edit::DocumentMut = toml.parse().unwrap();
 
-    let prompt = read(&home.join(".vibe").join("prompts").join("rgt.md"));
-    assert!(prompt.contains("RGT Integration"));
-    assert!(prompt.contains("<!-- /RGT Integration -->"));
+    let guidance = read(&home.join(".vibe").join("AGENTS.md"));
+    assert!(guidance.contains("RGT Integration"));
+    assert!(guidance.contains("<!-- /RGT Integration -->"));
+    assert!(!home.join(".vibe/prompts/rgt.md").exists());
 }
 
 #[test]
@@ -342,8 +355,10 @@ fn opencode_writer_project_and_global() {
     let config_dir = dir.path().join("config");
 
     run(&home, &config_dir, false, true, "opencode");
-    let project_plugin = read(&PathBuf::from(".opencode").join("plugin").join("rgt.ts"));
+    let project_plugin = read(&PathBuf::from(".opencode").join("plugins").join("rgt.ts"));
     assert_thin_glue(&project_plugin, "opencode");
+    assert!(project_plugin.contains("export const RgtPlugin = async"));
+    assert!(project_plugin.contains("\"tool.execute.after\""));
 
     run(&home, &config_dir, true, true, "opencode");
     let global_plugin = read(
@@ -451,7 +466,7 @@ fn malformed_json_fails_loudly_and_file_is_untouched() {
         .outcomes
         .iter()
         .find_map(|o| match o {
-            AgentOutcome::Failed { agent, reason } if agent == "claude-code" => {
+            AgentOutcome::Failed { agent, reason, .. } if agent == "claude-code" => {
                 Some(reason.clone())
             }
             _ => None,
@@ -598,6 +613,25 @@ fn force_replaces_rgt_block_preserving_user_content_below() {
 }
 
 #[test]
+fn normal_init_repairs_a_recognized_old_instruction_block_with_backup() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let rules = PathBuf::from(".clinerules");
+    let legacy = "# Team rules\n## RGT Integration\nold instructions\n<!-- /RGT Integration -->\n# Keep below\nuser text\n";
+    write(&rules, legacy);
+
+    let report = run(&home, &config_dir, false, false, "cline");
+    assert!(configured(&report).contains(&"cline".to_string()));
+    assert_eq!(read(&rules.with_file_name(".clinerules.rgt.bak")), legacy);
+    let migrated = read(&rules);
+    assert!(!migrated.contains("old instructions"));
+    assert!(migrated.contains("# Team rules"));
+    assert!(migrated.contains("# Keep below\nuser text"));
+}
+
+#[test]
 fn force_on_legacy_block_without_end_marker_errors_and_untouches() {
     let dir = tempdir().unwrap();
     let _guard = set_cwd(dir.path());
@@ -613,7 +647,7 @@ fn force_on_legacy_block_without_end_marker_errors_and_untouches() {
         .outcomes
         .iter()
         .find_map(|o| match o {
-            AgentOutcome::Failed { agent, reason } if agent == "cline" => Some(reason.clone()),
+            AgentOutcome::Failed { agent, reason, .. } if agent == "cline" => Some(reason.clone()),
             _ => None,
         })
         .expect("cline must fail on a legacy block");
@@ -630,7 +664,7 @@ fn force_on_legacy_block_without_end_marker_errors_and_untouches() {
 }
 
 #[test]
-fn legacy_block_without_force_is_skipped_not_modified() {
+fn malformed_legacy_block_without_force_reports_conflict_and_is_not_modified() {
     let dir = tempdir().unwrap();
     let _guard = set_cwd(dir.path());
     let home = dir.path().join("home");
@@ -641,26 +675,26 @@ fn legacy_block_without_force_is_skipped_not_modified() {
     write(&rules_file, legacy);
 
     let report = run(&home, &config_dir, false, false, "cline");
-    assert!(skipped(&report).contains(&"cline".to_string()));
+    assert!(failed(&report).contains(&"cline".to_string()));
     assert_eq!(read(&rules_file), legacy);
 }
 
 #[test]
-fn plugin_file_not_overwritten_without_force() {
+fn plugin_file_with_unknown_ownership_is_preserved_even_with_force() {
     let dir = tempdir().unwrap();
     let _guard = set_cwd(dir.path());
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
-    let plugin_file = PathBuf::from(".opencode").join("plugin").join("rgt.ts");
+    let plugin_file = PathBuf::from(".opencode").join("plugins").join("rgt.ts");
 
     write(&plugin_file, "// user-authored plugin\n");
     let report = run(&home, &config_dir, false, false, "opencode");
-    assert!(skipped(&report).contains(&"opencode".to_string()));
+    assert!(failed(&report).contains(&"opencode".to_string()));
     assert_eq!(read(&plugin_file), "// user-authored plugin\n");
 
-    // --force overwrites.
-    run(&home, &config_dir, false, true, "opencode");
-    assert_thin_glue(&read(&plugin_file), "opencode");
+    let forced = run(&home, &config_dir, false, true, "opencode");
+    assert!(failed(&forced).contains(&"opencode".to_string()));
+    assert_eq!(read(&plugin_file), "// user-authored plugin\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -718,6 +752,301 @@ fn aliases_resolve_to_canonical_names() {
     assert_eq!(resolve_agent_name("kilo").as_deref(), Some("kilocode"));
     assert_eq!(resolve_agent_name("kilocode").as_deref(), Some("kilocode"));
     assert_eq!(resolve_agent_name("nonexistent"), None);
+}
+
+#[test]
+fn direct_hook_fallback_commands_are_generated_for_unix_and_windows() {
+    use rgt::hooks::installer::direct_hook_command_for_platform;
+    let path = PathBuf::from("/Users/example path/rgt");
+    let unix = direct_hook_command_for_platform(&path, "post", "codex", false);
+    assert!(unix.contains("'/Users/example path/rgt' hook post --agent codex --rgt-managed"));
+    assert!(unix.contains("mktemp -d"));
+    assert!(unix.contains("sleep 0.8"));
+    assert!(unix.contains("timed-out"));
+    assert!(unix.contains("kill -KILL"));
+    assert!(unix.contains("cat \"$_rgt_tmp/stdout\""));
+    assert!(unix.ends_with("2>/dev/null || true"));
+    let windows = direct_hook_command_for_platform(
+        Path::new("C:\\Program Files\\RGT\\rgt.exe"),
+        "post",
+        "codex",
+        true,
+    );
+    assert!(
+        windows.starts_with("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ")
+    );
+    let encoded = windows.split_whitespace().last().unwrap();
+    let script = String::from_utf16_lossy(
+        &base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap()
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    );
+    assert!(script.contains("FileName='C:\\Program Files\\RGT\\rgt.exe'"));
+    assert!(script.contains("Arguments='hook post --agent codex --rgt-managed'"));
+    assert!(script.contains("catch { } finally {"));
+    assert!(script.ends_with("exit 0"));
+    assert!(script.contains("Stopwatch]::StartNew()"));
+    assert!(script.contains("CopyToAsync($p.StandardInput.BaseStream,81920,$cts.Token)"));
+    assert!(script.contains("WaitForExit([int]$remaining)"));
+    assert!(script.contains("$p.Kill()"));
+    assert!(script.contains("$p.WaitForExit(50)"));
+    assert!(script.contains("[Console]::Out.Write($stdoutTask.Result)"));
+    assert!(!script.contains("[Console]::OpenStandardInput().CopyTo("));
+    assert!(!script.contains("$stdoutTask.Wait()"));
+    assert!(!script.contains("$p.WaitForExit()"));
+
+    let windows_special = direct_hook_command_for_platform(
+        Path::new("C:\\Program Files\\RGT\\%TEMP%! 'quoted' $value.exe"),
+        "post",
+        "codex",
+        true,
+    );
+    let encoded = windows_special.split_whitespace().last().unwrap();
+    let special_script = String::from_utf16_lossy(
+        &base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap()
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    );
+    assert!(
+        special_script.contains("FileName='C:\\Program Files\\RGT\\%TEMP%! ''quoted'' $value.exe'")
+    );
+    assert!(special_script.contains("catch { } finally {"));
+    assert!(special_script.ends_with("exit 0"));
+}
+
+#[test]
+fn vibe_init_registration_is_current_in_doctor_and_idempotent() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let executable = std::env::current_exe().unwrap();
+
+    let first = detect_and_configure_hooks_with_config_and_exe(
+        &home,
+        &config_dir,
+        true,
+        false,
+        Some("vibe"),
+        &executable,
+    )
+    .unwrap();
+    assert_eq!(configured(&first), vec!["vibe".to_string()]);
+    let hooks_path = home.join(".vibe/hooks.toml");
+    let installed = read(&hooks_path);
+    assert!(installed.contains("hook pre --agent vibe"));
+
+    let registrations = rgt::hooks::registration::inspect_local_registrations(&home, &config_dir);
+    let vibe = registrations
+        .iter()
+        .find(|registration| registration.surface_id == "vibe")
+        .unwrap();
+    assert_eq!(
+        vibe.health,
+        rgt::hooks::registration::RegistrationHealth::Active
+    );
+    assert_eq!(
+        vibe.capture_tier,
+        rgt::hooks::registration::CaptureTier::InstructionOnly
+    );
+    assert!(vibe
+        .event_phases
+        .contains(&rgt::hooks::registration::EventPhase::Before));
+
+    let second = detect_and_configure_hooks_with_config_and_exe(
+        &home,
+        &config_dir,
+        true,
+        false,
+        Some("vibe"),
+        &executable,
+    )
+    .unwrap();
+    assert_eq!(read(&hooks_path), installed);
+    assert!(
+        second.outcomes.iter().any(|outcome| matches!(
+            outcome,
+            AgentOutcome::AlreadyCurrent { agent, .. } if agent == "vibe"
+        )),
+        "second initialization should report already current: {:?}",
+        second.outcomes
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn direct_hook_command_safely_quotes_shell_expansion_characters_and_fails_open() {
+    use rgt::hooks::installer::direct_hook_command_for_platform;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("expanded");
+    let executable = dir.path().join("rgt $HOME `touch expanded`; 'quoted'");
+    std::fs::write(&executable, "#!/bin/sh\nprintf 'hook-output'\n").unwrap();
+    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable, permissions).unwrap();
+
+    let command = direct_hook_command_for_platform(&executable, "post", "codex", false);
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"hook-output");
+    assert!(
+        !marker.exists(),
+        "quoted path must not execute shell substitutions"
+    );
+
+    let missing = direct_hook_command_for_platform(
+        &dir.path().join("missing $HOME `false`; 'rgt'"),
+        "post",
+        "codex",
+        false,
+    );
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(missing)
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "a missing CLI must fail open");
+}
+
+#[test]
+fn opencode_legacy_plugin_is_backed_up_migrated_and_idempotent() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let legacy_plugin = dir.path().join(".opencode/plugin/rgt.ts");
+    let plugin = dir.path().join(".opencode/plugins/rgt.ts");
+    let legacy = r#"import { plugin } from "@opencode-ai/plugin";
+export const rgt = plugin("rgt", { tool: { execute: { after: async (args) => {
+  spawnSync("/old/rgt", ["hook", "post", "--agent", "opencode"]);
+}}}});
+"#;
+    write(&legacy_plugin, legacy);
+
+    let first = run(&home, &config_dir, false, false, "opencode");
+    assert_eq!(configured(&first), vec!["opencode"]);
+    assert!(
+        matches!(first.outcomes.as_slice(), [AgentOutcome::Migrated { backups, .. }] if backups == &vec![PathBuf::from(".opencode/plugin/rgt.ts.rgt.bak")])
+    );
+    assert_eq!(read(&legacy_plugin.with_extension("ts.rgt.bak")), legacy);
+    assert!(!legacy_plugin.exists());
+    assert!(read(&plugin).contains("RGT-managed integration"));
+    assert!(read(&plugin).contains("--rgt-managed"));
+
+    let installed = read(&plugin);
+    let second = run(&home, &config_dir, false, false, "opencode");
+    assert_eq!(skipped(&second), vec!["opencode"]);
+    assert_eq!(read(&plugin), installed);
+}
+
+#[test]
+fn native_json_surface_migrations_keep_unrelated_settings_and_are_idempotent() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let cases = [
+        (
+            "claude-code",
+            home.join(".claude/settings.json"),
+            serde_json::json!({"settings":{"keep":true},"hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"\"/old/rgt\" hook post --agent claude-code"}]}]}}),
+        ),
+        (
+            "cursor",
+            home.join(".cursor/hooks.json"),
+            serde_json::json!({"settings":{"keep":true},"hooks":{"postToolUse":[{"command":"\"/old/rgt\" hook post --agent cursor"}]}}),
+        ),
+        (
+            "copilot",
+            copilot_user_settings(&config_dir),
+            serde_json::json!({"settings":{"keep":true},"github.copilot.chat.hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"\"/old/rgt\" hook post --agent copilot"}]}]}}),
+        ),
+        (
+            "windsurf",
+            windsurf_user_hooks_json(&home),
+            serde_json::json!({"settings":{"keep":true},"hooks":{"post_read_code":[{"command":"\"/old/rgt\" hook post --agent windsurf"}]}}),
+        ),
+    ];
+
+    for (agent, path, legacy) in cases {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let original = serde_json::to_string_pretty(&legacy).unwrap();
+        std::fs::write(&path, &original).unwrap();
+
+        let first = run(&home, &config_dir, true, false, agent);
+        let expected_backup = PathBuf::from(format!("{}.rgt.bak", path.display()));
+        assert!(
+            matches!(
+                first.outcomes.as_slice(),
+                [AgentOutcome::Migrated { backups, .. }]
+                    if backups == &vec![expected_backup.clone()]
+            ),
+            "{agent}: {:?}",
+            first.outcomes
+        );
+        let upgraded: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(upgraded["settings"]["keep"], true, "{agent}");
+        let expected_callbacks = if matches!(agent, "claude-code" | "cursor") {
+            2
+        } else {
+            1
+        };
+        assert_eq!(
+            upgraded.to_string().matches("--rgt-managed").count(),
+            expected_callbacks,
+            "{agent}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&expected_backup).unwrap(),
+            original,
+            "{agent}"
+        );
+
+        let second = run(&home, &config_dir, true, false, agent);
+        assert!(
+            matches!(
+                second.outcomes.as_slice(),
+                [AgentOutcome::AlreadyCurrent { .. }]
+            ),
+            "{agent}: {:?}",
+            second.outcomes
+        );
+    }
+}
+
+#[test]
+fn plugin_with_ambiguous_ownership_is_preserved_even_with_force() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let plugin = dir.path().join(".pi/extensions/rgt.ts");
+    let foreign = "// user-owned plugin\nexport const extension = { name: \"custom\" };\n";
+    write(&plugin, foreign);
+
+    let report = run(&home, &config_dir, false, true, "pi");
+    assert_eq!(failed(&report), vec!["pi"]);
+    assert!(
+        matches!(report.outcomes.as_slice(), [AgentOutcome::Conflict { artifact: Some(path), backup: None, .. }] if path == &PathBuf::from(".pi/extensions/rgt.ts"))
+    );
+    assert_eq!(read(&plugin), foreign);
+    assert!(!plugin.with_extension("ts.rgt.bak").exists());
 }
 
 #[test]
@@ -782,41 +1111,28 @@ fn assert_thin_glue(content: &str, agent: &str) {
 
 #[test]
 fn glue_templates_are_thin_delegates() {
-    assert_thin_glue(
-        &rgt::hooks::glue::opencode_plugin("/usr/local/bin/rgt"),
-        "opencode",
-    );
-    assert_thin_glue(&rgt::hooks::glue::pi_extension("/usr/local/bin/rgt"), "pi");
-    assert_thin_glue(
-        &rgt::hooks::glue::hermes_plugin("/usr/local/bin/rgt"),
-        "hermes",
-    );
+    let opencode = rgt::hooks::glue::opencode_plugin("/usr/local/bin/rgt");
+    let pi = rgt::hooks::glue::pi_extension("/usr/local/bin/rgt");
+    let hermes = rgt::hooks::glue::hermes_plugin("/usr/local/bin/rgt");
+    assert_thin_glue(&opencode, "opencode");
+    assert_thin_glue(&pi, "pi");
+    assert_thin_glue(&hermes, "hermes");
+    assert!(opencode.contains("timeout: 800"));
+    assert!(pi.contains("timeout: 800"));
+    assert!(hermes.contains("timeout=0.8"));
 }
 
 // ---------------------------------------------------------------------------
 // 023: non-text-source capture instruction (T005/T007/T009)
 // ---------------------------------------------------------------------------
 
-const NON_TEXT_ANCHOR: &str = "Recording Values from Non-Text Sources";
+const NON_TEXT_ANCHOR: &str = "Recording Values When Automatic Capture Is Unavailable";
 
 fn count_anchor(path: &Path, anchor: &str) -> usize {
     match std::fs::read_to_string(path) {
         Ok(content) => content.matches(anchor).count(),
         Err(_) => 0,
     }
-}
-
-fn dir_contains_anchor(dir: &Path, anchor: &str) -> bool {
-    for entry in walkdir::WalkDir::new(dir) {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        if entry.file_type().is_file() && count_anchor(entry.path(), anchor) > 0 {
-            return true;
-        }
-    }
-    false
 }
 
 #[test]
@@ -849,7 +1165,7 @@ fn instructions_carry_non_text_source_instruction_once() {
             copilot_cli_config_dir(&home, &config_dir).join("AGENTS.md"),
             "copilot CLI",
         ),
-        (home.join(".vibe/prompts/rgt.md"), "vibe"),
+        (home.join(".vibe/AGENTS.md"), "vibe"),
     ];
 
     for (path, agent) in cases {
@@ -862,8 +1178,8 @@ fn instructions_carry_non_text_source_instruction_once() {
             content
         );
         assert!(
-            content.contains("already captured automatically"),
-            "{} must state plain-text formats are auto-captured:\n{}",
+            content.contains("does not prove automatic capture"),
+            "{} must distinguish local setup from automatic capture:\n{}",
             agent,
             content
         );
@@ -914,26 +1230,40 @@ fn claude_code_force_preserves_user_claude_md_content() {
 }
 
 #[test]
-fn unverified_and_plugin_agents_get_no_instruction_file() {
+fn unverified_surfaces_get_loadable_guidance_without_automatic_capture_claims() {
+    use rgt::hooks::registration::{inspect_local_guidance, GuidanceHealth, RegistrationScope};
     let dir = tempdir().unwrap();
     let _guard = set_cwd(dir.path());
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
 
-    // Cursor, Gemini, OpenCode, Pi, Hermes: fully out of scope — no
-    // instructions artifact carrying the non-text instruction.
-    for agent in ["cursor", "gemini", "opencode", "pi", "hermes"] {
+    for agent in ["cursor", "gemini", "copilot"] {
         run(&home, &config_dir, true, true, agent);
     }
-    assert!(
-        !dir_contains_anchor(dir.path(), NON_TEXT_ANCHOR),
-        "no instructions file carrying the non-text instruction may be written for unverified/plugin-only agents"
-    );
-
-    // Copilot is mixed: the CLI AGENTS.md IS in scope (US2), but the VS Code
-    // Chat settings must NOT carry the instruction (its hook-only surface is
-    // unverified).
-    run(&home, &config_dir, true, true, "copilot");
+    for path in [
+        PathBuf::from(".cursor/rules/rgt.mdc"),
+        home.join(".gemini/GEMINI.md"),
+        PathBuf::from(".github/copilot-instructions.md"),
+    ] {
+        assert_eq!(
+            count_anchor(&path, NON_TEXT_ANCHOR),
+            1,
+            "{}",
+            path.display()
+        );
+    }
+    let inspected = inspect_local_guidance(&home, &config_dir);
+    for (surface, scope) in [
+        ("cursor", RegistrationScope::Project),
+        ("gemini", RegistrationScope::User),
+        ("copilot-chat", RegistrationScope::Project),
+        ("copilot-cli", RegistrationScope::User),
+    ] {
+        let guidance = inspected.iter().find(|g| g.surface_id == surface).unwrap();
+        assert_eq!(guidance.health, GuidanceHealth::Usable, "{surface}");
+        assert_eq!(guidance.scope, scope, "{surface}");
+    }
+    assert!(read(Path::new(".cursor/rules/rgt.mdc")).contains("alwaysApply: true"));
     let cli_md = copilot_cli_config_dir(&home, &config_dir).join("AGENTS.md");
     assert_eq!(
         count_anchor(&cli_md, NON_TEXT_ANCHOR),
@@ -944,8 +1274,52 @@ fn unverified_and_plugin_agents_get_no_instruction_file() {
     assert_eq!(
         count_anchor(&chat_settings, NON_TEXT_ANCHOR),
         0,
-        "Copilot Chat (VS Code) settings must not carry the instruction"
+        "guidance belongs in the documented project instruction file"
     );
+    run(&home, &config_dir, true, true, "cursor");
+    assert_eq!(
+        count_anchor(Path::new(".cursor/rules/rgt.mdc"), NON_TEXT_ANCHOR),
+        1
+    );
+}
+
+#[test]
+fn instruction_only_installers_create_complete_guidance_at_local_load_paths() {
+    use rgt::hooks::registration::{inspect_local_guidance, GuidanceHealth};
+
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    for agent in ["cline", "antigravity", "kilocode"] {
+        assert!(failed(&run(&home, &config_dir, false, true, agent)).is_empty());
+    }
+    let inspected = inspect_local_guidance(&home, &config_dir);
+    for surface in ["cline", "roo-code", "antigravity", "kilocode"] {
+        assert_eq!(
+            inspected
+                .iter()
+                .find(|g| g.surface_id == surface)
+                .unwrap()
+                .health,
+            GuidanceHealth::Usable,
+            "{surface}"
+        );
+    }
+}
+
+#[test]
+fn cursor_does_not_replace_an_unowned_rule_or_write_hooks_on_conflict() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+    let rule = Path::new(".cursor/rules/rgt.mdc");
+    write(rule, "---\nalwaysApply: false\n---\nUser rule\n");
+    let report = run(&home, &config_dir, false, true, "cursor");
+    assert_eq!(failed(&report), vec!["cursor"]);
+    assert_eq!(read(rule), "---\nalwaysApply: false\n---\nUser rule\n");
+    assert!(!Path::new(".cursor/hooks.json").exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -958,6 +1332,19 @@ fn restart_reminder_true_when_any_hook_configured() {
         outcomes: vec![AgentOutcome::Configured {
             agent: "codex".into(),
             artifact: PathBuf::from("AGENTS.md"),
+            backups: vec![],
+        }],
+    };
+    assert!(rgt::cli::needs_restart_reminder(&report));
+}
+
+#[test]
+fn restart_reminder_true_when_a_hook_was_migrated() {
+    let report = InstallReport {
+        outcomes: vec![AgentOutcome::Migrated {
+            agent: "codex".into(),
+            artifact: PathBuf::from(".codex/hooks.json"),
+            backups: vec![PathBuf::from(".codex/hooks.json.rgt.bak")],
         }],
     };
     assert!(rgt::cli::needs_restart_reminder(&report));
@@ -967,11 +1354,13 @@ fn restart_reminder_true_when_any_hook_configured() {
 fn restart_reminder_false_when_all_skipped() {
     let report = InstallReport {
         outcomes: vec![
-            AgentOutcome::Skipped {
+            AgentOutcome::AlreadyCurrent {
                 agent: "codex".into(),
+                artifact: PathBuf::from("hooks.json"),
             },
-            AgentOutcome::Skipped {
+            AgentOutcome::AlreadyCurrent {
                 agent: "cursor".into(),
+                artifact: PathBuf::from("hooks.json"),
             },
         ],
     };

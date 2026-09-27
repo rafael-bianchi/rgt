@@ -86,6 +86,37 @@ fn jsonc_merge_replaces_existing_rgt_entries_without_duplication() {
     assert!(out.contains("rgt hook pre"));
 }
 
+#[test]
+fn jsonc_merge_preserves_foreign_absolute_hook_executable() {
+    let input = r#"{
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Read", "hooks": [{ "type": "command", "command": "\"/opt/vendor path/read-hook\" hook post" }] }
+    ]
+  }
+}"#;
+    let (out, changed) = jsonc_merge_hook_entries(input, &claude_desired()).unwrap();
+    assert!(changed);
+    assert!(out.contains("/opt/vendor path/read-hook"));
+    assert_eq!(out.matches("rgt hook post").count(), 1);
+}
+
+#[test]
+fn jsonc_merge_rejects_mixed_rgt_and_foreign_commands_in_one_group() {
+    let input = r#"{
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Read", "hooks": [
+        { "type": "command", "command": "rgt hook post" },
+        { "type": "command", "command": "user audit-hook" }
+      ] }
+    ]
+  }
+}"#;
+    let error = jsonc_merge_hook_entries(input, &claude_desired()).unwrap_err();
+    assert!(error.reason.contains("mixed"), "unexpected error: {error}");
+}
+
 // (b) genuinely invalid JSON is a hard error
 #[test]
 fn jsonc_merge_rejects_genuinely_invalid_json() {
@@ -147,6 +178,75 @@ fn toml_ensure_array_value_rejects_malformed_toml() {
     assert!(toml_ensure_array_value(input, &["plugins", "enabled"], "rgt").is_err());
 }
 
+#[test]
+fn toml_ensure_array_value_handles_inline_plugins_without_losing_other_values() {
+    let current = "# user comment\nplugins = { enabled = [\"git\", \"rgt\"], theme = \"dark\" }\n";
+    let (unchanged, changed) =
+        toml_ensure_array_value(current, &["plugins", "enabled"], "rgt").unwrap();
+    assert!(!changed);
+    assert_eq!(unchanged, current);
+
+    let missing = "# user comment\nplugins = { enabled = [\"git\"], theme = \"dark\" }\n";
+    let (updated, changed) =
+        toml_ensure_array_value(missing, &["plugins", "enabled"], "rgt").unwrap();
+    assert!(changed);
+    assert!(updated.contains("# user comment"));
+    let doc: toml_edit::DocumentMut = updated.parse().unwrap();
+    let inline = doc["plugins"]
+        .as_value()
+        .unwrap()
+        .as_inline_table()
+        .unwrap();
+    assert_eq!(
+        inline.get("theme").and_then(toml_edit::Value::as_str),
+        Some("dark")
+    );
+    let enabled = inline.get("enabled").unwrap().as_array().unwrap();
+    assert_eq!(
+        enabled
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["git", "rgt"]
+    );
+
+    let missing_entry = "# user comment\nplugins = { theme = \"dark\" }\n";
+    let (updated, changed) =
+        toml_ensure_array_value(missing_entry, &["plugins", "enabled"], "rgt").unwrap();
+    assert!(changed);
+    let doc: toml_edit::DocumentMut = updated.parse().unwrap();
+    let inline = doc["plugins"]
+        .as_value()
+        .unwrap()
+        .as_inline_table()
+        .unwrap();
+    assert_eq!(
+        inline.get("theme").and_then(toml_edit::Value::as_str),
+        Some("dark")
+    );
+    let enabled = inline.get("enabled").unwrap().as_array().unwrap();
+    assert_eq!(
+        enabled
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["rgt"]
+    );
+}
+
+#[test]
+fn toml_ensure_array_value_rejects_non_string_enablement() {
+    for text in [
+        "[plugins]\nenabled = [\"rgt\", 42]\n",
+        "plugins = { enabled = [\"rgt\", 42] }\n",
+        "[plugins]\nenabled = \"rgt\"\n",
+        "plugins = { enabled = \"rgt\" }\n",
+    ] {
+        let error = toml_ensure_array_value(text, &["plugins", "enabled"], "rgt").unwrap_err();
+        assert!(error.to_string().contains("enabled"), "{error}");
+    }
+}
+
 // Gemini PostToolUse command ensure
 #[test]
 fn toml_ensure_table_entry_sets_gemini_command() {
@@ -155,7 +255,8 @@ fn toml_ensure_table_entry_sets_gemini_command() {
         input,
         &["PostToolUse"],
         "command",
-        "rgt hook post --agent gemini"
+        "rgt hook post --agent gemini",
+        "gemini"
     )
     .is_err());
     let (out, changed) = toml_ensure_table_entry(
@@ -163,19 +264,69 @@ fn toml_ensure_table_entry_sets_gemini_command() {
         &["PostToolUse"],
         "command",
         "rgt hook post --agent gemini",
+        "gemini",
     )
     .unwrap();
     assert!(changed);
     assert!(out.contains("rgt hook post --agent gemini"));
 }
 
+#[test]
+fn toml_ensure_table_entry_migrates_only_an_rgt_owned_command() {
+    let legacy = "# keep\n[PostToolUse]\ncommand = \"rgt hook post --agent gemini\"\n";
+    let (out, changed) = toml_ensure_table_entry(
+        legacy,
+        &["PostToolUse"],
+        "command",
+        "\"/new/path/rgt\" hook post --agent gemini --rgt-managed",
+        "gemini",
+    )
+    .unwrap();
+    assert!(changed);
+    assert!(out.contains("# keep"));
+    assert!(out.contains("--rgt-managed"));
+
+    let foreign = "[PostToolUse]\ncommand = \"/opt/vendor/hook hook post --agent gemini\"\n";
+    assert!(toml_ensure_table_entry(
+        foreign,
+        &["PostToolUse"],
+        "command",
+        "rgt hook post --agent gemini",
+        "gemini",
+    )
+    .is_err());
+}
+
+#[test]
+fn vibe_migration_updates_one_owned_hook_and_removes_owned_duplicates() {
+    let input = "# user comment\n[[pre_tool]]\nmatch = \"shell\"\ncommand = \"echo keep\"\n\n[[pre_tool]]\ncommand = \"rgt hook post --agent vibe\"\n\n[[pre_tool]]\ncommand = \"rgt hook post --agent vibe\"\n";
+    let (out, changed) = toml_ensure_vibe_pre_tool(
+        input,
+        "\"/new/path/rgt\" hook pre --agent vibe --rgt-managed",
+    )
+    .unwrap();
+    assert!(changed);
+    assert!(out.contains("# user comment"));
+    assert!(out.contains("echo keep"));
+    assert_eq!(out.matches("--rgt-managed").count(), 1);
+    assert_eq!(out.matches("--agent vibe").count(), 1);
+    assert!(out.contains("hook pre --agent vibe"));
+    let (same, changed) = toml_ensure_vibe_pre_tool(
+        &out,
+        "\"/new/path/rgt\" hook pre --agent vibe --rgt-managed",
+    )
+    .unwrap();
+    assert!(!changed);
+    assert_eq!(same, out);
+}
+
 // Vibe [[pre_tool]] array of tables
 #[test]
 fn toml_ensure_vibe_pre_tool_adds_entry() {
     let input = "[[pre_tool]]\nmatch = \"bash\"\ncommand = \"something else\"\n";
-    let (out, changed) = toml_ensure_vibe_pre_tool(input, "rgt hook post --agent vibe").unwrap();
+    let (out, changed) = toml_ensure_vibe_pre_tool(input, "rgt hook pre --agent vibe").unwrap();
     assert!(changed);
-    assert!(out.contains("rgt hook post --agent vibe"));
+    assert!(out.contains("rgt hook pre --agent vibe"));
     assert!(out.contains("\"something else\""));
     assert!(out.contains("match = \"bash\""));
     assert!(out.contains("strict = false"));
@@ -186,9 +337,9 @@ fn toml_ensure_vibe_pre_tool_adds_entry() {
 #[test]
 fn text_replace_block_preserves_content_below_block() {
     let block = "\n## RGT Integration\ninstructions\n<!-- /RGT Integration -->";
-    let input = format!("line1\n{block}\n## My personal notes\nkeep me\n");
+    let input = "line1\n\n## RGT Integration\nold instructions\n<!-- /RGT Integration -->\n## My personal notes\nkeep me\n";
     let (out, changed) = text_replace_block(
-        &input,
+        input,
         "## RGT Integration",
         "<!-- /RGT Integration -->",
         block,

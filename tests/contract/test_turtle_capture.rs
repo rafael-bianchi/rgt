@@ -48,7 +48,7 @@ fn hook_default_agent(project: &std::path::Path, payload: &str) -> std::process:
 }
 
 #[test]
-fn eight_event_agents_persist_deduplicated_capture_lineage_across_processes() {
+fn only_eligible_read_paths_persist_capture_lineage_across_processes() {
     let _cwd_guard = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let project = tempdir().unwrap();
     std::env::set_current_dir(project.path()).unwrap();
@@ -61,7 +61,7 @@ fn eight_event_agents_persist_deduplicated_capture_lineage_across_processes() {
         .success());
     std::fs::write(project.path().join("data.csv"), "captured,42.5\n").unwrap();
 
-    let agents = [
+    let candidate_agents = [
         "claude-code",
         "cursor",
         "copilot",
@@ -71,15 +71,17 @@ fn eight_event_agents_persist_deduplicated_capture_lineage_across_processes() {
         "pi",
         "hermes",
     ];
-    for agent in agents {
+    for agent in candidate_agents {
         let payload = if matches!(agent, "claude-code" | "cursor" | "copilot") {
             serde_json::json!({
+                "event": "PostToolUse",
                 "tool_name": "Read",
                 "tool_input": {"path": "data.csv"},
                 "tool_response": {"content": "captured,42.5\n"}
             })
         } else {
             serde_json::json!({
+                "event": "PostToolUse",
                 "tool_name": "Bash",
                 "tool_input": {"command": "cat data.csv"},
                 "tool_response": {"stdout": "captured,42.5\n"}
@@ -97,7 +99,17 @@ fn eight_event_agents_persist_deduplicated_capture_lineage_across_processes() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+    let codex_read = serde_json::json!({
+        "event": "PostToolUse",
+        "tool_name": "read_file",
+        "tool_input": {"file_path": "data.csv"},
+        "tool_response": {"content": "captured,42.5\n"}
+    });
+    assert!(hook(project.path(), "codex", &codex_read.to_string())
+        .status
+        .success());
     let cursor_repeat = serde_json::json!({
+        "event": "PostToolUse",
         "tool_name": "Read",
         "tool_input": {"file_path": "data.csv"},
         "tool_response": {"content": "captured,42.5\n"}
@@ -106,6 +118,7 @@ fn eight_event_agents_persist_deduplicated_capture_lineage_across_processes() {
         .status
         .success());
     let omitted_agent = serde_json::json!({
+        "event": "PostToolUse",
         "tool_name": "Read",
         "tool_input": {"path": "data.csv"},
         "tool_response": {"content": "captured,42.5\n"}
@@ -144,12 +157,13 @@ fn eight_event_agents_persist_deduplicated_capture_lineage_across_processes() {
 
     let db = DbStore::open_in_project(project.path()).unwrap();
     let captures = list_capture_associations(db.conn()).unwrap();
-    assert_eq!(captures.len(), agents.len());
+    let eligible_agents = ["claude-code", "codex"];
+    assert_eq!(captures.len(), eligible_agents.len());
     let actual_agents = captures
         .iter()
         .map(|(_, agent)| agent.as_str())
         .collect::<Vec<_>>();
-    let mut expected_agents = agents.to_vec();
+    let mut expected_agents = eligible_agents.to_vec();
     expected_agents.sort_unstable();
     assert_eq!(actual_agents, expected_agents);
     let captured_node_id = captures[0].0.clone();
@@ -198,7 +212,7 @@ fn eight_event_agents_persist_deduplicated_capture_lineage_across_processes() {
                 |triple| triple.predicate.as_str() == "http://www.w3.org/ns/prov#wasAssociatedWith"
             )
             .count(),
-        agents.len()
+        eligible_agents.len()
     );
     assert_eq!(
         triples

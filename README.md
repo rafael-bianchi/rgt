@@ -39,7 +39,7 @@
 
 ---
 
-RGT gives AI coding agents a persistent, queryable memory of every number and date they read from source files or derive through calculations, then **verifies each derivation is mathematically correct**. Single Rust binary, 13 supported AI coding tools, hooks that record data only and never rewrite commands.
+RGT gives AI coding agents a persistent, queryable graph of numeric and date values recorded from source files or derived through calculations, then **verifies each derivation is mathematically correct**. Single Rust binary, 13 supported AI coding tools, and integrations that never rewrite commands.
 
 ## What RGT Does
 
@@ -52,7 +52,7 @@ Agents reason from changing files and can make arithmetic mistakes. RGT tracks t
 | `rgt derive` | Verifies an agent-computed value against its parents **before** recording it |
 | `rgt query <id>` | Traces a value's lineage back to its source files |
 | `rgt graph` | Exports the dependency DAG (text, Mermaid, or DOT) |
-| `rgt hook` | Passive capture via each agent's native hook/plugin mechanism |
+| `rgt hook` | Passive capture for supported completed-read paths; other clients use manual recording guidance |
 
 ## Why Provenance Tracking Matters
 
@@ -61,7 +61,7 @@ RGT does not measure savings: it prevents silent errors. Two failure modes motiv
 1. **Stale data**: an agent reads a file, later the file changes, and the agent keeps reasoning from the old numbers. RGT marks the affected root nodes **stale** and cascades staleness through every derived value that depends on them (`rgt status`).
 2. **Wrong math**: an agent computes `revenue = price * quantity` and gets it wrong. RGT re-computes the expression from the parent values in the database and **rejects** mismatched derivations (exit 1) before they enter the graph.
 
-Hooks are **provenance-capture only**: they record `(path, content)` and never rewrite, filter, or block the agent's tool calls.
+When a supported client returns a complete read result that matches the current source snapshot, its hook can record the values with source lineage. Other clients may need `rgt record <file>`. Hooks never rewrite, filter, or block the agent's tool calls.
 
 ## Installation
 
@@ -118,8 +118,9 @@ rgt status   # Shows the provenance graph state (fresh store starts at 0 nodes)
 # 1. Configure provenance hooks for your AI tool
 rgt init -g                 # auto-detect every installed supported agent
 rgt init -g --agent copilot # or target one: copilot, gemini, vibe, opencode, pi, hermes, ...
-rgt init --agent cline      # project-scoped agents use project rules files
-rgt init --agent codex      # Codex / Windsurf / Cline / Antigravity / Kilo use rules files
+rgt init --agent cline      # Cline/Roo, Antigravity, and Kilo use project guidance
+rgt init --agent codex      # native PostToolUse hook plus AGENTS.md guidance
+rgt init --agent windsurf   # native post_read_code hook plus .windsurfrules guidance
 
 # 2. Restart your AI tool, then:
 rgt record budget.csv       # agent reads a data file and records its values
@@ -150,9 +151,9 @@ rgt graph --format ttl      # export interoperable PROV-O Turtle
 
 Three strategies keep the graph trustworthy:
 
-1. **Capture**: native hooks/plugins push every file an agent reads through `rgt record`, so values land in the graph without the agent remembering to call it.
+1. **Capture**: hooks and plugins can record a read only when the client supplies a successful completed result with full content that matches the current file. Installed registrations do not prove that capture works; see the [harness compatibility matrix](docs/compatibility/support-matrix.md) for each client and read path. For unverified or instruction-only paths, use `rgt record <file>`.
 
-> **Non-text sources (PDF, Excel, images)**: RGT's passive hook cannot see inside binary files — PDF/image interpretation happens inside the model itself, never as a local text file. For **Claude Code PDF reads**, RGT now decodes the PDF's base64 envelope, extracts the text layer locally, and records its values automatically (and injects the real extracted text back via `PostToolUse` `additionalContext`). For Excel, images, and other agents, the RGT instructions RGT writes to agents tell them to explicitly report such values via `echo "Amount: 1234.56" | rgt record --stdin` (or an intermediate `.txt`/`.md` file). Plain-text/CSV/JSON/Markdown need no such action — they're captured automatically. `rgt record` on a binary file returns a clear "unsupported file format" error naming this path.
+> **Non-text sources (PDF, Excel, images)**: RGT cannot extract all model-visible binary content locally. Capture depends on a supported client/read path and a complete result that matches the current source. For any unverified path or non-text source without a supported adapter, report the values explicitly with `echo "Amount: 1234.56" | rgt record --stdin`. Writing an intermediate text file does not itself guarantee capture; use `rgt record <file>` unless the compatibility matrix confirms automatic capture for that path. `rgt record` on a binary file returns an unsupported-format error.
 2. **Verification**: every `rgt derive` is trust-but-verify: RGT re-computes the result from parent values and rejects wrong ones before insertion.
 3. **Staleness**: when a source file changes, its nodes (and everything derived from them) are flagged stale, so the agent can be told to re-read. Change detection is two-tier (mtime+size, then BLAKE3) with a time-bounded forced re-hash, and distinguishes a genuinely deleted file (`FILE_DELETED`) from a permission/lock error (`CHECK_FAILED`, which does not mark values stale).
 
@@ -160,20 +161,21 @@ Three strategies keep the graph trustworthy:
 
 ### Initialize & Hooks
 ```bash
+rgt --version                               # print the running build version
+rgt version                                 # equivalent version subcommand
 rgt init [-g] [--force] [--agent <name>] [--number-format <us|eu|auto>]  # configure hooks, detect installed agents
 rgt hook pre|post [--agent <name>]         # passive capture from agent event JSON (stdin)
 ```
 
 `--number-format` persists the locale used to parse numbers (`.`/`,` separators and signs) for the passive hook path. Valid values: `us` (`.` decimal, `,` thousands), `eu` (`,` decimal, `.` thousands), or `auto` (inferred per file — the default).
 
-`rgt init` **never destroys your existing configuration**. It merges RGT's hook
-entries into your agent config additively — JSON/JSONC settings (comments and
-trailing commas are tolerated and preserved), TOML configs, and rules files keep
-every other hook, keybinding, plugin, and note byte-for-byte. Re-running without
-`--force` is a no-op; `--force` refreshes only RGT's own delimited block. If a
-config file can't be parsed or safely merged, that agent is reported with a
-recoverable error and a non-zero exit — other agents are still configured, and a
-`<file>.rgt.bak` backup is kept before any existing file is rewritten.
+`rgt init` repairs only recognized RGT-owned registrations and guidance. It
+preserves unrelated hooks, keybindings, plugins, and notes; ambiguous ownership
+or malformed configuration is reported with a recovery action and left intact.
+Every existing file is backed up before a change. A repeated run is a no-op
+after the registration is current. `--force` does not replace foreign or
+ambiguous plugin files. These local setup results do not establish that a client
+loaded the entry or that automatic capture works.
 Exit codes: `0` = success, `1` = at least one agent failed, `2` = invalid
 `--agent` name.
 
@@ -188,12 +190,15 @@ installs to a new path), re-run `rgt init` to refresh the written paths.
 rgt doctor   # diagnose hook installation and capture health
 ```
 
-`rgt doctor` is a `brew doctor`-style diagnostic. Exit `0` when healthy or with
-advisory warnings, `1` on unambiguous problems (e.g. the store is not
-initialized). When hooks are installed but no values have ever been recorded, it
-warns that capture may not be active and tells you to verify `rgt` is resolvable
-in the shell context your AI tool uses (hook subprocesses fail open, so a broken
-PATH records nothing silently).
+`rgt doctor` reports local store, per-surface registration, and RGT-owned
+guidance-file health separately. Guidance findings name missing, incomplete,
+unowned, managed, and hand-maintained instruction blocks. A complete
+instruction-only file is reported as a warning because it cannot provide
+automatic read capture. It does not infer client loading or live
+capture from a settings file, instruction file, or graph values.
+Codex trust review and Windsurf Restricted Mode/active-file precedence require
+checks in their clients. Exit `0` for healthy or advisory findings and `1` for
+unambiguous local problems.
 
 ### Update
 ```bash
@@ -246,7 +251,7 @@ Turtle export is limited to 10,000 recorded values, 30,000 derivation edges,
 pre-write error produces no Turtle on stdout. Uncertain derivation groups keep
 their direct parent links but omit the activity and consolidated operation or
 expression claims, with a warning on stderr. Capture activities record which
-of the eight event-capable hook/plugin agents captured a value; they do not
+of the nine event-capable hook/plugin agents captured a value; they do not
 claim source authorship or derivation responsibility. Other graph formats
 retain their existing output and have no new Turtle limits.
 
@@ -273,21 +278,21 @@ Query keeps its existing `value`, adds exact `duration_seconds` as a decimal str
 
 ## Supported AI Tools
 
-RGT configures provenance-capture hooks for 13 AI coding tools, using each agent's native mechanism:
+RGT writes a native registration, plugin, or instructions for 13 AI coding tools. Capture is verified per read path, not inferred from an installed artifact. See the [harness compatibility support matrix](docs/compatibility/support-matrix.md).
 
 | Tool | Install | Method |
 |------|---------|--------|
-| **Claude Code** | `rgt init -g` | PreToolUse/PostToolUse shell hook (`settings.json`); Bash tool reads (`cat`/`head`/`tail`/`grep`/`rtk read`, ...) are also captured |
-| **Cursor** | `rgt init -g --agent cursor` | pre/postToolUse hook (`hooks.json`); Bash tool reads captured too |
-| **GitHub Copilot (VS Code)** | `rgt init -g --agent copilot` | Copilot Chat hooks (`github.copilot.chat.hooks`) |
+| **Claude Code** | `rgt init -g` | PreToolUse/PostToolUse hook (`settings.json`); full-content read paths are unverified |
+| **Cursor** | `rgt init -g --agent cursor` | pre/postToolUse hook (`hooks.json`); automatic read capture unverified |
+| **GitHub Copilot (VS Code)** | `rgt init -g --agent copilot` | Copilot Chat hook registration; automatic read capture unverified |
 | **GitHub Copilot CLI** | `rgt init -g --agent copilot` | Instructions file (Copilot CLI config dir) |
 | **Gemini CLI** | `rgt init -g --agent gemini` | `~/.gemini/hooks.toml` PostToolUse |
-| **Mistral Vibe** | `rgt init -g --agent vibe` | `pre_tool` hook (`hooks.toml`) + prompt |
+| **Mistral Vibe** | `rgt init -g --agent vibe` | `pre_tool` hook (`hooks.toml`) + loaded `AGENTS.md` guidance |
 | **OpenCode** | `rgt init -g --agent opencode` | TypeScript plugin |
-| **Pi** | `rgt init --agent pi` (or `-g`) | TypeScript extension |
-| **Hermes** | `rgt init --agent hermes` | Python plugin + `plugins.enabled` |
-| **Codex CLI** | `rgt init --agent codex` | `AGENTS.md` instructions |
-| **Windsurf** | `rgt init --agent windsurf` | `.windsurfrules` |
+| **Pi** | `rgt init --agent pi` (or `-g`) | TypeScript extension + loaded project or user guidance |
+| **Hermes** | `rgt init --agent hermes` | Python plugin + `plugins.enabled` + project context guidance |
+| **Codex CLI** | `rgt init --agent codex` | Native `PostToolUse` hook plus `AGENTS.md`; trust review required and read capture unverified |
+| **Windsurf** | `rgt init --agent windsurf` | Native `post_read_code` hook plus `.windsurfrules`; event supplies a path only, so value capture is instruction-only |
 | **Cline / Roo Code** | `rgt init --agent cline` | `.clinerules` |
 | **Google Antigravity** | `rgt init --agent antigravity` | `.agents/rules/antigravity-rgt-rules.md` |
 | **Kilo Code** | `rgt init --agent kilocode` | `.kilocode/rules/rgt-rules.md` |

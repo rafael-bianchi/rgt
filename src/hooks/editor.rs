@@ -8,6 +8,8 @@
 //! returns [`ConfigEditError`] — never a silent "treat as empty" fallback
 //! (spec FR-003).
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -163,6 +165,128 @@ pub fn jsonc_merge_hook_entries(
     Ok((edited.clone(), edited != source))
 }
 
+/// Reports whether a JSONC artifact currently defines at least one nonempty
+/// array under its top-level `hooks` object. Used to preserve Windsurf's
+/// documented active-file precedence when choosing the workspace artifact.
+pub fn jsonc_has_active_hooks(text: &str) -> Result<bool, ConfigEditError> {
+    let source = if text.trim().is_empty() { "{}" } else { text };
+    let parsed = parse_to_ast(source, &CollectOptions::default(), &ParseOptions::default())
+        .map_err(|e| ConfigEditError::msg(format!("unable to parse JSON/JSONC: {e}")))?;
+    let Some(value) = parsed.value else {
+        return Err(ConfigEditError::msg("config file contains no JSON value"));
+    };
+    let Value::Object(root) = value else {
+        return Err(ConfigEditError::msg(
+            "config file root must be a JSON object",
+        ));
+    };
+    let Some(hooks_prop) = root.get("hooks") else {
+        return Ok(false);
+    };
+    let Value::Object(hooks) = &hooks_prop.value else {
+        return Err(ConfigEditError::msg("`hooks` must be an object"));
+    };
+    Ok(hooks.properties.iter().any(
+        |property| matches!(&property.value, Value::Array(array) if !array.elements.is_empty()),
+    ))
+}
+
+/// Extracts native command callbacks only from the host's hook subtree. This
+/// gives `rgt doctor` the parsed registration surface instead of broad text
+/// substring matches that could be satisfied by comments or unrelated fields.
+pub fn jsonc_hook_commands(text: &str) -> Result<Vec<String>, ConfigEditError> {
+    Ok(jsonc_hook_callbacks(text)?
+        .into_iter()
+        .map(|callback| callback.command)
+        .collect())
+}
+
+/// One command callback and the host structure that owns it. The fields let
+/// `rgt doctor` validate the host event and callback-group schema separately
+/// from the RGT CLI arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonHookCallback {
+    pub hook_path: String,
+    pub event: String,
+    pub group_index: usize,
+    pub callback_index: usize,
+    pub callback_count: usize,
+    pub nested_callback_group: bool,
+    pub callback_type: Option<String>,
+    pub command: String,
+}
+
+/// Extracts JSON/JSONC callback commands together with their exact top-level
+/// hook path, event key, and callback-group location.
+pub fn jsonc_hook_callbacks(text: &str) -> Result<Vec<JsonHookCallback>, ConfigEditError> {
+    let source = if text.trim().is_empty() { "{}" } else { text };
+    let parsed = parse_to_ast(source, &CollectOptions::default(), &ParseOptions::default())
+        .map_err(|e| ConfigEditError::msg(format!("unable to parse JSON/JSONC: {e}")))?;
+    let Some(Value::Object(root)) = parsed.value else {
+        return Err(ConfigEditError::msg(
+            "config file root must be a JSON object",
+        ));
+    };
+    let mut callbacks = Vec::new();
+    for property in &root.properties {
+        if property.name.as_str() == "hooks" || property.name.as_str().ends_with(".hooks") {
+            let Value::Object(events) = &property.value else {
+                continue;
+            };
+            for event in &events.properties {
+                let Value::Array(groups) = &event.value else {
+                    continue;
+                };
+                for (group_index, group) in groups.elements.iter().enumerate() {
+                    let Value::Object(group) = group else {
+                        continue;
+                    };
+                    let nested = group.get_array("hooks");
+                    let direct = group.get_string("command");
+                    let callback_count = nested.map_or(usize::from(direct.is_some()), |array| {
+                        array.elements.len() + usize::from(direct.is_some())
+                    });
+                    if let Some(command) = direct {
+                        callbacks.push(JsonHookCallback {
+                            hook_path: property.name.as_str().to_string(),
+                            event: event.name.as_str().to_string(),
+                            group_index,
+                            callback_index: 0,
+                            callback_count,
+                            nested_callback_group: false,
+                            callback_type: None,
+                            command: command.value.to_string(),
+                        });
+                    }
+                    if let Some(nested) = nested {
+                        for (callback_index, callback) in nested.elements.iter().enumerate() {
+                            let Value::Object(callback) = callback else {
+                                continue;
+                            };
+                            let Some(command) = callback.get_string("command") else {
+                                continue;
+                            };
+                            callbacks.push(JsonHookCallback {
+                                hook_path: property.name.as_str().to_string(),
+                                event: event.name.as_str().to_string(),
+                                group_index,
+                                callback_index,
+                                callback_count,
+                                nested_callback_group: true,
+                                callback_type: callback
+                                    .get_string("type")
+                                    .map(|kind| kind.value.to_string()),
+                                command: command.value.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(callbacks)
+}
+
 /// One text splice: replace `text[start..end]` with `replacement`.
 #[derive(Debug, Clone)]
 struct Edit {
@@ -267,13 +391,12 @@ fn merge_array(
         .collect::<Vec<_>>()
         .join(", ");
 
-    let rgt_idx: Vec<usize> = existing
-        .elements
-        .iter()
-        .enumerate()
-        .filter(|(_, el)| element_has_rgt_command(el))
-        .map(|(i, _)| i)
-        .collect();
+    let mut rgt_idx = Vec::new();
+    for (i, element) in existing.elements.iter().enumerate() {
+        if element_has_rgt_command(element)? {
+            rgt_idx.push(i);
+        }
+    }
 
     if rgt_idx.is_empty() {
         if existing.elements.is_empty() {
@@ -368,51 +491,213 @@ fn entry_commands(e: &serde_json::Value) -> Vec<String> {
     cmds
 }
 
-/// Whether a JSON array element is an RGT-managed hook entry (its command, or a
-/// command nested under `hooks`, starts with `rgt hook`).
-fn element_has_rgt_command(el: &Value<'_>) -> bool {
+/// Whether a JSON array element is an RGT-managed hook entry. A group is only
+/// owned by RGT when every callback in it is an RGT command; mixed callback
+/// groups are ambiguous because replacing the group could delete user hooks.
+fn element_has_rgt_command(el: &Value<'_>) -> Result<bool, ConfigEditError> {
     let Value::Object(obj) = el else {
-        return false;
+        return Ok(false);
     };
+    let mut commands = Vec::new();
+    let mut callback_count = 0;
     if let Some(cmd) = obj.get_string("command") {
-        if is_rgt_command(&cmd.value) {
-            return true;
-        }
+        callback_count += 1;
+        commands.push(cmd.value.to_string());
     }
     if let Some(hooks) = obj.get_array("hooks") {
         for h in &hooks.elements {
+            callback_count += 1;
             if let Value::Object(hobj) = h {
                 if let Some(cmd) = hobj.get_string("command") {
-                    if is_rgt_command(&cmd.value) {
-                        return true;
-                    }
+                    commands.push(cmd.value.to_string());
                 }
             }
         }
     }
-    false
+    let rgt_count = commands.iter().filter(|cmd| is_rgt_command(cmd)).count();
+    if rgt_count == 0 {
+        return Ok(false);
+    }
+    if rgt_count != commands.len() || callback_count != commands.len() {
+        return Err(ConfigEditError::msg(
+            "hook group has mixed RGT and non-RGT callbacks; refusing an unsafe rewrite",
+        ));
+    }
+    Ok(true)
 }
 
-/// True when the command is an RGT hook invocation: `<exe> hook pre|post`,
-/// where the executable is the bare `rgt`/`rgt.exe` name or an absolute path
-/// (the FR-003 injected form, and the test-harness binary in integration
-/// tests). A bare non-RGT command such as RTK's `rtk hook post` is not matched.
-fn is_rgt_command(cmd: &str) -> bool {
-    let mut tokens = cmd.split_whitespace();
-    let exe = tokens.next().unwrap_or_default().trim_matches('"');
-    let sub = tokens.next();
-    if sub != Some("hook") {
+/// True when a command is explicitly marked as RGT-managed or invokes the RGT
+/// executable by its known basename. Absolute paths are accepted only when
+/// their basename is `rgt`/`rgt.exe`; arbitrary absolute executables are user
+/// owned. The hidden marker handles test harnesses and renamed installations.
+pub fn is_rgt_command(cmd: &str) -> bool {
+    let Some((executable, args)) = command_executable_and_args(cmd) else {
+        return false;
+    };
+    let tokens = args;
+    let Some(event_index) = tokens
+        .windows(2)
+        .position(|pair| pair[0] == "hook" && matches!(pair[1].as_str(), "pre" | "post"))
+    else {
+        return false;
+    };
+    let _ = event_index;
+    let managed = tokens.iter().any(|token| token == "--rgt-managed");
+    let base = executable.rsplit(['/', '\\']).next().unwrap_or(&executable);
+    managed || base.eq_ignore_ascii_case("rgt") || base.eq_ignore_ascii_case("rgt.exe")
+}
+
+pub fn is_rgt_hook_command_for_agent(cmd: &str, agent: &str) -> bool {
+    if !is_rgt_command(cmd) {
         return false;
     }
-    let op = tokens.next();
-    if !matches!(op, Some("pre") | Some("post")) {
+    let Some((_, tokens)) = command_executable_and_args(cmd) else {
         return false;
+    };
+    tokens
+        .windows(2)
+        .any(|pair| pair[0] == "--agent" && pair[1] == agent)
+        || tokens
+            .iter()
+            .any(|token| token == &format!("--agent={agent}"))
+}
+
+/// Returns the canonical agent argument and event for a marked/recognized
+/// direct hook registration, including the encoded PowerShell wrapper emitted
+/// by the installer on Windows.
+pub fn rgt_hook_identity(cmd: &str) -> Option<(String, String)> {
+    let (_, tokens) = command_executable_and_args(cmd)?;
+    let event_index = tokens
+        .windows(2)
+        .position(|pair| pair[0] == "hook" && matches!(pair[1].as_str(), "pre" | "post"))?;
+    let event = tokens.get(event_index + 1)?.clone();
+    let agent_index = tokens.iter().position(|token| token == "--agent")?;
+    let agent = tokens.get(agent_index + 1)?.clone();
+    Some((agent, event))
+}
+
+/// Checks whether the actual RGT target can be found locally. For encoded
+/// Windows registrations this checks the executable inside the PowerShell
+/// wrapper, never merely `powershell.exe`.
+pub fn hook_command_executable_resolvable(cmd: &str) -> bool {
+    let Some((executable, _)) = command_executable_and_args(cmd) else {
+        return false;
+    };
+    if Path::new(&executable).is_absolute() {
+        return Path::new(&executable).is_file();
     }
-    let base = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
-    let is_bare_rgt = base == "rgt" || base == "rgt.exe";
-    let is_absolute =
-        exe.starts_with('/') || exe.starts_with('\\') || exe.as_bytes().get(1) == Some(&b':');
-    is_bare_rgt || is_absolute
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|directory| {
+            let candidate = directory.join(&executable);
+            candidate.is_file()
+                || (cfg!(windows) && directory.join(format!("{executable}.exe")).is_file())
+        })
+    })
+}
+
+fn command_executable_and_args(command: &str) -> Option<(String, Vec<String>)> {
+    let tokens = if command.starts_with("( _rgt_tmp=$(mktemp -d ") {
+        let (_, remainder) = command.split_once("; trap 'rm -rf \"$_rgt_tmp\"' 0; ")?;
+        let (invocation, _) = remainder.split_once(" >\"$_rgt_tmp/stdout\"")?;
+        shell_tokens(invocation)?
+    } else {
+        shell_tokens(command)?
+    };
+    let executable = tokens.first()?.clone();
+    if executable.eq_ignore_ascii_case("powershell.exe")
+        || executable.eq_ignore_ascii_case("powershell")
+        || executable.eq_ignore_ascii_case("pwsh.exe")
+        || executable.eq_ignore_ascii_case("pwsh")
+    {
+        let encoded_index = tokens.iter().position(|token| {
+            token.eq_ignore_ascii_case("-EncodedCommand")
+                || token.eq_ignore_ascii_case("-e")
+                || token.eq_ignore_ascii_case("-enc")
+        })?;
+        let script = decode_powershell(&tokens[encoded_index + 1])?;
+        let executable = powershell_assignment(&script, "$p.StartInfo.FileName=")?;
+        let arguments = powershell_assignment(&script, "$p.StartInfo.Arguments=")?;
+        Some((executable, shell_tokens(&arguments)?))
+    } else {
+        Some((executable, tokens.into_iter().skip(1).collect()))
+    }
+}
+
+fn shell_tokens(command: &str) -> Option<Vec<String>> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut started = false;
+    for character in command.chars() {
+        if escaped {
+            token.push(character);
+            escaped = false;
+            started = true;
+            continue;
+        }
+        match (quote, character) {
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (Some('"'), '\\') => escaped = true,
+            (Some(_), _) => token.push(character),
+            (None, '\\') => escaped = true,
+            (None, '\'' | '"') => {
+                quote = Some(character);
+                started = true;
+            }
+            (None, value) if value.is_whitespace() => {
+                if started {
+                    tokens.push(std::mem::take(&mut token));
+                    started = false;
+                }
+            }
+            (None, value) => {
+                token.push(value);
+                started = true;
+            }
+        }
+    }
+    if escaped || quote.is_some() {
+        return None;
+    }
+    if started {
+        tokens.push(token);
+    }
+    Some(tokens)
+}
+
+fn decode_powershell(encoded: &str) -> Option<String> {
+    let bytes = BASE64.decode(encoded).ok()?;
+    if bytes.len() % 2 != 0 {
+        return None;
+    }
+    let units = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>();
+    String::from_utf16(&units).ok()
+}
+
+fn powershell_assignment(script: &str, prefix: &str) -> Option<String> {
+    let value = script.get(script.find(prefix)? + prefix.len()..)?;
+    let mut characters = value.chars();
+    if characters.next()? != '\'' {
+        return None;
+    }
+    let mut output = String::new();
+    loop {
+        match characters.next()? {
+            '\'' => {
+                if characters.clone().next() == Some('\'') {
+                    characters.next();
+                    output.push('\'');
+                } else {
+                    return Some(output);
+                }
+            }
+            character => output.push(character),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -436,7 +721,43 @@ pub fn toml_ensure_array_value(
         .split_last()
         .ok_or_else(|| ConfigEditError::msg("empty TOML path"))?;
 
-    let changed = {
+    let ensure_value = |arr: &mut toml_edit::Array| -> Result<bool, ConfigEditError> {
+        if arr.iter().any(|entry| entry.as_str().is_none()) {
+            return Err(ConfigEditError::msg(format!(
+                "TOML key `{last}` contains non-string entries; ownership is ambiguous, repair the array before reinitializing RGT"
+            )));
+        }
+        if arr.iter().any(|entry| entry.as_str() == Some(value)) {
+            Ok(false)
+        } else {
+            arr.push(value);
+            Ok(true)
+        }
+    };
+
+    let inline_parent = rest.len() == 1
+        && doc
+            .get(rest[0])
+            .is_some_and(|item| item.as_inline_table().is_some());
+    let changed = if inline_parent {
+        let inline = doc
+            .as_table_mut()
+            .get_mut(rest[0])
+            .and_then(toml_edit::Item::as_inline_table_mut)
+            .ok_or_else(|| ConfigEditError::msg("TOML inline table could not be edited"))?;
+        if !inline.contains_key(last) {
+            inline.insert(*last, toml_edit::Value::Array(toml_edit::Array::new()));
+        }
+        let arr = inline
+            .get_mut(last)
+            .and_then(toml_edit::Value::as_array_mut)
+            .ok_or_else(|| {
+                ConfigEditError::msg(format!(
+                    "TOML key `{last}` is not an array; ownership is ambiguous, repair the value before reinitializing RGT"
+                ))
+            })?;
+        ensure_value(arr)?
+    } else {
         let mut table = doc.as_table_mut();
         for seg in rest {
             let item = table.entry(seg).or_insert(toml_edit::table());
@@ -451,13 +772,12 @@ pub fn toml_ensure_array_value(
             )));
         let arr = item
             .as_array_mut()
-            .ok_or_else(|| ConfigEditError::msg(format!("TOML key `{last}` is not an array")))?;
-        if arr.iter().any(|v| v.as_str() == Some(value)) {
-            false
-        } else {
-            arr.push(value);
-            true
-        }
+            .ok_or_else(|| {
+                ConfigEditError::msg(format!(
+                    "TOML key `{last}` is not an array; ownership is ambiguous, repair the value before reinitializing RGT"
+                ))
+            })?;
+        ensure_value(arr)?
     };
 
     Ok(if changed {
@@ -476,6 +796,7 @@ pub fn toml_ensure_table_entry(
     path: &[&str],
     key: &str,
     value: &str,
+    agent: &str,
 ) -> Result<(String, bool), ConfigEditError> {
     let mut doc = parse_toml(text)?;
     let (last, rest) = path
@@ -496,7 +817,7 @@ pub fn toml_ensure_table_entry(
             .ok_or_else(|| ConfigEditError::msg(format!("TOML key `{last}` is not a table")))?;
         match t.get(key).and_then(|v| v.as_str()) {
             Some(existing) if existing == value => false,
-            Some(existing) if existing.contains("rgt hook") => {
+            Some(existing) if is_rgt_hook_command_for_agent(existing, agent) => {
                 t[key] = toml_edit::value(value);
                 true
             }
@@ -520,7 +841,7 @@ pub fn toml_ensure_table_entry(
 }
 
 /// Ensures a Mistral Vibe `[[pre_tool]]` entry exists with `command` containing
-/// `rgt hook post --agent vibe`, creating it with `match = "bash"`,
+/// `rgt hook pre --agent vibe`, creating it with `match = "bash"`,
 /// `strict = false`, and the canonical command when absent. Returns the edited
 /// text and whether anything changed.
 pub fn toml_ensure_vibe_pre_tool(
@@ -542,13 +863,30 @@ pub fn toml_ensure_vibe_pre_tool(
             .ok_or_else(|| ConfigEditError::msg("TOML key `pre_tool` not found"))?;
 
         if let Some(aot) = item.as_array_of_tables_mut() {
-            if aot.iter().any(|t| {
-                t.get("command")
-                    .and_then(|v| v.as_str())
-                    .map(|c| c.contains("rgt hook post --agent vibe"))
-                    .unwrap_or(false)
-            }) {
-                false
+            let owned: Vec<usize> = aot
+                .iter()
+                .enumerate()
+                .filter(|(_, table)| {
+                    table
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|command| is_rgt_hook_command_for_agent(command, "vibe"))
+                })
+                .map(|(index, _)| index)
+                .collect();
+            if let Some(&first) = owned.first() {
+                let mut changed = false;
+                if let Some(table) = aot.get_mut(first) {
+                    if table.get("command").and_then(|value| value.as_str()) != Some(command) {
+                        table["command"] = toml_edit::value(command);
+                        changed = true;
+                    }
+                }
+                for index in owned.into_iter().skip(1).rev() {
+                    aot.remove(index);
+                    changed = true;
+                }
+                changed
             } else {
                 let mut t = toml_edit::Table::new();
                 t["match"] = toml_edit::value("bash");
@@ -558,14 +896,30 @@ pub fn toml_ensure_vibe_pre_tool(
                 true
             }
         } else if let Some(arr) = item.as_array_mut() {
-            if arr.iter().any(|v| {
-                v.as_inline_table()
-                    .and_then(|t| t.get("command"))
-                    .and_then(|v| v.as_str())
-                    .map(|c| c.contains("rgt hook post --agent vibe"))
-                    .unwrap_or(false)
-            }) {
-                false
+            let owned: Vec<usize> = arr
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| {
+                    v.as_inline_table()
+                        .and_then(|t| t.get("command"))
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|command| is_rgt_hook_command_for_agent(command, "vibe"))
+                })
+                .map(|(index, _)| index)
+                .collect();
+            if let Some(&first) = owned.first() {
+                let mut changed = false;
+                if let Some(table) = arr.get_mut(first).and_then(|v| v.as_inline_table_mut()) {
+                    if table.get("command").and_then(|value| value.as_str()) != Some(command) {
+                        table["command"] = toml_edit::Value::from(command);
+                        changed = true;
+                    }
+                }
+                for index in owned.into_iter().skip(1).rev() {
+                    arr.remove(index);
+                    changed = true;
+                }
+                changed
             } else {
                 let mut t = toml_edit::InlineTable::new();
                 t["match"] = toml_edit::Value::from("bash");
@@ -641,7 +995,10 @@ pub fn text_replace_block(
     let (_, end_byte) = ranges[ei];
     let existing = &text[start_byte..end_byte];
     let new_block = block.trim_end();
-    if existing.trim_end() == new_block {
+    // `with_instruction` blocks begin with one newline for concatenation, but
+    // that newline sits before the start marker and is outside this slice.
+    // Ignore that boundary whitespace so a repeated init stays a true no-op.
+    if existing.trim() == new_block.trim() {
         return Ok((text.to_string(), false));
     }
     let edited = format!(

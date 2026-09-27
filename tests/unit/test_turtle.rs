@@ -165,12 +165,15 @@ fn capture_snapshot_rejects_unknown_agents_dangling_nodes_and_duplicate_pairs() 
     unknown
         .conn()
         .execute(
-            "INSERT INTO capture_associations (node_id,agent_name) VALUES ('known-node','codex')",
+            "INSERT INTO capture_associations (node_id,agent_name) VALUES ('known-node','unknown-agent')",
             [],
         )
         .unwrap();
     let error = load_snapshot(unknown.conn(), Instant::now() + Duration::from_secs(1)).unwrap_err();
-    assert!(error.contains("unsupported agent 'codex'"), "{error}");
+    assert!(
+        error.contains("unsupported agent 'unknown-agent'"),
+        "{error}"
+    );
 
     let dangling = DbStore::open_in_memory().unwrap();
     dangling
