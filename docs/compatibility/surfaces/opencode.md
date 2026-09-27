@@ -1,0 +1,9 @@
+# OpenCode
+
+**RGT canonical agent**: `opencode`. `rgt init --agent opencode` writes a project plugin to `.opencode/plugins/rgt.ts`; `rgt init -g --agent opencode` writes a user plugin to `~/.config/opencode/plugins/rgt.ts`. OpenCode CLI 1.18.32 on macOS aarch64 loaded the project plugin and called `tool.execute.after` after native `read` tool calls. The callback received separate input and result objects; the result had `metadata.display.text`, source line bounds, and truncation flags.
+
+The verified path is `opencode-read-display-text` for that exact client version and platform. RGT accepts only a completed, untruncated full-file `read` display whose path, line bounds, and text match the current source snapshot. In one no-cost native session, a two-line source produced a Number at line 1 and Date at line 2 with `opencode` capture attribution. A second `read` of a file with no numbers or dates added no value nodes. Both tool results were unchanged and the plugin returned no response value.
+
+OpenCode's observed `metadata.display.text` omitted the terminal newline from a newline-terminated file. RGT therefore rejects that result when the file has a final newline; it does not infer unseen bytes. Before callbacks, failed reads, partial or truncated displays, other tools, other OpenCode versions/platforms, and global plugin loading remain unverified or excluded as described in the [support matrix](../support-matrix.md). Do not use `opencode run --pure` to verify the plugin: that flag disables external plugins.
+
+**Vendor source**: [OpenCode plugin documentation](https://opencode.ai/docs/plugins/). **Native evidence**: [`observations.json`](../evidence/observations.json) and [`verification.md`](../verification.md). **Comparative source**: [`evidence.md`](../../../specs/044-verify-harness-compatibility/evidence.md#opencode).

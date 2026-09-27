@@ -4,7 +4,7 @@
 
 RGT tracks numeric and date provenance for AI coding agents.
 
-RGT configures provenance-capture hooks for all 13 RTK-supported agents: Claude Code (`claude-code`/`claude`), Cursor (`cursor`), Copilot (`copilot`), Gemini CLI (`gemini`), Mistral Vibe (`vibe`), OpenCode (`opencode`), Pi (`pi`), Hermes (`hermes`), Windsurf (`windsurf`), Codex CLI (`codex`), Cline/Roo Code (`cline`/`roo-code`), Antigravity (`antigravity`), and Kilo (`kilocode`/`kilo`). Hooks record data only and never rewrite or block tool commands.
+RGT configures a hook, plugin, or instruction file for the 13 RTK-supported agents: Claude Code (`claude-code`/`claude`), Cursor (`cursor`), Copilot (`copilot`), Gemini CLI (`gemini`), Mistral Vibe (`vibe`), OpenCode (`opencode`), Pi (`pi`), Hermes (`hermes`), Windsurf (`windsurf`), Codex CLI (`codex`), Cline/Roo Code (`cline`/`roo-code`), Antigravity (`antigravity`), and Kilo (`kilocode`/`kilo`). Hooks record data only and never rewrite or block tool commands. A configured artifact does not prove the client loaded it or that a read path provides complete content. Check [the compatibility matrix](docs/compatibility/support-matrix.md); use manual recording unless that matrix lists the path as verified automatic capture. Capture attribution identifies which integration delivered an event, not who authored a value or calculated a derivation.
 
 ### Recording Values
 After reading a data file containing numbers or dates, record its values:
@@ -36,7 +36,7 @@ For temporal values, prefer typed operations so the graph preserves Duration sem
 Turtle export is bounded to 10,000 values, 30,000 derivation edges, 64 MiB,
 and a one-second command deadline. Its RDF union keeps separate projects'
 same-spelled local node IDs distinct. Capture attribution identifies which of
-the eight event-capable hook/plugin agents recorded a value; it does not mean
+the nine event-capable hook/plugin agents recorded a value; it does not mean
 the agent authored the source or calculated a derivation.
 
 > **Copilot CLI note**: RGT's Copilot CLI event-shape handling is an assumption

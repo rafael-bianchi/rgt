@@ -21,20 +21,23 @@ pub fn resolve_agent_arg(agent: Option<&str>) -> Result<Option<String>, String> 
     }
 }
 
-/// True when at least one hook was newly configured, so `rgt init` should tell
+/// True when at least one hook was configured or migrated, so `rgt init` should tell
 /// the user to restart their AI tool for capture to take effect (FR-005). A
 /// pure no-op re-run (all `Skipped`) does not nag.
 pub fn needs_restart_reminder(report: &InstallReport) -> bool {
-    report
-        .outcomes
-        .iter()
-        .any(|o| matches!(o, AgentOutcome::Configured { .. }))
+    report.outcomes.iter().any(|o| {
+        matches!(
+            o,
+            AgentOutcome::Configured { .. } | AgentOutcome::Migrated { .. }
+        )
+    })
 }
 
 /// Executes `rgt init`: initializes the `.rgt/store.db` database and configures
 /// AI agent hooks (global, forced, or per-agent via `--agent`).
 ///
-/// Per-agent outcomes are printed (configured / skipped / failed with reason).
+/// Per-agent outcomes identify fresh setup, migration, already-current setup,
+/// ownership conflicts, and other failures, with artifact and backup paths.
 /// If any agent fails to configure, the command returns an error so the CLI
 /// exits with code 1 (expected error, per the constitution); healthy agents are
 /// still configured (FR-008).
@@ -60,21 +63,71 @@ pub fn execute_init(
     // FR-005: compute before `report.outcomes` is consumed by the loop below.
     let remind_restart = needs_restart_reminder(&report);
     if !report.is_empty() {
-        println!("✓ Auto-configured AI coding agent hooks:");
+        println!("✓ RGT client registration results:");
+        println!("  On-disk setup does not verify client loading or automatic value capture; see docs/compatibility/support-matrix.md.");
         for outcome in report.outcomes {
             match outcome {
-                AgentOutcome::Configured { agent, artifact } => {
-                    println!("  - {} -> {}", agent, artifact.display());
+                AgentOutcome::Configured {
+                    agent,
+                    artifact,
+                    backups,
+                } => {
+                    println!("  - {} configured -> {}", agent, artifact.display());
+                    print_backups(&backups);
+                    print_client_notice(&agent);
                     configured += 1;
                 }
-                AgentOutcome::Skipped { agent } => {
-                    println!(
-                        "  - {} already configured (use --force to overwrite)",
-                        agent
-                    );
+                AgentOutcome::Migrated {
+                    agent,
+                    artifact,
+                    backups,
+                } => {
+                    println!("  - {} migrated -> {}", agent, artifact.display());
+                    print_backups(&backups);
+                    print_client_notice(&agent);
+                    configured += 1;
                 }
-                AgentOutcome::Failed { agent, reason } => {
-                    eprintln!("✗ {}: {}", agent, reason);
+                AgentOutcome::AlreadyCurrent { agent, artifact } => {
+                    println!("  - {} already current -> {}", agent, artifact.display());
+                    print_client_notice(&agent);
+                }
+                AgentOutcome::Conflict {
+                    agent,
+                    artifact,
+                    backup,
+                    reason,
+                } => {
+                    let path = artifact
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "unknown artifact".into());
+                    eprintln!("✗ {} conflict at {}: {}", agent, path, reason);
+                    if let Some(backup) = backup {
+                        eprintln!("    Backup: {}", backup.display());
+                    }
+                    eprintln!("    Recovery: inspect the listed artifact, resolve only the ambiguous RGT-owned entry, then rerun `rgt init`.");
+                    failed += 1;
+                }
+                AgentOutcome::Failed {
+                    agent,
+                    artifact,
+                    backup,
+                    reason,
+                } => {
+                    eprintln!(
+                        "✗ {}{}: {}",
+                        agent,
+                        artifact
+                            .as_ref()
+                            .map(|p| format!(" at {}", p.display()))
+                            .unwrap_or_default(),
+                        reason
+                    );
+                    if let Some(backup) = backup {
+                        eprintln!("    Backup: {}", backup.display());
+                    }
+                    eprintln!(
+                        "    Recovery: address the reported file error and rerun `rgt init`."
+                    );
                     failed += 1;
                 }
             }
@@ -108,9 +161,27 @@ pub fn execute_init(
 
     if failed > 0 {
         return Err(format!(
-            "{} agent(s) failed to configure — see errors above (backup copies, where written, are kept as *.rgt.bak).",
+            "{} agent(s) could not be configured — see the artifact, recovery, and backup paths above.",
             failed
         ));
     }
     Ok(())
+}
+
+fn print_client_notice(agent: &str) {
+    match agent {
+        "codex" => println!(
+            "    Review and approve the project hook in Codex `/hooks`; an on-disk file does not prove it is trusted or loaded."
+        ),
+        "windsurf" => println!(
+            "    Windsurf hooks are disabled in Restricted Mode. RGT uses active `.devin/hooks.json` when it defines hooks; `.windsurf/hooks.json` is the legacy fallback."
+        ),
+        _ => {}
+    }
+}
+
+fn print_backups(backups: &[std::path::PathBuf]) {
+    for backup in backups {
+        println!("    Backup: {}", backup.display());
+    }
 }

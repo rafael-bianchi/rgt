@@ -1,0 +1,119 @@
+{
+  "label": "synthetic-only; never native evidence",
+  "automatic_path_ids": ["opencode-read-display-text"],
+  "operational_cases": {
+    "missing-executable": {"tested_in": "tests/contract/test_hooks_contract.rs", "host_result_unchanged": true},
+    "host-neutral-response": {"expected_stdout": "", "expected_exit": 0}
+  },
+  "read_paths": [
+    {
+      "surface_id": "claude-code",
+      "canonical_agent": "claude-code",
+      "read_path_id": "claude-read-post-content",
+      "tool": "Read",
+      "accepted_result_form": "PostToolUse tool_response.content with complete file text",
+      "automatic_capture": false,
+      "source_text": "amount 47\nwhen 2026-09-26\n",
+      "cases": [
+        {"id": "success", "eligible": true, "snapshot_matches": true, "payload": {"event":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "empty", "eligible": true, "snapshot_matches": false, "payload": {"event":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":""}}},
+        {"id": "malformed", "eligible": false, "payload": "{bad json"},
+        {"id": "repeated", "eligible": true, "snapshot_matches": true, "repeat": 2, "payload": {"event":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "no-op-error", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"Read","success":false,"tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "partial", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\n","partial":true}}},
+        {"id": "filtered", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\n","filtered":true}}},
+        {"id": "pre-only", "eligible": false, "payload": {"event":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "failed", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"Read","success":false,"tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "canceled", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"Read","canceled":true,"tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "changed-snapshot", "eligible": true, "snapshot_matches": false, "payload": {"event":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "bom", "eligible": true, "snapshot_matches": true, "bom": true, "payload": {"event":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}}
+      ]
+    },
+    {
+      "surface_id": "claude-code",
+      "canonical_agent": "claude-code",
+      "read_path_id": "claude-bash-read-stdout",
+      "tool": "Bash",
+      "accepted_result_form": "PostToolUse stdout from a recognized read command with exact snapshot match",
+      "automatic_capture": false,
+      "source_text": "amount 47\nwhen 2026-09-26\n",
+      "cases": [
+        {"id": "success", "eligible": true, "snapshot_matches": true, "payload": {"event":"PostToolUse","tool_name":"Bash","tool_input":{"command":"cat $SOURCE_PATH"},"tool_response":{"stdout":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "empty", "eligible": false, "snapshot_matches": false, "payload": {"event":"PostToolUse","tool_name":"Bash","tool_input":{"command":"cat $SOURCE_PATH"},"tool_response":{"stdout":""}}},
+        {"id": "malformed", "eligible": false, "payload": "{bad json"},
+        {"id": "repeated", "eligible": true, "snapshot_matches": true, "repeat": 2, "payload": {"event":"PostToolUse","tool_name":"Bash","tool_input":{"command":"cat $SOURCE_PATH"},"tool_response":{"stdout":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "no-op-error", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"Bash","success":false,"tool_input":{"command":"cat $SOURCE_PATH"},"tool_response":{"stdout":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "pre-only", "eligible": false, "payload": {"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat $SOURCE_PATH"},"tool_response":{"stdout":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "failed", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"Bash","success":false,"tool_input":{"command":"cat $SOURCE_PATH"},"tool_response":{"stdout":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "canceled", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"Bash","canceled":true,"tool_input":{"command":"cat $SOURCE_PATH"},"tool_response":{"stdout":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "changed-snapshot", "eligible": true, "snapshot_matches": false, "payload": {"event":"PostToolUse","tool_name":"Bash","tool_input":{"command":"cat $SOURCE_PATH"},"tool_response":{"stdout":"amount 47\nwhen 2026-09-26\n"}}}
+      ]
+    },
+    {
+      "surface_id": "codex",
+      "canonical_agent": "codex",
+      "read_path_id": "codex-post-tool-response",
+      "tool": "read_file",
+      "accepted_result_form": "PostToolUse tool_response.content with complete file text",
+      "automatic_capture": false,
+      "source_text": "amount 47\nwhen 2026-09-26\n",
+      "cases": [
+        {"id": "success", "eligible": true, "snapshot_matches": true, "payload": {"event":"PostToolUse","tool_name":"read_file","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "empty", "eligible": true, "snapshot_matches": false, "payload": {"event":"PostToolUse","tool_name":"read_file","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":""}}},
+        {"id": "malformed", "eligible": false, "payload": "{bad json"},
+        {"id": "repeated", "eligible": true, "snapshot_matches": true, "repeat": 2, "payload": {"event":"PostToolUse","tool_name":"read_file","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "no-op-error", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"read_file","success":false,"tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "truncated", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"read_file","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\n","truncated":true}}},
+        {"id": "partial", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"read_file","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\n","partial":true}}},
+        {"id": "pre-only", "eligible": false, "payload": {"event":"PreToolUse","tool_name":"read_file","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "failed", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"read_file","success":false,"tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "canceled", "eligible": false, "payload": {"event":"PostToolUse","tool_name":"read_file","canceled":true,"tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}},
+        {"id": "changed-snapshot", "eligible": true, "snapshot_matches": false, "payload": {"event":"PostToolUse","tool_name":"read_file","tool_input":{"file_path":"$SOURCE_PATH"},"tool_response":{"content":"amount 47\nwhen 2026-09-26\n"}}}
+      ]
+    },
+    {
+      "surface_id": "windsurf",
+      "canonical_agent": "windsurf",
+      "read_path_id": "windsurf-post-read-code-path-only",
+      "tool": "post_read_code",
+      "accepted_result_form": "post_read_code with tool_info.file_path only; invocation evidence, not value content",
+      "automatic_capture": false,
+      "cases": [
+        {"id": "path-only", "eligible": false, "payload": {"agent_action_name":"post_read_code","tool_info":{"file_path":"$SOURCE_PATH"}}},
+        {"id": "content-is-not-documentable", "eligible": false, "payload": {"agent_action_name":"post_read_code","tool_info":{"file_path":"$SOURCE_PATH"},"content":"amount 47"}}
+      ]
+    },
+    {"surface_id":"cursor","canonical_agent":"cursor","read_path_id":"none","tool":"none","accepted_result_form":"no candidate read result contract","automatic_capture":false,"cases":[{"id":"no-op","eligible":false,"payload":{"event":"PostToolUse"}}]},
+    {"surface_id":"copilot-chat","canonical_agent":"copilot","read_path_id":"none","tool":"none","accepted_result_form":"no candidate read result contract","automatic_capture":false,"cases":[{"id":"no-op","eligible":false,"payload":{"event":"PostToolUse"}}]},
+    {"surface_id":"copilot-cli","canonical_agent":"copilot","read_path_id":"none","tool":"none","accepted_result_form":"instruction-only surface","automatic_capture":false,"cases":[{"id":"no-op","eligible":false,"payload":{"event":"PostToolUse"}}]},
+    {"surface_id":"gemini","canonical_agent":"gemini","read_path_id":"none","tool":"none","accepted_result_form":"no candidate completed-read result contract","automatic_capture":false,"cases":[{"id":"no-op","eligible":false,"payload":{"event":"PostToolUse"}}]},
+    {"surface_id":"vibe","canonical_agent":"vibe","read_path_id":"none","tool":"none","accepted_result_form":"no candidate completed-read result contract","automatic_capture":false,"cases":[{"id":"no-op","eligible":false,"payload":{"event":"PostToolUse"}}]},
+    {
+      "surface_id": "opencode",
+      "canonical_agent": "opencode",
+      "read_path_id": "opencode-read-display-text",
+      "tool": "read",
+      "accepted_result_form": "tool.execute.after read with full metadata.display.text and exact source snapshot",
+      "automatic_capture": true,
+      "source_text": "amount 47\nwhen 2026-09-26",
+      "cases": [
+        {"id":"success","eligible":true,"snapshot_matches":true,"payload":{"event":"tool.execute.after","tool":"read","args":{"filePath":"$SOURCE_PATH"},"result":{"output":"completed read","metadata":{"truncated":false,"display":{"type":"file","path":"$SOURCE_PATH","text":"amount 47\nwhen 2026-09-26","lineStart":1,"lineEnd":2,"totalLines":2,"truncated":false}}}}},
+        {"id":"empty","eligible":true,"source_text":"","snapshot_matches":true,"payload":{"event":"tool.execute.after","tool":"read","args":{"filePath":"$SOURCE_PATH"},"result":{"output":"completed empty read","metadata":{"truncated":false,"display":{"type":"file","path":"$SOURCE_PATH","text":"","lineStart":1,"lineEnd":0,"totalLines":0,"truncated":false}}}}},
+        {"id":"malformed","eligible":false,"payload":"{bad json"},
+        {"id":"repeated","eligible":true,"snapshot_matches":true,"repeat":2,"payload":{"event":"tool.execute.after","tool":"read","args":{"filePath":"$SOURCE_PATH"},"result":{"output":"completed read","metadata":{"truncated":false,"display":{"type":"file","path":"$SOURCE_PATH","text":"amount 47\nwhen 2026-09-26","lineStart":1,"lineEnd":2,"totalLines":2,"truncated":false}}}}},
+        {"id":"no-op-error","eligible":false,"payload":{"event":"tool.execute.after","tool":"read","args":{"filePath":"$SOURCE_PATH"},"result":{"output":"read failed","error":"read failed","metadata":{"truncated":false,"display":{"type":"file","path":"$SOURCE_PATH","text":"amount 47\nwhen 2026-09-26","lineStart":1,"lineEnd":2,"totalLines":2,"truncated":false}}}}},
+        {"id":"explicit-failure","eligible":false,"payload":{"event":"tool.execute.after","tool":"read","args":{"filePath":"$SOURCE_PATH"},"result":{"output":"read failed","success":false,"metadata":{"truncated":false,"display":{"type":"file","path":"$SOURCE_PATH","text":"amount 47\nwhen 2026-09-26","lineStart":1,"lineEnd":2,"totalLines":2,"truncated":false}}}}},
+        {"id":"explicit-cancellation","eligible":false,"payload":{"event":"tool.execute.after","tool":"read","canceled":true,"args":{"filePath":"$SOURCE_PATH"},"result":{"output":"canceled read","metadata":{"truncated":false,"display":{"type":"file","path":"$SOURCE_PATH","text":"amount 47\nwhen 2026-09-26","lineStart":1,"lineEnd":2,"totalLines":2,"truncated":false}}}}},
+        {"id":"truncated","eligible":false,"payload":{"event":"tool.execute.after","tool":"read","args":{"filePath":"$SOURCE_PATH"},"result":{"output":"partial read","metadata":{"truncated":true,"display":{"type":"file","path":"$SOURCE_PATH","text":"amount 47","lineStart":1,"lineEnd":1,"totalLines":2,"truncated":true}}}}},
+        {"id":"pre-only","eligible":false,"payload":{"event":"tool.execute.before","tool":"read","args":{"filePath":"$SOURCE_PATH"},"result":{"output":"completed read","metadata":{"truncated":false,"display":{"type":"file","path":"$SOURCE_PATH","text":"amount 47\nwhen 2026-09-26","lineStart":1,"lineEnd":2,"totalLines":2,"truncated":false}}}}},
+        {"id":"changed-snapshot","eligible":true,"snapshot_matches":false,"payload":{"event":"tool.execute.after","tool":"read","args":{"filePath":"$SOURCE_PATH"},"result":{"output":"completed read","metadata":{"truncated":false,"display":{"type":"file","path":"$SOURCE_PATH","text":"amount 47\nwhen 2026-09-26","lineStart":1,"lineEnd":2,"totalLines":2,"truncated":false}}}}}
+      ]
+    },
+    {"surface_id":"pi","canonical_agent":"pi","read_path_id":"none","tool":"none","accepted_result_form":"candidate plugin callback is unverified","automatic_capture":false,"cases":[{"id":"no-op","eligible":false,"payload":{"event":"PostToolUse"}}]},
+    {"surface_id":"hermes","canonical_agent":"hermes","read_path_id":"none","tool":"none","accepted_result_form":"candidate plugin callback is unverified","automatic_capture":false,"cases":[{"id":"no-op","eligible":false,"payload":{"event":"PostToolUse"}}]},
+    {"surface_id":"cline","canonical_agent":"cline","read_path_id":"none","tool":"none","accepted_result_form":"instruction-only surface","automatic_capture":false,"cases":[{"id":"no-op","eligible":false,"payload":{"event":"PostToolUse"}}]},
+    {"surface_id":"roo-code","canonical_agent":"cline","read_path_id":"none","tool":"none","accepted_result_form":"instruction-only surface","automatic_capture":false,"cases":[{"id":"no-op","eligible":false,"payload":{"event":"PostToolUse"}}]},
+    {"surface_id":"antigravity","canonical_agent":"antigravity","read_path_id":"none","tool":"none","accepted_result_form":"instruction-only surface","automatic_capture":false,"cases":[{"id":"no-op","eligible":false,"payload":{"event":"PostToolUse"}}]},
+    {"surface_id":"kilocode","canonical_agent":"kilocode","read_path_id":"none","tool":"none","accepted_result_form":"instruction-only surface","automatic_capture":false,"cases":[{"id":"no-op","eligible":false,"payload":{"event":"PostToolUse"}}]}
+  ]
+}

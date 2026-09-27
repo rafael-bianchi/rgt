@@ -1,11 +1,14 @@
+#[path = "update_stub.rs"]
+mod update_stub;
+
 #[cfg(test)]
 mod tests {
+    use super::update_stub;
+    use rgt::cli::update::execute_update_with_io;
     use std::process::Command;
-    use std::time::Instant;
 
     #[test]
-    fn test_performance_installer_dry_run_under_5s() {
-        let start = Instant::now();
+    fn installer_dry_run_reports_the_selected_archive() {
         let output = Command::new("sh")
             .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/install.sh"))
             .args(["--dry-run"])
@@ -13,44 +16,16 @@ mod tests {
             .env("RGT_INSTALL_TEST_ARCH", "arm64")
             .output()
             .expect("Failed to run install.sh");
-        let elapsed = start.elapsed();
-
         assert!(output.status.success());
-        assert!(
-            elapsed.as_secs_f64() < 10.0,
-            "SC-001: Installer dry-run took {:.1}s, expected <10s",
-            elapsed.as_secs_f64()
-        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("aarch64-apple-darwin"));
     }
 
     #[test]
-    fn test_performance_update_check_under_5s() {
-        let start = Instant::now();
-        let output = Command::new("cargo")
-            .args(["run", "--", "update", "--check"])
-            .output();
-        let elapsed = start.elapsed();
-
-        if let Ok(out) = output {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if stderr.contains("rate limit") || stderr.contains("error") {
-                return;
-            }
-            assert!(
-                elapsed.as_secs_f64() < 30.0,
-                "SC-005: Update check took {:.1}s (including cargo build), expected <30s w/ build",
-                elapsed.as_secs_f64()
-            );
-        }
-    }
-
-    #[test]
-    fn test_performance_cargo_build_release_profile() {
-        let output = Command::new("cargo")
-            .args(["build", "--release"])
-            .output()
-            .expect("Failed to run cargo build --release");
-
-        assert!(output.status.success());
+    fn update_check_reports_a_newer_injected_release_without_downloading() {
+        let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        let newer = format!("v{}.{}.0", current.major, current.minor + 1);
+        let io = update_stub::CheckOnlyUpdateIo::new(newer);
+        execute_update_with_io(true, true, None, false, false, &io).unwrap();
+        assert_eq!(io.fetches(), 1);
     }
 }

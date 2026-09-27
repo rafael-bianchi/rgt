@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rgt:compatibility-evidence:2",
+  "title": "RGT client compatibility observation",
+  "description": "One redacted observation. Verified automatic value capture requires a native-client full-snapshot-match success and a native-client no-op or error observation for the same read path, surface, version, and platform.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "evidence_id",
+    "observed_at",
+    "surface_id",
+    "read_path_id",
+    "canonical_agent",
+    "rgt_version",
+    "client_version",
+    "platform",
+    "method",
+    "registration_loaded",
+    "event",
+    "host_response",
+    "graph_result",
+    "source_reference",
+    "redacted"
+  ],
+  "properties": {
+    "evidence_id": { "type": "string", "minLength": 1 },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "surface_id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "read_path_id": {
+      "description": "Stable tool/result-form route within the surface; none is reserved for guidance-only or non-read observations and cannot support automatic value-capture promotion.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "canonical_agent": { "type": "string", "minLength": 1 },
+    "rgt_version": { "type": "string", "minLength": 1 },
+    "client_version": { "type": "string", "minLength": 1 },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture"],
+      "properties": {
+        "os": { "type": "string", "enum": ["macos", "linux", "windows", "unknown"] },
+        "architecture": { "type": "string", "enum": ["aarch64", "x86_64", "unknown"] }
+      }
+    },
+    "method": {
+      "type": "string",
+      "enum": ["native-client", "fixture-replay", "vendor-documentation", "comparative-source"]
+    },
+    "registration_loaded": { "type": "boolean" },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "tool", "outcome", "completion_evidence", "content_evidence"],
+      "properties": {
+        "phase": { "type": "string", "enum": ["pre", "post", "none"] },
+        "tool": { "type": "string", "minLength": 1 },
+        "outcome": { "type": "string", "enum": ["success", "no-op", "failure", "canceled", "unknown"] },
+        "completion_evidence": {
+          "type": "string",
+          "enum": ["explicit-success", "completed-result", "none"]
+        },
+        "content_evidence": {
+          "type": "string",
+          "enum": ["full-snapshot-match", "path-only", "partial-or-filtered", "none"]
+        }
+      }
+    },
+    "host_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "accepted", "tool_result_unchanged"],
+      "properties": {
+        "format": { "type": "string", "enum": ["none", "json", "text", "unknown"] },
+        "accepted": { "type": "boolean" },
+        "tool_result_unchanged": { "type": "boolean" }
+      }
+    },
+    "graph_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["values", "capture_agent"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["node_id", "kind", "value", "source_line"],
+            "properties": {
+              "node_id": { "type": "string", "minLength": 1 },
+              "kind": { "type": "string", "enum": ["number", "date"] },
+              "value": { "type": "string", "minLength": 1 },
+              "source_line": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        "capture_agent": { "type": ["string", "null"] }
+      }
+    },
+    "source_reference": { "type": "string", "minLength": 1 },
+    "fixture_path": { "type": "string" },
+    "notes": { "type": "string" },
+    "redacted": { "const": true }
+  }
+}

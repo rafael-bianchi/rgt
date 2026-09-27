@@ -56,6 +56,14 @@ name = "test_turtle_contract"
 path = "tests/contract/test_turtle_contract.rs"
 
 [[test]]
+name = "test_cli_version"
+path = "tests/contract/test_cli_version.rs"
+
+[[test]]
+name = "test_harness_compatibility"
+path = "tests/contract/test_harness_compatibility.rs"
+
+[[test]]
 name = "test_turtle"
 path = "tests/unit/test_turtle.rs"
 
@@ -128,6 +136,10 @@ name = "test_hook_parsers"
 path = "tests/unit/hook_parsers.rs"
 
 [[test]]
+name = "hook_surfaces"
+path = "tests/unit/hook_surfaces.rs"
+
+[[test]]
 name = "test_hook_editors"
 path = "tests/unit/hook_editors.rs"
 
@@ -146,6 +158,11 @@ path = "tests/contract/hook_installer.rs"
 [[test]]
 name = "test_cli_record_derive"
 path = "tests/contract/test_cli_record_derive_contract.rs"
+
+[[bench]]
+name = "bench_hook_capture"
+path = "benches/bench_hook_capture.rs"
+harness = false
 
 [[test]]
 name = "test_doctor_contract"

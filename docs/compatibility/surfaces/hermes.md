@@ -1,0 +1,7 @@
+# Hermes
+
+**RGT canonical agent**: `hermes`. RGT writes a Python plugin, a TOML enablement entry, and project recording guidance. Hermes loads one context file; RGT adds its block to the first existing project file in Hermes's documented precedence order: `.hermes.md`, `HERMES.md`, `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md`, `.cursorrules`. If none exists, RGT creates `AGENTS.md`. This applies even with `rgt init -g`, because the guidance is project context. The installer preserves unrelated instructions and reports ambiguous RGT blocks. `rgt doctor` checks the selected local context file separately from plugin registration; local file health does not prove Hermes loaded it. Hermes can be started with `--ignore-rules`, which bypasses project guidance.
+
+The installed plugin format, discovery, callback signatures, completion semantics, tool/result fields, neutral response, version/platform, and live capture are unverified. No stable read-path ID is established and no automatic value-capture claim is made. `pre_tool_call` is not successful-read evidence. Until a completed full-content path is verified, follow the loaded instructions to run `rgt record <file>` after a successful read.
+
+**Vendor source**: [Hermes context-file documentation](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/context-files.md). **Comparative source**: [`evidence.md`](../../../specs/044-verify-harness-compatibility/evidence.md#hermes).

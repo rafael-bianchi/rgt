@@ -90,11 +90,58 @@ impl From<ExtractionResult> for Vec<ExtractedValue> {
 /// Normalized capture model consumed by `handle_passive_hook_event`.
 #[derive(Debug, Clone, Default)]
 pub struct NormalizedCapture {
+    /// Legacy alias retained for existing callers; equals `read_target`.
     pub path: Option<String>,
+    pub read_target: Option<String>,
+    pub phase: CapturePhase,
+    pub outcome_evidence: OutcomeEvidence,
+    /// Full host-returned text; this is never populated by reading the file.
+    pub completed_content: Option<String>,
+    /// 1-based original lines corresponding to `completed_content`.
+    pub source_line_mapping: Option<Vec<u32>>,
+    pub content_complete: bool,
+    /// Legacy alias retained for current extraction code.
+    #[allow(dead_code)]
     pub content: Option<String>,
     /// Base64 PDF envelope bytes (spec 033). When present, the hook decodes and
     /// locally extracts the PDF instead of falling back to a disk read.
     pub pdf_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CapturePhase {
+    Before,
+    After,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OutcomeEvidence {
+    ExplicitSuccess,
+    CompletedResult,
+    Failed,
+    Canceled,
+    #[default]
+    Unknown,
+}
+
+impl NormalizedCapture {
+    /// Checks whether the event provides a completed full result. The capture
+    /// path still has to match the returned bytes against the current snapshot.
+    pub fn is_value_capture_eligible(&self) -> bool {
+        self.phase == CapturePhase::After
+            && matches!(
+                self.outcome_evidence,
+                OutcomeEvidence::ExplicitSuccess | OutcomeEvidence::CompletedResult
+            )
+            && self.content_complete
+            && (self
+                .completed_content
+                .as_ref()
+                .is_some_and(|_| self.source_line_mapping.is_some())
+                || self.pdf_base64.is_some())
+    }
 }
 
 /// Parses a hook event JSON payload from stdin into a structured `HookPayload`.
@@ -313,19 +360,130 @@ fn resolve_auto_format(content: &str) -> NumberFormat {
 /// `agent` selects the stdin dialect; `None`/`claude-code`/`cursor` use the
 /// default Claude Code compatible shape (existing behavior).
 pub fn normalize_agent_event(agent: Option<&str>, stdin: &str) -> Option<NormalizedCapture> {
+    let stdin = stdin.strip_prefix('\u{feff}').unwrap_or(stdin);
     let value: serde_json::Value = serde_json::from_str(stdin).ok()?;
-    match agent {
+    let mut capture = match agent {
         // FR-001: try the Read-shaped dialect first; a Bash tool call has no
         // `path`/`content`, so fall back to command-based extraction.
-        None | Some("claude-code") | Some("cursor") => match default_dialect(&value) {
-            Some(c) if c.path.is_some() => Some(c),
-            _ => command_dialect(&value),
-        },
-        Some("copilot") => copilot_dialect(&value),
-        Some("gemini") | Some("vibe") | Some("opencode") | Some("pi") | Some("hermes") => {
-            command_dialect(&value)
+        None | Some("claude-code") | Some("cursor") | Some("codex") => {
+            match default_dialect(&value) {
+                Some(c) if c.path.is_some() => Some(c),
+                _ => command_dialect(&value),
+            }
         }
+        Some("windsurf") => windsurf_dialect(&value),
+        Some("copilot") => copilot_dialect(&value),
+        Some("opencode") => {
+            opencode_native_read_dialect(&value).or_else(|| command_dialect(&value))
+        }
+        Some("gemini") | Some("vibe") | Some("pi") | Some("hermes") => command_dialect(&value),
         Some(_) => None,
+    }?;
+
+    // Until a documented or native event contract is recorded, these parsed
+    // compatibility shapes are diagnostic candidates only. They cannot
+    // authorize graph writes even if a synthetic payload happens to contain
+    // fields resembling a complete result.
+    if !matches!(
+        agent,
+        None | Some("claude-code") | Some("codex") | Some("opencode")
+    ) {
+        capture.content_complete = false;
+    }
+    if agent == Some("opencode") && opencode_native_read_dialect(&value).is_none() {
+        capture.content_complete = false;
+    }
+    if matches!(agent, None | Some("claude-code") | Some("codex"))
+        && !is_qualifying_read_event(agent, &value, &capture)
+    {
+        capture.content_complete = false;
+    }
+    Some(capture)
+}
+
+/// OpenCode's observed `read` result exposes the complete decoded file text
+/// in `metadata.display.text`. Only a full-file, untruncated after-result is
+/// eligible; the caller still verifies those bytes against the disk snapshot.
+fn opencode_native_read_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
+    if !is_opencode_native_read(value) {
+        return None;
+    }
+    let path = value.pointer("/args/filePath")?.as_str()?;
+    let result = value.get("result")?;
+    let metadata = result.get("metadata")?;
+    let display = metadata.get("display")?;
+    let text = display.get("text")?.as_str()?;
+    let line_count = u32::try_from(text.lines().count()).ok()?;
+    if path.is_empty()
+        || result.get("output")?.as_str().is_none()
+        || [value, result]
+            .into_iter()
+            .any(opencode_outcome_is_negative)
+        || metadata.get("truncated")?.as_bool()?
+        || display.get("truncated")?.as_bool()?
+        || display.get("type")?.as_str()? != "file"
+        || display.get("path")?.as_str()? != path
+        || display.get("lineStart")?.as_u64()? != 1
+        || display.get("lineEnd")?.as_u64()? != u64::from(line_count)
+        || display.get("totalLines")?.as_u64()? != u64::from(line_count)
+    {
+        return None;
+    }
+    let content = text.to_string();
+    Some(NormalizedCapture {
+        path: Some(path.to_string()),
+        read_target: Some(path.to_string()),
+        phase: CapturePhase::After,
+        outcome_evidence: OutcomeEvidence::CompletedResult,
+        completed_content: Some(content.clone()),
+        source_line_mapping: Some((1..=line_count).collect()),
+        content_complete: true,
+        content: Some(content),
+        pdf_base64: None,
+    })
+}
+
+fn opencode_outcome_is_negative(value: &serde_json::Value) -> bool {
+    value.get("success").and_then(serde_json::Value::as_bool) == Some(false)
+        || ["failed", "canceled", "cancelled", "is_error", "isError"]
+            .into_iter()
+            .any(|key| value.get(key).and_then(serde_json::Value::as_bool) == Some(true))
+        || value
+            .get("error")
+            .is_some_and(|error| !error.is_null() && error != "")
+}
+
+fn is_opencode_native_read(value: &serde_json::Value) -> bool {
+    value.get("event").and_then(serde_json::Value::as_str) == Some("tool.execute.after")
+        && value.get("tool").and_then(serde_json::Value::as_str) == Some("read")
+        && value
+            .pointer("/args/filePath")
+            .and_then(serde_json::Value::as_str)
+            .is_some()
+}
+
+fn is_qualifying_read_event(
+    agent: Option<&str>,
+    value: &serde_json::Value,
+    capture: &NormalizedCapture,
+) -> bool {
+    let tool = value
+        .get("tool_name")
+        .or_else(|| value.get("toolName"))
+        .and_then(serde_json::Value::as_str);
+    match (agent, tool) {
+        (None | Some("claude-code"), Some("Read")) => capture.read_target.is_some(),
+        (None | Some("claude-code"), Some("Bash")) => {
+            let command = value
+                .get("tool_input")
+                .and_then(|input| input.get("command"))
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| value.get("command").and_then(serde_json::Value::as_str));
+            command.is_some_and(|command| extract_path_from_command(command).is_some())
+                && capture.read_target.is_some()
+        }
+        (Some("codex"), Some("read_file" | "ReadFile" | "Read")) => capture.read_target.is_some(),
+        _ => false,
     }
 }
 
@@ -351,11 +509,115 @@ fn default_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
     // carries `content`, so the envelope's `type`/`file` fields survive only on
     // the original value.
     let pdf_base64 = value.get("tool_response").and_then(pdf_envelope_base64);
-    Some(NormalizedCapture {
+    Some(normalized_capture(value, path, content, pdf_base64))
+}
+
+fn normalized_capture(
+    value: &serde_json::Value,
+    path: Option<String>,
+    content: Option<String>,
+    pdf_base64: Option<String>,
+) -> NormalizedCapture {
+    let event = value
+        .get("event")
+        .or_else(|| value.get("hook_event_name"))
+        .or_else(|| value.get("event_name"))
+        .or_else(|| value.get("agent_action_name"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let phase = if event.contains("pre") || event.contains("before") {
+        CapturePhase::Before
+    } else if event.contains("post") || event.contains("after") {
+        CapturePhase::After
+    } else {
+        CapturePhase::Unknown
+    };
+    let response = value.get("tool_response");
+    let bool_at = |object: &serde_json::Value, key: &str| {
+        object.get(key).and_then(serde_json::Value::as_bool) == Some(true)
+    };
+    let has_error = |object: &serde_json::Value| {
+        object
+            .get("error")
+            .is_some_and(|error| !error.is_null() && error != "")
+    };
+    let canceled = bool_at(value, "canceled")
+        || bool_at(value, "cancelled")
+        || response.is_some_and(|r| bool_at(r, "canceled") || bool_at(r, "cancelled"));
+    let failed = value.get("success").and_then(serde_json::Value::as_bool) == Some(false)
+        || bool_at(value, "failed")
+        || bool_at(value, "is_error")
+        || bool_at(value, "isError")
+        || has_error(value)
+        || response.is_some_and(|r| {
+            r.get("success").and_then(serde_json::Value::as_bool) == Some(false)
+                || bool_at(r, "failed")
+                || bool_at(r, "is_error")
+                || bool_at(r, "isError")
+                || has_error(r)
+        });
+    let content_complete = !failed
+        && !canceled
+        && !bool_at(value, "truncated")
+        && !bool_at(value, "partial")
+        && !bool_at(value, "filtered")
+        && !response.is_some_and(|r| {
+            bool_at(r, "truncated")
+                || bool_at(r, "is_truncated")
+                || bool_at(r, "partial")
+                || bool_at(r, "filtered")
+        });
+    let outcome_evidence = if canceled {
+        OutcomeEvidence::Canceled
+    } else if failed {
+        OutcomeEvidence::Failed
+    } else if content.is_some() || pdf_base64.is_some() {
+        OutcomeEvidence::CompletedResult
+    } else if value.get("success").and_then(serde_json::Value::as_bool) == Some(true)
+        || value
+            .get("agent_action_name")
+            .and_then(serde_json::Value::as_str)
+            == Some("post_read_code")
+    {
+        OutcomeEvidence::ExplicitSuccess
+    } else {
+        OutcomeEvidence::Unknown
+    };
+    let source_line_mapping = content
+        .as_ref()
+        .map(|text| (1..=text.lines().count().max(1) as u32).collect::<Vec<_>>());
+    NormalizedCapture {
+        read_target: path.clone(),
         path,
+        phase,
+        outcome_evidence,
+        completed_content: content.clone(),
+        source_line_mapping,
+        content_complete,
         content,
         pdf_base64,
-    })
+    }
+}
+
+/// The documented Windsurf post-read event supplies only `file_path`. It is
+/// normalized for local event visibility but remains ineligible for values.
+fn windsurf_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
+    let event = value
+        .get("agent_action_name")
+        .or_else(|| value.get("event"))
+        .or_else(|| value.get("hook_event_name"))
+        .and_then(serde_json::Value::as_str)?;
+    if event != "post_read_code" {
+        return Some(normalized_capture(value, None, None, None));
+    }
+    let path = value
+        .get("tool_info")
+        .and_then(|tool_info| tool_info.get("file_path"))
+        .or_else(|| value.get("file_path"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    Some(normalized_capture(value, path, None, None))
 }
 
 /// Returns the base64 string of a PDF envelope inside a `tool_response` value
@@ -387,18 +649,20 @@ fn copilot_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
                 .or_else(|| args.get("file_path"))
                 .and_then(|p| p.as_str())
             {
-                return Some(NormalizedCapture {
-                    path: Some(path.to_string()),
-                    content: None,
-                    ..Default::default()
-                });
+                return Some(normalized_capture(
+                    value,
+                    Some(path.to_string()),
+                    None,
+                    None,
+                ));
             }
             if let Some(cmd) = args.get("command").and_then(|c| c.as_str()) {
-                return Some(NormalizedCapture {
-                    path: extract_path_from_command(cmd),
-                    content: None,
-                    ..Default::default()
-                });
+                return Some(normalized_capture(
+                    value,
+                    extract_path_from_command(cmd),
+                    None,
+                    None,
+                ));
             }
         }
     }
@@ -428,11 +692,7 @@ fn command_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
         .and_then(|s| s.as_str())
         .filter(|s| !s.trim().is_empty())
         .map(|s| s.to_string());
-    Some(NormalizedCapture {
-        path,
-        content,
-        ..Default::default()
-    })
+    Some(normalized_capture(value, path, content, None))
 }
 
 /// Extracts a path argument of a read-style command (`cat`, `read`, `less`,

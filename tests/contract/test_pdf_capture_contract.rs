@@ -69,7 +69,7 @@ mod tests {
 
     fn envelope(file_path: &str, base64: &str) -> String {
         format!(
-            r#"{{"tool_name":"Read","tool_input":{{"file_path":"{file_path}"}},"tool_response":{{"type":"pdf","file":{{"filePath":"{file_path}","base64":"{base64}","originalSize":100}}}}}}"#
+            r#"{{"event":"PostToolUse","tool_name":"Read","tool_input":{{"file_path":"{file_path}"}},"tool_response":{{"type":"pdf","file":{{"filePath":"{file_path}","base64":"{base64}","originalSize":100}}}}}}"#
         )
     }
 
@@ -225,6 +225,43 @@ mod tests {
             "non-claude-code agents must not emit stdout, got: {}",
             String::from_utf8_lossy(&output.stdout)
         );
+    }
+
+    #[test]
+    fn pdf_capture_rejects_changed_disk_snapshot() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        assert!(std::process::Command::new(rgt())
+            .args(["init", "--agent", "codex"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap()
+            .status
+            .success());
+
+        let captured = valid_pdf("Invoice total: 1234.56");
+        let pdf_path = dir.path().join("invoice.pdf");
+        std::fs::write(&pdf_path, b"different current file bytes").unwrap();
+        let stdin = envelope(&pdf_path.to_string_lossy(), &base64_of(&captured));
+        let mut child = std::process::Command::new(rgt())
+            .args(["hook", "post", "--agent", "claude-code"])
+            .current_dir(dir.path())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stdin.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success());
+        let db = rgt::store::DbStore::open_in_project(".").unwrap();
+        assert!(rgt::store::queries::list_all_nodes(db.conn())
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
