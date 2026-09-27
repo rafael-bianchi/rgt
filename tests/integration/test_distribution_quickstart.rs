@@ -1,6 +1,13 @@
+#[path = "update_stub.rs"]
+mod update_stub;
+
 #[cfg(test)]
 mod tests {
-    use std::process::Command;
+    use super::update_stub;
+    use rgt::cli::update::execute_update_with_io;
+    use std::process::{Command, Stdio};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn test_quickstart_installer_help() {
@@ -34,32 +41,48 @@ mod tests {
 
     #[test]
     fn test_quickstart_update_check_flag() {
-        let output = Command::new("cargo")
-            .args(["run", "--", "update", "--check"])
-            .output();
-        if let Ok(out) = output {
-            let combined = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            assert!(
-                combined.contains("up to date")
-                    || combined.contains("available")
-                    || combined.contains("rate limit")
-                    || combined.contains("Failed")
-                    || combined.contains("error")
-            );
-        }
+        let output = Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args(["update", "--help"])
+            .output()
+            .expect("Failed to inspect rgt update help");
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("--check"));
+
+        let io = update_stub::CheckOnlyUpdateIo::new(format!("v{}", env!("CARGO_PKG_VERSION")));
+        execute_update_with_io(true, true, None, false, false, &io).unwrap();
+        assert_eq!(io.fetches(), 1);
     }
 
     #[test]
     fn test_quickstart_cargo_package_clean() {
-        let output = Command::new("cargo")
-            .args(["package", "--allow-dirty"])
-            .output()
+        let mut child = Command::new("cargo")
+            .args([
+                "package",
+                "--allow-dirty",
+                "--offline",
+                "--locked",
+                "--no-verify",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
             .expect("Failed to run cargo package");
-
-        assert!(output.status.success());
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Some(status) = child.try_wait().expect("Failed to wait for cargo package") {
+                assert!(status.success(), "offline cargo package failed: {status}");
+                break;
+            }
+            if Instant::now() >= deadline {
+                child
+                    .kill()
+                    .expect("Failed to stop timed-out cargo package");
+                child
+                    .wait()
+                    .expect("Failed to reap timed-out cargo package");
+                panic!("offline cargo package exceeded 30 seconds");
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
     }
 }

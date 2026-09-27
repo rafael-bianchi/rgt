@@ -1,4 +1,4 @@
-use crate::store::queries::list_all_nodes;
+use crate::hooks::registration::{GuidanceHealth, GuidanceInspection, RegistrationKind};
 use crate::store::DbStore;
 
 /// Severity tier of a `rgt doctor` diagnostic (FR-001).
@@ -20,7 +20,7 @@ pub struct Diagnostic {
     pub message: String,
 }
 
-/// Runs `rgt doctor` against the current project directory and returns the
+/// Runs store and aggregate local-hook presence checks for tests and returns
 /// diagnostics plus the process exit code (0 = healthy or warnings, 1 = error).
 ///
 /// The store checks are injectable for deterministic tests; the production
@@ -45,11 +45,8 @@ pub fn run_doctor(
         return (diagnostics, 1);
     }
 
-    let node_count = match open_store() {
-        Ok(db) => match list_all_nodes(db.conn()) {
-            Ok(nodes) => nodes.len(),
-            Err(_) => 0,
-        },
+    match open_store() {
+        Ok(_db) => {}
         Err(_) => {
             diagnostics.push(Diagnostic {
                 name: "store",
@@ -72,22 +69,13 @@ pub fn run_doctor(
         diagnostics.push(Diagnostic {
             name: "hooks",
             status: DiagnosticStatus::Warning,
-            message: "No RGT hooks are installed — `rgt init` configures agent hooks for capture."
-                .into(),
-        });
-    } else if node_count == 0 {
-        // FR-002: the silent no-op signature. Advisory only: a fresh
-        // install with no captures yet is not a hard failure.
-        diagnostics.push(Diagnostic {
-            name: "captures",
-            status: DiagnosticStatus::Warning,
-            message: "Hooks are installed but no values have been recorded. If you expected captures, verify `rgt` is resolvable on the PATH of the shell your AI tool uses (hook subprocesses fail open, so a broken PATH records nothing silently).".into(),
+            message: "No local RGT registration was identified — run `rgt init` to configure a supported integration.".into(),
         });
     } else {
         diagnostics.push(Diagnostic {
-            name: "captures",
+            name: "hooks",
             status: DiagnosticStatus::Healthy,
-            message: "Values are being captured.".into(),
+            message: "At least one local RGT registration was identified; this does not verify client loading or value capture.".into(),
         });
     }
 
@@ -102,22 +90,154 @@ pub fn run_doctor(
     (diagnostics, exit_code)
 }
 
+/// A local guidance finding. The file may be usable even when the host has not
+/// loaded it, and it is independent of the native hook registration status.
+pub fn guidance_diagnostic(inspection: &GuidanceInspection) -> Diagnostic {
+    let (mut status, detail) = match inspection.health {
+        GuidanceHealth::Usable => (
+            DiagnosticStatus::Healthy,
+            "RGT-owned recording instructions are complete",
+        ),
+        GuidanceHealth::UsableUnmanaged => (
+            DiagnosticStatus::Warning,
+            "recording instructions are readable, but the RGT closing marker is absent; review ownership before rewriting",
+        ),
+        GuidanceHealth::Missing => (
+            DiagnosticStatus::Warning,
+            "RGT recording instructions are missing; rerun `rgt init` for this client",
+        ),
+        GuidanceHealth::Incomplete => (
+            DiagnosticStatus::Error,
+            "RGT-owned recording instructions are incomplete; repair the RGT block before rerunning `rgt init`",
+        ),
+        GuidanceHealth::Unowned => (
+            DiagnosticStatus::Warning,
+            "the file contains no RGT-owned recording instructions; preserve its contents and inspect ownership before initializing",
+        ),
+    };
+    let instruction_only = crate::hooks::registration::ClientSurface::by_id(inspection.surface_id)
+        .is_some_and(|surface| surface.registration_kind == RegistrationKind::Instruction);
+    if instruction_only && status == DiagnosticStatus::Healthy {
+        status = DiagnosticStatus::Warning;
+    }
+    let tier = if instruction_only {
+        " Instruction-only recording; no automatic read capture."
+    } else {
+        ""
+    };
+    let state = match inspection.health {
+        GuidanceHealth::Usable => "Managed",
+        GuidanceHealth::UsableUnmanaged => "Hand-maintained",
+        GuidanceHealth::Missing => "Missing",
+        GuidanceHealth::Incomplete => "Incomplete",
+        GuidanceHealth::Unowned => "Unowned",
+    };
+    Diagnostic {
+        name: "guidance",
+        status,
+        message: format!(
+            "{}: {} guidance at {}. {}.{} Local inspection does not prove client loading or read capture.",
+            inspection.surface_id,
+            state,
+            inspection.artifact_path.display(),
+            detail,
+            tier
+        ),
+    }
+}
+
 /// Executes `rgt doctor` for the current project (production entry point).
 pub fn execute_doctor() -> Result<i32, String> {
-    let (diagnostics, code) = run_doctor(
+    let home = dirs::home_dir().unwrap_or_default();
+    let config_dir = dirs::config_dir().unwrap_or_else(|| home.join(".config"));
+    let surface_registrations =
+        crate::hooks::registration::inspect_local_registrations(&home, &config_dir);
+    let guidance_inspections =
+        crate::hooks::registration::inspect_local_guidance(&home, &config_dir);
+    let hooks_present = surface_registrations.iter().any(|registration| {
+        matches!(
+            registration.health,
+            crate::hooks::registration::RegistrationHealth::Active
+                | crate::hooks::registration::RegistrationHealth::GuidanceOnly
+        )
+    });
+    let (mut diagnostics, mut code) = run_doctor(
         || std::path::Path::new(".rgt").join("store.db").exists(),
         || DbStore::open_in_project(".").map_err(|e| e.to_string()),
-        || {
-            let home = dirs::home_dir();
-            let config_dir = dirs::config_dir();
-            match (home, config_dir) {
-                (Some(h), Some(c)) => {
-                    !crate::hooks::installer::list_hook_artifacts(&h, &c).is_empty()
-                }
-                _ => false,
-            }
-        },
+        || hooks_present,
     );
+
+    for registration in surface_registrations {
+        if registration.registration_kind == RegistrationKind::Instruction {
+            continue; // Its distinct guidance finding appears below.
+        }
+        let status = match registration.health {
+            crate::hooks::registration::RegistrationHealth::Active => DiagnosticStatus::Healthy,
+            crate::hooks::registration::RegistrationHealth::GuidanceOnly
+            | crate::hooks::registration::RegistrationHealth::Missing
+            | crate::hooks::registration::RegistrationHealth::TrustPending
+            | crate::hooks::registration::RegistrationHealth::InactiveWorkspace => {
+                DiagnosticStatus::Warning
+            }
+            crate::hooks::registration::RegistrationHealth::Malformed
+            | crate::hooks::registration::RegistrationHealth::Obsolete
+            | crate::hooks::registration::RegistrationHealth::Ambiguous => DiagnosticStatus::Error,
+        };
+        if status == DiagnosticStatus::Error {
+            code = 1;
+        }
+        let caveat = match registration.surface_id {
+            "codex" => " Codex may still require project trust approval in `/hooks`.",
+            "windsurf" => {
+                " Hooks are inactive in Restricted Mode; system and user hooks may take precedence."
+            }
+            _ => " Local presence does not prove the client loaded or invoked it.",
+        };
+        let hermes_config_detail = if registration.surface_id == "hermes"
+            && matches!(
+                registration.health,
+                crate::hooks::registration::RegistrationHealth::Obsolete
+                    | crate::hooks::registration::RegistrationHealth::Malformed
+            ) {
+            let (path, init_command) = match registration.scope {
+                crate::hooks::registration::RegistrationScope::Project => (
+                    std::path::PathBuf::from(".hermes/config.toml"),
+                    "rgt init --agent hermes",
+                ),
+                crate::hooks::registration::RegistrationScope::User => (
+                    home.join(".hermes/config.toml"),
+                    "rgt init -g --agent hermes",
+                ),
+            };
+            format!(
+                " Check `plugins.enabled` for `rgt` in {}; repair malformed TOML or run `{init_command}`.",
+                path.display()
+            )
+        } else {
+            String::new()
+        };
+        diagnostics.push(Diagnostic {
+            name: "surface",
+            status,
+            message: format!(
+                "{}: {:?} registration at {}; value-capture tier {:?}.{}{}",
+                registration.surface_id,
+                registration.health,
+                registration.artifact_path.display(),
+                registration.capture_tier,
+                caveat,
+                hermes_config_detail
+            ),
+        });
+    }
+
+    for inspection in guidance_inspections {
+        let diagnostic = guidance_diagnostic(&inspection);
+        if diagnostic.status == DiagnosticStatus::Error {
+            code = 1;
+        }
+        diagnostics.push(diagnostic);
+    }
 
     println!("=== RGT Doctor ===");
     for d in &diagnostics {
@@ -174,33 +294,12 @@ mod tests {
     }
 
     #[test]
-    fn initialized_with_values_is_healthy_exit_0() {
-        let db = in_memory_store().unwrap();
-        // Record a value so the graph is non-empty.
-        let now = chrono::Utc::now();
-        let node = crate::types::TrackedNode {
-            id: "doctor-test-node".into(),
-            node_type: crate::types::NodeType::Root,
-            value_kind: crate::types::ValueKind::Number,
-            value: crate::types::ValueData::Number(42.0),
-            source_doc_id: None,
-            line_number: Some(1),
-            is_stale: false,
-            stale_reason: None,
-            created_at: now,
-            updated_at: now,
-        };
-        crate::store::queries::insert_tracked_node(db.conn(), &node).unwrap();
-        let (diags, code) = run_doctor(store_exists, || Ok(db), hooks);
-        assert_eq!(code, 0);
-        assert!(has_status(&diags, "captures", DiagnosticStatus::Healthy));
-    }
-
-    #[test]
-    fn initialized_empty_graph_with_hooks_is_warning_exit_0() {
+    fn initialized_store_with_hooks_is_local_health_only() {
         let (diags, code) = run_doctor(store_exists, in_memory_store, hooks);
         assert_eq!(code, 0);
-        assert!(has_status(&diags, "captures", DiagnosticStatus::Warning));
+        let hook = diags.iter().find(|d| d.name == "hooks").unwrap();
+        assert_eq!(hook.status, DiagnosticStatus::Healthy);
+        assert!(hook.message.contains("does not verify"));
     }
 
     #[test]

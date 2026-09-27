@@ -177,12 +177,24 @@ fn hook_capture_records_batch_atomically() {
     std::env::set_current_dir(dir.path()).unwrap();
 
     let file = dir.path().join("data.csv");
-    std::fs::write(&file, "placeholder\n").unwrap();
+    let contents = "amount,120000\ncosts,60000\nprofit,60000\n";
+    std::fs::write(&file, contents).unwrap();
 
-    let event = format!(
-        r#"{{"event":"PostToolUse","tool_name":"ReadLocalFile","tool_input":{{"path":"{}"}},"tool_response":{{"content":"amount,120000\ncosts,60000\nprofit,60000\n"}}}}"#,
-        file.display()
-    );
+    let event_for = |agent: &str| {
+        let tool_name = if agent == "codex" {
+            "read_file"
+        } else {
+            "Read"
+        };
+        serde_json::json!({
+            "event": "PostToolUse",
+            "tool_name": tool_name,
+            "tool_input": {"file_path": file.display().to_string()},
+            "tool_response": {"content": contents}
+        })
+        .to_string()
+    };
+    let event = event_for("claude-code");
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_rgt"))
         .args(["hook", "post", "--agent", "claude-code"])
@@ -201,9 +213,47 @@ fn hook_capture_records_batch_atomically() {
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success(), "hook must fail open with success");
 
+    // Duplicate callbacks from one client must not duplicate roots or its
+    // attribution; a different client observing the same root gets its own
+    // unique association.
+    for agent in ["claude-code", "claude-code", "codex"] {
+        let event = event_for(agent);
+        let mut child = Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args(["hook", "post", "--agent", agent])
+            .current_dir(dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(event.as_bytes())
+            .unwrap();
+        assert!(child.wait_with_output().unwrap().status.success());
+    }
+
     let db = DbStore::open_in_project(dir.path()).unwrap();
     let nodes = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
     assert_eq!(nodes.len(), 3, "all values must be recorded in the batch");
+    let associations = rgt::store::queries::list_capture_associations(db.conn()).unwrap();
+    assert_eq!(associations.len(), 6);
+    assert_eq!(
+        associations
+            .iter()
+            .filter(|(_, agent)| agent == "claude-code")
+            .count(),
+        3
+    );
+    assert_eq!(
+        associations
+            .iter()
+            .filter(|(_, agent)| agent == "codex")
+            .count(),
+        3
+    );
 }
 
 // ---- 029 / US1 (T005): schema version stamping and skew detection ----

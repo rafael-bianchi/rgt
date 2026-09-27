@@ -1,4 +1,5 @@
 use rgt::hooks::parser::{extract_path_from_command, normalize_agent_event};
+use rgt::hooks::parser::{CapturePhase, OutcomeEvidence};
 
 #[test]
 fn default_dialect_extracts_path_and_content() {
@@ -152,6 +153,111 @@ fn no_normalizer_returns_error() {
 }
 
 #[test]
+fn capture_eligibility_requires_post_phase_outcome_and_complete_content() {
+    let complete = normalize_agent_event(
+        Some("claude-code"),
+        r#"{"event":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"/tmp/data.txt"},"tool_response":{"content":"amount 42"}}"#,
+    ).unwrap();
+    assert_eq!(complete.phase, CapturePhase::After);
+    assert_eq!(complete.read_target.as_deref(), Some("/tmp/data.txt"));
+    assert_eq!(complete.outcome_evidence, OutcomeEvidence::CompletedResult);
+    assert_eq!(complete.completed_content.as_deref(), Some("amount 42"));
+    assert_eq!(complete.source_line_mapping.as_deref(), Some(&[1][..]));
+    assert!(complete.is_value_capture_eligible());
+
+    for tool in ["Write", "Edit", "Bash"] {
+        let event = if tool == "Bash" {
+            r#"{"event":"PostToolUse","tool_name":"Bash","tool_input":{"command":"echo value"},"tool_response":{"stdout":"amount 42"}}"#.to_string()
+        } else {
+            format!(
+                r#"{{"event":"PostToolUse","tool_name":"{tool}","tool_input":{{"file_path":"/tmp/data.txt"}},"tool_response":{{"content":"amount 42"}}}}"#
+            )
+        };
+        let capture = normalize_agent_event(Some("claude-code"), &event).unwrap();
+        assert!(!capture.is_value_capture_eligible(), "{tool}");
+    }
+
+    let shell_read = normalize_agent_event(
+        Some("claude-code"),
+        r#"{"event":"PostToolUse","tool_name":"Bash","tool_input":{"command":"cat /tmp/data.txt"},"tool_response":{"stdout":"amount 42"}}"#,
+    ).unwrap();
+    assert!(shell_read.is_value_capture_eligible());
+
+    let mut unmappable = complete.clone();
+    unmappable.source_line_mapping = None;
+    assert!(!unmappable.is_value_capture_eligible());
+
+    for event in ["PreToolUse", "UnknownEvent"] {
+        let input = format!(
+            r#"{{"event":"{event}","tool_input":{{"path":"/tmp/data.txt"}},"tool_response":{{"content":"amount 42"}}}}"#
+        );
+        let capture = normalize_agent_event(Some("claude-code"), &input).unwrap();
+        assert!(!capture.is_value_capture_eligible(), "{event}");
+    }
+
+    for response in [
+        r#"{"success":true}"#,
+        r#"{"is_error":true,"content":"amount 42"}"#,
+        r#"{"canceled":true,"content":"amount 42"}"#,
+        r#"{"content":"amount 42","truncated":true}"#,
+        r#"{"content":"amount 42","filtered":true}"#,
+    ] {
+        let input = format!(
+            r#"{{"event":"PostToolUse","tool_input":{{"path":"/tmp/data.txt"}},"tool_response":{response}}}"#
+        );
+        let capture = normalize_agent_event(Some("claude-code"), &input).unwrap();
+        assert!(!capture.is_value_capture_eligible(), "{response}");
+    }
+
+    let before_only = normalize_agent_event(
+        Some("claude-code"),
+        r#"{"event":"PreToolUse","tool_input":{"path":"/tmp/data.txt"}}"#,
+    )
+    .unwrap();
+    assert!(before_only.completed_content.is_none());
+    assert!(!before_only.is_value_capture_eligible());
+}
+
+#[test]
+fn codex_requires_complete_post_tool_response_and_windsurf_is_path_only() {
+    let complete = normalize_agent_event(
+        Some("codex"),
+        r#"{"event":"PostToolUse","tool_name":"read_file","tool_input":{"file_path":"/tmp/a.txt"},"tool_response":{"content":"value 9"}}"#,
+    ).unwrap();
+    assert!(complete.is_value_capture_eligible());
+
+    let unknown_tool = normalize_agent_event(
+        Some("codex"),
+        r#"{"event":"PostToolUse","tool_name":"shell_command","tool_input":{"file_path":"/tmp/a.txt"},"tool_response":{"content":"value 9"}}"#,
+    ).unwrap();
+    assert!(!unknown_tool.is_value_capture_eligible());
+
+    let truncated = normalize_agent_event(
+        Some("codex"),
+        r#"{"event":"PostToolUse","tool_name":"read_file","tool_input":{"file_path":"/tmp/a.txt"},"tool_response":{"content":"value 9","truncated":true}}"#,
+    ).unwrap();
+    assert!(!truncated.is_value_capture_eligible());
+
+    let path_only = normalize_agent_event(
+        Some("windsurf"),
+        r#"{"agent_action_name":"post_read_code","tool_info":{"file_path":"/tmp/a.txt"}}"#,
+    )
+    .unwrap();
+    assert_eq!(path_only.path.as_deref(), Some("/tmp/a.txt"));
+    assert!(!path_only.is_value_capture_eligible());
+}
+
+#[test]
+fn bom_and_malformed_events_fail_open_without_eligibility() {
+    let bom = normalize_agent_event(
+        Some("claude-code"),
+        "\u{feff}{\"event\":\"PostToolUse\",\"tool_name\":\"Read\",\"tool_input\":{\"path\":\"x\"},\"tool_response\":{\"content\":\"v 1\"}}",
+    ).unwrap();
+    assert!(bom.is_value_capture_eligible());
+    assert!(normalize_agent_event(Some("claude-code"), "\u{feff}{broken").is_none());
+}
+
+#[test]
 fn extract_path_from_command_read_styles() {
     for (cmd, expected) in [
         ("cat /a/b.json", Some("/a/b.json")),
@@ -237,6 +343,114 @@ fn command_dialect_captures_stdout_as_content() {
     assert_eq!(cap.content.as_deref(), Some("amount,120000\n"));
 }
 
+#[test]
+fn opencode_native_read_requires_complete_display_metadata() {
+    let payload = serde_json::json!({
+        "event": "tool.execute.after",
+        "tool": "read",
+        "args": {"filePath": "/tmp/data.txt"},
+        "result": {
+            "title": "tmp/data.txt",
+            "output": "<content>\n1: amount 47\n2: when 2026-09-26\n</content>",
+            "metadata": {
+                "truncated": false,
+                "display": {
+                    "type": "file",
+                    "path": "/tmp/data.txt",
+                    "text": "amount 47\nwhen 2026-09-26",
+                    "lineStart": 1,
+                    "lineEnd": 2,
+                    "totalLines": 2,
+                    "truncated": false
+                }
+            }
+        }
+    });
+    let capture = normalize_agent_event(Some("opencode"), &payload.to_string()).unwrap();
+    assert!(capture.is_value_capture_eligible());
+    assert_eq!(capture.read_target.as_deref(), Some("/tmp/data.txt"));
+    assert_eq!(
+        capture.completed_content.as_deref(),
+        Some("amount 47\nwhen 2026-09-26")
+    );
+    assert_eq!(capture.source_line_mapping.as_deref(), Some(&[1, 2][..]));
+
+    for (label, mut changed) in [
+        ("before", payload.clone()),
+        ("other-tool", payload.clone()),
+        ("truncated", payload.clone()),
+        ("partial-lines", payload.clone()),
+        ("wrong-path", payload.clone()),
+        ("failed", payload.clone()),
+        ("root-failed", payload.clone()),
+        ("root-canceled", payload.clone()),
+        ("result-failed", payload.clone()),
+        ("result-canceled", payload.clone()),
+        ("result-is-error", payload.clone()),
+    ] {
+        match label {
+            "before" => changed["event"] = serde_json::json!("tool.execute.before"),
+            "other-tool" => changed["tool"] = serde_json::json!("bash"),
+            "truncated" => {
+                changed["result"]["metadata"]["display"]["truncated"] = serde_json::json!(true)
+            }
+            "partial-lines" => {
+                changed["result"]["metadata"]["display"]["lineStart"] = serde_json::json!(2)
+            }
+            "wrong-path" => {
+                changed["result"]["metadata"]["display"]["path"] =
+                    serde_json::json!("/tmp/other.txt")
+            }
+            "failed" => changed["result"]["error"] = serde_json::json!("read failed"),
+            "root-failed" => changed["success"] = serde_json::json!(false),
+            "root-canceled" => changed["canceled"] = serde_json::json!(true),
+            "result-failed" => changed["result"]["success"] = serde_json::json!(false),
+            "result-canceled" => changed["result"]["cancelled"] = serde_json::json!(true),
+            "result-is-error" => changed["result"]["is_error"] = serde_json::json!(true),
+            _ => unreachable!(),
+        }
+        assert!(
+            !normalize_agent_event(Some("opencode"), &changed.to_string())
+                .is_some_and(|capture| capture.is_value_capture_eligible()),
+            "{label} must not be capturable"
+        );
+    }
+}
+
+#[test]
+fn claude_and_codex_reject_explicit_error_fields_on_complete_reads() {
+    let base = serde_json::json!({
+        "event": "PostToolUse",
+        "tool_name": "Read",
+        "tool_input": {"file_path": "/tmp/source.txt"},
+        "tool_response": {"content": "amount 47\n"}
+    });
+    for agent in ["claude-code", "codex"] {
+        assert!(
+            normalize_agent_event(Some(agent), &base.to_string())
+                .is_some_and(|capture| capture.is_value_capture_eligible()),
+            "{agent} successful control should be eligible"
+        );
+        for (label, mut failed) in [
+            ("root-error", base.clone()),
+            ("root-isError", base.clone()),
+            ("result-isError", base.clone()),
+        ] {
+            match label {
+                "root-error" => failed["error"] = serde_json::json!("read failed"),
+                "root-isError" => failed["isError"] = serde_json::json!(true),
+                "result-isError" => failed["tool_response"]["isError"] = serde_json::json!(true),
+                _ => unreachable!(),
+            }
+            assert!(
+                !normalize_agent_event(Some(agent), &failed.to_string())
+                    .is_some_and(|capture| capture.is_value_capture_eligible()),
+                "{agent}/{label} must be ineligible"
+            );
+        }
+    }
+}
+
 // ---- T005 (US1): dispatch fallback for claude-code/cursor ----
 
 #[test]
@@ -246,6 +460,9 @@ fn bash_payload_is_captured_for_claude_and_cursor() {
         let cap = normalize_agent_event(agent, &payload).unwrap();
         assert_eq!(cap.path.as_deref(), Some("/path/report.csv"), "{agent:?}");
         assert_eq!(cap.content.as_deref(), Some("amount,120000\n"), "{agent:?}");
+        if agent != Some("cursor") {
+            assert!(cap.is_value_capture_eligible());
+        }
     }
 }
 

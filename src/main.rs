@@ -15,6 +15,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "rgt")]
+#[command(version)]
 #[command(about = "Rust Graph Tracker: Numeric and date provenance tracking with expression evaluation and derivation verification for LLM coding agents", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -23,12 +24,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize RGT project tracking and configure AI agent hooks
+    /// Print the version of this RGT executable
+    Version,
+    /// Initialize RGT tracking and configure client hooks, plugins, or guidance
     Init {
-        /// Detect and configure global hooks. Agents: Claude Code, Cursor,
-        /// Copilot, Gemini, Mistral Vibe (full hook); OpenCode, Pi, Hermes
-        /// (plugin); Windsurf, Codex CLI, Cline/Roo Code, Antigravity, Kilo
-        /// (rules-file).
+        /// Detect and configure global registrations. An artifact does not
+        /// verify that the client loaded it or that a read path captures values.
+        /// Native hooks: Claude Code, Cursor, Copilot Chat, Gemini CLI,
+        /// Mistral Vibe, Codex CLI, Windsurf. Plugins: OpenCode, Pi, Hermes.
+        /// Guidance: Copilot CLI, Cline/Roo Code, Antigravity, Kilo.
         #[arg(short = 'g', long)]
         global: bool,
 
@@ -92,6 +96,10 @@ enum Commands {
         /// kilocode (or aliases claude, roo-code, kilo). Omitted = Claude Code format.
         #[arg(long)]
         agent: Option<String>,
+
+        /// Internal marker used only by registrations written by `rgt init`.
+        #[arg(long, hide = true)]
+        rgt_managed: bool,
     },
     /// Check for and install binary updates from GitHub Releases
     Update {
@@ -199,13 +207,22 @@ fn parse_number_format(s: Option<&str>) -> Option<NumberFormat> {
     s.and_then(|raw| raw.parse().ok())
 }
 
+fn remaining_hook_budget(elapsed: std::time::Duration) -> std::time::Duration {
+    std::time::Duration::from_millis(800).saturating_sub(elapsed)
+}
+
 fn main() {
+    let process_started = std::time::Instant::now();
     // Reserve time for process-launch and scheduling overhead so a blocked
     // stdout write remains observable as a sub-second CLI failure.
     let command_deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
     let cli = Cli::parse();
 
     let result = match cli.command {
+        Commands::Version => {
+            println!("rgt {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         Commands::Init {
             global,
             force,
@@ -251,9 +268,21 @@ fn main() {
             }
             cli::execute_graph_with_options(&format, include_absolute_paths, command_deadline)
         }
-        Commands::Hook { event, agent } => {
-            if let Err(e) = hooks::handle_passive_hook_event(&event, agent.as_deref()) {
-                eprintln!("Hook warning: {}", e);
+        Commands::Hook {
+            event,
+            agent,
+            rgt_managed: _,
+        } => {
+            let remaining = remaining_hook_budget(process_started.elapsed());
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            std::thread::spawn(move || {
+                let result = hooks::handle_passive_hook_event(&event, agent.as_deref());
+                let _ = sender.send(result);
+            });
+            match receiver.recv_timeout(remaining) {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => eprintln!("Hook warning: {}", e),
+                Err(_) => std::process::exit(0),
             }
             Ok(())
         }
@@ -319,5 +348,30 @@ fn main() {
     if let Err(err_msg) = result {
         eprintln!("Error: {}", err_msg);
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod hook_deadline_tests {
+    use super::remaining_hook_budget;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn direct_hook_deadline_is_bounded_and_expires_without_waiting() {
+        assert_eq!(
+            remaining_hook_budget(Duration::ZERO),
+            Duration::from_millis(800)
+        );
+        assert_eq!(
+            remaining_hook_budget(Duration::from_millis(801)),
+            Duration::ZERO
+        );
+
+        let (_sender, receiver) = mpsc::sync_channel::<()>(1);
+        assert!(matches!(
+            receiver.recv_timeout(remaining_hook_budget(Duration::from_millis(800))),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
     }
 }

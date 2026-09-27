@@ -1,0 +1,56 @@
+[
+  {
+    "evidence_id": "opencode-read-macos-aarch64-20260926-success",
+    "observed_at": "2026-09-26T19:49:21Z",
+    "surface_id": "opencode",
+    "read_path_id": "opencode-read-display-text",
+    "canonical_agent": "opencode",
+    "rgt_version": "0.6.0",
+    "client_version": "1.18.32",
+    "platform": {"os": "macos", "architecture": "aarch64"},
+    "method": "native-client",
+    "registration_loaded": true,
+    "event": {
+      "phase": "post",
+      "tool": "read",
+      "outcome": "success",
+      "completion_evidence": "completed-result",
+      "content_evidence": "full-snapshot-match"
+    },
+    "host_response": {"format": "none", "accepted": true, "tool_result_unchanged": true},
+    "graph_result": {
+      "values": [
+        {"node_id": "node_raw_0de4b029d92d2b2ac78c700558b8ed3d", "kind": "number", "value": "314159", "source_line": 1},
+        {"node_id": "node_raw_c366873855668e51c0b935fdd506d7b7", "kind": "date", "value": "2026-09-26", "source_line": 2}
+      ],
+      "capture_agent": "opencode"
+    },
+    "source_reference": "Disposable native OpenCode project, sample.txt; local verification log in docs/compatibility/verification.md",
+    "notes": "Project plugin loaded from .opencode/plugins/rgt.ts. Source text had no final newline; tool output and metadata.display.text matched the source snapshot. The plugin returned no value and did not mutate the tool result. The free model reported cost 0.",
+    "redacted": true
+  },
+  {
+    "evidence_id": "opencode-read-macos-aarch64-20260926-noop",
+    "observed_at": "2026-09-26T19:49:24Z",
+    "surface_id": "opencode",
+    "read_path_id": "opencode-read-display-text",
+    "canonical_agent": "opencode",
+    "rgt_version": "0.6.0",
+    "client_version": "1.18.32",
+    "platform": {"os": "macos", "architecture": "aarch64"},
+    "method": "native-client",
+    "registration_loaded": true,
+    "event": {
+      "phase": "post",
+      "tool": "read",
+      "outcome": "no-op",
+      "completion_evidence": "completed-result",
+      "content_evidence": "full-snapshot-match"
+    },
+    "host_response": {"format": "none", "accepted": true, "tool_result_unchanged": true},
+    "graph_result": {"values": [], "capture_agent": null},
+    "source_reference": "Same disposable native OpenCode session, empty.txt without numeric or date values",
+    "notes": "The second read completed through the same callback; RGT retained two nodes from sample.txt and added none for empty.txt. The free model reported cost 0.",
+    "redacted": true
+  }
+]

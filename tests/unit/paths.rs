@@ -1,4 +1,7 @@
-use rgt::hooks::paths::{copilot_cli_config_dir_for, copilot_user_settings, vscode_user_settings};
+use rgt::hooks::paths::{
+    codex_hooks_json, copilot_cli_config_dir_for, copilot_user_settings, vscode_user_settings,
+    windsurf_legacy_workspace_hooks_json, windsurf_user_hooks_json, windsurf_workspace_hooks_json,
+};
 use std::path::PathBuf;
 
 #[test]
@@ -64,4 +67,34 @@ fn copilot_cli_config_dir_windows() {
     let path = copilot_cli_config_dir_for(&home, &config_dir, "windows");
     let expected = PathBuf::from(r"C:\Users\test\AppData\Roaming").join("github-copilot");
     assert_eq!(path, expected);
+}
+
+#[test]
+fn codex_hook_path_respects_user_and_project_scope() {
+    let home = PathBuf::from("/Users/test");
+    assert_eq!(
+        codex_hooks_json(&home, true),
+        PathBuf::from("/Users/test/.codex/hooks.json")
+    );
+    assert_eq!(
+        codex_hooks_json(&home, false),
+        PathBuf::from(".codex/hooks.json")
+    );
+}
+
+#[test]
+fn windsurf_paths_match_documented_active_locations() {
+    let home = PathBuf::from("/Users/test");
+    assert_eq!(
+        windsurf_user_hooks_json(&home),
+        PathBuf::from("/Users/test/.codeium/windsurf/hooks.json")
+    );
+    assert_eq!(
+        windsurf_workspace_hooks_json(),
+        PathBuf::from(".devin/hooks.json")
+    );
+    assert_eq!(
+        windsurf_legacy_workspace_hooks_json(),
+        PathBuf::from(".windsurf/hooks.json")
+    );
 }

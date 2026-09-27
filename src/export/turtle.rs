@@ -18,8 +18,9 @@ pub const MAX_EDGES: usize = 30_000;
 pub const MAX_TURTLE_BYTES: usize = 67_108_864;
 pub const IRI_BASE: &str = "https://github.com/rafael-bianchi/rgt/iri/v1/";
 pub const VOCAB: &str = "https://github.com/rafael-bianchi/rgt/vocab#";
-pub const CAPTURE_AGENTS: [&str; 8] = [
+pub const CAPTURE_AGENTS: [&str; 9] = [
     "claude-code",
+    "codex",
     "cursor",
     "copilot",
     "gemini",
