@@ -224,11 +224,13 @@ fn handle_pdf_capture(
         .unwrap_or(false);
 
     // Injection half is claude-code-only (FR-003/FR-004/FR-007).
+    // If a target file path was provided but snapshot verification or recording failed,
+    // suppress additionalContext injection so unverified content is not injected.
     if is_claude {
+        if path.is_some() && !recorded {
+            return Ok(());
+        }
         let context = render_additional_context(&extracted);
-        // A successfully-recorded or empty extraction still injects; only a
-        // genuinely failed decode/extract (handled above) skips the injection.
-        let _ = recorded;
         println!(
             "{}",
             serde_json::json!({
@@ -308,7 +310,13 @@ fn matching_file_snapshot(
         && before.file_size == after.file_size
         && before.dev == after.dev
         && before.ino == after.ino;
-    if !unchanged || current != expected_bytes || after.file_size != current.len() as u64 {
+    if !unchanged || after.file_size != current.len() as u64 {
+        return None;
+    }
+    let matches = current == expected_bytes
+        || (current.ends_with(b"\n") && &current[..current.len() - 1] == expected_bytes)
+        || (current.ends_with(b"\r\n") && &current[..current.len() - 2] == expected_bytes);
+    if !matches {
         return None;
     }
     let hash = compute_blake3_hash_from_bytes(&current);

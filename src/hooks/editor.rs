@@ -623,37 +623,66 @@ fn command_executable_and_args(command: &str) -> Option<(String, Vec<String>)> {
     }
 }
 
-fn shell_tokens(command: &str) -> Option<Vec<String>> {
+pub(crate) fn shell_tokens(command: &str) -> Option<Vec<String>> {
     let mut tokens = Vec::new();
     let mut token = String::new();
     let mut quote = None;
     let mut escaped = false;
     let mut started = false;
-    for character in command.chars() {
+    let chars: Vec<char> = command.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let character = chars[i];
         if escaped {
             token.push(character);
             escaped = false;
             started = true;
+            i += 1;
             continue;
         }
         match (quote, character) {
-            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
-            (Some('"'), '\\') => escaped = true,
-            (Some(_), _) => token.push(character),
-            (None, '\\') => escaped = true,
+            (Some('\''), '\'') | (Some('"'), '"') => {
+                quote = None;
+                i += 1;
+            }
+            (Some('"'), '\\') => {
+                escaped = true;
+                i += 1;
+            }
+            (Some(_), _) => {
+                token.push(character);
+                i += 1;
+            }
+            (None, '\\') => {
+                let next = chars.get(i + 1).copied();
+                if let Some(c) = next {
+                    if c.is_whitespace() || c == '\'' || c == '"' || c == '\\' {
+                        escaped = true;
+                    } else {
+                        token.push('\\');
+                        started = true;
+                    }
+                } else {
+                    return None;
+                }
+                i += 1;
+            }
             (None, '\'' | '"') => {
                 quote = Some(character);
                 started = true;
+                i += 1;
             }
             (None, value) if value.is_whitespace() => {
                 if started {
                     tokens.push(std::mem::take(&mut token));
                     started = false;
                 }
+                i += 1;
             }
             (None, value) => {
                 token.push(value);
                 started = true;
+                i += 1;
             }
         }
     }

@@ -282,4 +282,71 @@ mod tests {
             "passive hook must not create .rgt in uninitialized directory"
         );
     }
+
+    #[test]
+    fn opencode_captures_newline_terminated_file() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let dir = tempdir().unwrap();
+        assert!(Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args(["init", "--agent", "opencode"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap()
+            .status
+            .success());
+
+        let file_path = dir.path().join("numbers.txt");
+        // POSIX file with trailing newline
+        std::fs::write(&file_path, "total: 42\n").unwrap();
+
+        // OpenCode display text strips trailing newline
+        let path_str = file_path.to_string_lossy().to_string();
+        let payload = serde_json::json!({
+            "event": "tool.execute.after",
+            "tool": "read",
+            "args": {"filePath": path_str},
+            "result": {
+                "title": path_str,
+                "output": "<content>\n1: total: 42\n</content>",
+                "metadata": {
+                    "truncated": false,
+                    "display": {
+                        "type": "file",
+                        "path": path_str,
+                        "text": "total: 42",
+                        "lineStart": 1,
+                        "lineEnd": 1,
+                        "totalLines": 1,
+                        "truncated": false
+                    }
+                }
+            }
+        });
+
+        let mut child = Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args(["hook", "post", "--agent", "opencode"])
+            .current_dir(dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "hook must succeed");
+
+        let db = rgt::store::DbStore::open_in_project(dir.path()).unwrap();
+        let nodes = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
+        assert_eq!(nodes.len(), 1, "OpenCode should capture node from newline-terminated file");
+        assert_eq!(nodes[0].value.to_string_repr(), "42");
+    }
 }

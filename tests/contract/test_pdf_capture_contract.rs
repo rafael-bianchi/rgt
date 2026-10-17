@@ -247,7 +247,7 @@ mod tests {
             .args(["hook", "post", "--agent", "claude-code"])
             .current_dir(dir.path())
             .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
         child
@@ -258,6 +258,11 @@ mod tests {
             .unwrap();
         let output = child.wait_with_output().unwrap();
         assert!(output.status.success());
+        assert!(
+            output.stdout.is_empty(),
+            "changed disk snapshot must not emit additionalContext: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
         let db = rgt::store::DbStore::open_in_project(".").unwrap();
         assert!(rgt::store::queries::list_all_nodes(db.conn())
             .unwrap()

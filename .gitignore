@@ -40,3 +40,4 @@ specs/*
 !specs/045-store-staleness-and-schema-integrity/
 !specs/046-value-extraction-and-source-recording-hardening/
 !specs/047-verify-arithmetic-and-duration-hardening/
+!specs/048-harness-hook-payload-hardening/
