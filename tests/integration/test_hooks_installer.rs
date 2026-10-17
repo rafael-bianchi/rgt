@@ -115,7 +115,7 @@ mod tests {
             detect_and_configure_hooks_in_home(dir.path(), true, true, Some("codex")).unwrap();
         assert_eq!(configured(&report), vec!["codex".to_string()]);
 
-        let content = std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        let content = std::fs::read_to_string(dir.path().join(".codex").join("AGENTS.md")).unwrap();
         assert!(content.contains("## RGT Integration"));
         assert!(content.contains("rgt --help"));
         assert!(content.contains("<!-- /RGT Integration -->"));
@@ -138,7 +138,14 @@ mod tests {
             detect_and_configure_hooks_in_home(dir.path(), true, true, Some("windsurf")).unwrap();
         assert_eq!(configured(&report), vec!["windsurf".to_string()]);
 
-        let content = std::fs::read_to_string(dir.path().join(".windsurfrules")).unwrap();
+        let content = std::fs::read_to_string(
+            dir.path()
+                .join(".codeium")
+                .join("windsurf")
+                .join("memories")
+                .join("global_rules.md"),
+        )
+        .unwrap();
         assert!(content.contains("RGT Integration"));
         assert!(content.contains("rgt --help"));
         assert!(content.contains("<!-- /RGT Integration -->"));
@@ -167,7 +174,7 @@ mod tests {
         // Emulate the 4 existing agents as installed via their detection triggers.
         std::fs::create_dir_all(dir.path().join(".claude")).unwrap();
         std::fs::create_dir_all(dir.path().join(".cursor")).unwrap();
-        std::fs::write(dir.path().join("AGENTS.md"), "# Test\n").unwrap();
+        std::fs::create_dir_all(dir.path().join(".codex")).unwrap();
         std::fs::write(dir.path().join(".windsurfrules"), "# Test\n").unwrap();
         let config_dir = dir.path().join("config");
 
@@ -273,7 +280,7 @@ mod tests {
         let report = detect_and_configure_hooks_with_config(
             dir.path(),
             &config_dir,
-            true,
+            false,
             true,
             Some("codex"),
         )
@@ -307,7 +314,7 @@ mod tests {
         let report = detect_and_configure_hooks_with_config(
             dir.path(),
             &config_dir,
-            true,
+            false,
             true,
             Some("windsurf"),
         )
@@ -643,10 +650,14 @@ mod tests {
             let home = dir.path().join("home");
             let config = dir.path().join("config");
             let executable = std::env::current_exe().unwrap();
-            let rule = Path::new(".cursor/rules/rgt.mdc");
+            let rule = if global {
+                home.join(".cursor").join("rules").join("rgt.mdc")
+            } else {
+                dir.path().join(".cursor").join("rules").join("rgt.mdc")
+            };
             std::fs::create_dir_all(rule.parent().unwrap()).unwrap();
             let original = "---\r\ndescription: Team rule\r\nalwaysApply: false\r\n---\r\n# Keep this\r\n## RGT Integration\r\nOld `rgt record <file>` instructions.\r\n<!-- /RGT Integration -->\r\n# Keep below\r\n";
-            std::fs::write(rule, original).unwrap();
+            std::fs::write(&rule, original).unwrap();
 
             let report = detect_and_configure_hooks_with_config_and_exe(
                 &home,
@@ -658,12 +669,13 @@ mod tests {
             )
             .unwrap();
             assert_eq!(configured(&report), vec!["cursor".to_string()]);
-            let updated = std::fs::read_to_string(rule).unwrap();
+            let updated = std::fs::read_to_string(&rule).unwrap();
             assert!(updated.contains("alwaysApply: true\r\n---\r\n"));
             assert!(updated.contains("# Keep this\r\n"));
             assert!(updated.ends_with("# Keep below\r\n"));
+            let bak = rule.with_file_name("rgt.mdc.rgt.bak");
             assert_eq!(
-                std::fs::read_to_string(".cursor/rules/rgt.mdc.rgt.bak").unwrap(),
+                std::fs::read_to_string(bak).unwrap(),
                 original
             );
             let guidance = inspect_local_guidance(&home, &config)
@@ -685,7 +697,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(skipped(&rerun), vec!["cursor".to_string()]);
-            assert_eq!(std::fs::read_to_string(rule).unwrap(), updated);
+            assert_eq!(std::fs::read_to_string(&rule).unwrap(), updated);
         }
     }
 
@@ -701,12 +713,16 @@ mod tests {
                 let home = dir.path().join("home");
                 let config = dir.path().join("config");
                 let executable = std::env::current_exe().unwrap();
-                let rule = Path::new(".cursor/rules/rgt.mdc");
+                let rule = if global {
+                    home.join(".cursor").join("rules").join("rgt.mdc")
+                } else {
+                    dir.path().join(".cursor").join("rules").join("rgt.mdc")
+                };
                 std::fs::create_dir_all(rule.parent().unwrap()).unwrap();
                 let original = format!(
                     "---{newline}description: Team uses alwaysApply: false in examples{newline}alwaysApply: false{newline}---{newline}# Keep this{newline}## RGT Integration{newline}Old `rgt record <file>` instructions.{newline}<!-- /RGT Integration -->{newline}"
                 );
-                std::fs::write(rule, &original).unwrap();
+                std::fs::write(&rule, &original).unwrap();
 
                 let report = detect_and_configure_hooks_with_config_and_exe(
                     &home,
@@ -718,7 +734,7 @@ mod tests {
                 )
                 .unwrap();
                 assert_eq!(configured(&report), vec!["cursor".to_string()]);
-                let updated = std::fs::read_to_string(rule).unwrap();
+                let updated = std::fs::read_to_string(&rule).unwrap();
                 assert!(
                     updated.contains(&format!(
                         "description: Team uses alwaysApply: false in examples{newline}alwaysApply: true{newline}"
@@ -726,8 +742,9 @@ mod tests {
                     "{updated}"
                 );
                 assert!(updated.contains(&format!("# Keep this{newline}")));
+                let bak = rule.with_file_name("rgt.mdc.rgt.bak");
                 assert_eq!(
-                    std::fs::read_to_string(".cursor/rules/rgt.mdc.rgt.bak").unwrap(),
+                    std::fs::read_to_string(bak).unwrap(),
                     original
                 );
                 let guidance = inspect_local_guidance(&home, &config)
@@ -745,7 +762,7 @@ mod tests {
                 )
                 .unwrap();
                 assert_eq!(skipped(&rerun), vec!["cursor".to_string()]);
-                assert_eq!(std::fs::read_to_string(rule).unwrap(), updated);
+                assert_eq!(std::fs::read_to_string(&rule).unwrap(), updated);
             }
         }
     }
@@ -761,10 +778,14 @@ mod tests {
             let home = dir.path().join("home");
             let config = dir.path().join("config");
             let executable = std::env::current_exe().unwrap();
-            let rule = Path::new(".cursor/rules/rgt.mdc");
+            let rule = if global {
+                home.join(".cursor").join("rules").join("rgt.mdc")
+            } else {
+                dir.path().join(".cursor").join("rules").join("rgt.mdc")
+            };
             std::fs::create_dir_all(rule.parent().unwrap()).unwrap();
             let original = "---\nalwaysApply: true\nalwaysApply : false\n---\n## RGT Integration\nUse `rgt record <file>`.\n<!-- /RGT Integration -->\n";
-            std::fs::write(rule, original).unwrap();
+            std::fs::write(&rule, original).unwrap();
             rgt::store::DbStore::open_in_project(dir.path()).unwrap();
             let guidance = inspect_local_guidance(&home, &config)
                 .into_iter()
@@ -798,7 +819,7 @@ mod tests {
                 outcome,
                 AgentOutcome::Conflict { agent, .. } if agent == "cursor"
             )));
-            assert_eq!(std::fs::read_to_string(rule).unwrap(), original);
+            assert_eq!(std::fs::read_to_string(&rule).unwrap(), original);
             let hooks = if global {
                 home.join(".cursor/hooks.json")
             } else {
@@ -815,10 +836,10 @@ mod tests {
         let home = dir.path().join("home");
         let config = dir.path().join("config");
         let executable = std::env::current_exe().unwrap();
-        let rule = Path::new(".cursor/rules/rgt.mdc");
+        let rule = home.join(".cursor").join("rules").join("rgt.mdc");
         std::fs::create_dir_all(rule.parent().unwrap()).unwrap();
         let original = "## RGT Integration\nUse `rgt record <file>`.\n<!-- /RGT Integration -->\n";
-        std::fs::write(rule, original).unwrap();
+        std::fs::write(&rule, original).unwrap();
 
         let report = detect_and_configure_hooks_with_config_and_exe(
             &home,
@@ -833,7 +854,7 @@ mod tests {
             outcome,
             AgentOutcome::Conflict { agent, .. } if agent == "cursor"
         )));
-        assert_eq!(std::fs::read_to_string(rule).unwrap(), original);
+        assert_eq!(std::fs::read_to_string(&rule).unwrap(), original);
         assert!(!home.join(".cursor/hooks.json").exists());
     }
 

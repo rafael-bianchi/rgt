@@ -293,6 +293,11 @@ fn source_paths_are_relative_only_after_canonical_containment() {
         opted_in.absolute_path.as_deref(),
         Some(missing_path.to_string_lossy().as_ref())
     );
+    let missing_rel = source_location("missing_relative.csv", project.path(), false);
+    assert_eq!(
+        missing_rel.relative_path.as_deref(),
+        Some("missing_relative.csv")
+    );
 }
 
 #[cfg(unix)]

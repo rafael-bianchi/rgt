@@ -28,7 +28,7 @@ fn execute_status_with(
     db: &DbStore,
     cascade: &mut InvalidationCascade,
     invalidate: impl FnOnce(&mut InvalidationCascade, &DbStore) -> rusqlite::Result<usize>,
-    _stale_only: bool,
+    stale_only: bool,
     json_output: bool,
 ) -> Result<(), String> {
     // FR-004: propagate the staleness-check result instead of discarding it.
@@ -41,34 +41,69 @@ fn execute_status_with(
     let summary = build_status_summary(&all_nodes, &stale_nodes);
 
     if json_output {
+        let output = if stale_only {
+            json!({
+                "stale_nodes": summary["stale_nodes"],
+                "stale_details": summary["stale_details"],
+            })
+        } else {
+            summary
+        };
         println!(
             "{}",
-            serde_json::to_string_pretty(&summary).unwrap_or_default()
+            serde_json::to_string_pretty(&output).unwrap_or_default()
         );
     } else {
-        println!("=== RGT Provenance Graph Status ===");
-        println!("Total Nodes:  {}", summary["total_nodes"]);
-        println!("Active Nodes: {}", summary["active_nodes"]);
-        println!("Stale Nodes:  {}", summary["stale_nodes"]);
-        println!();
+        print!("{}", format_status_text(&summary, &stale_nodes, stale_only));
+    }
 
+    Ok(())
+}
+
+/// Formats the human-readable status report as a String.
+pub fn format_status_text(
+    summary: &serde_json::Value,
+    stale_nodes: &[crate::types::TrackedNode],
+    stale_only: bool,
+) -> String {
+    let mut out = String::new();
+    if stale_only {
         if stale_nodes.is_empty() {
-            println!("✓ All tracked values are fresh and valid.");
+            out.push_str("✓ No stale nodes found.\n");
         } else {
-            println!("⚠️  Stale Nodes Found:");
-            for n in &stale_nodes {
-                println!(
-                    "  - [{}] Kind: {} | Value: {} | Reason: {}",
+            out.push_str(&format!("⚠️  Stale Nodes Found ({}):\n", stale_nodes.len()));
+            for n in stale_nodes {
+                out.push_str(&format!(
+                    "  - [{}] Kind: {} | Value: {} | Reason: {}\n",
                     n.id,
                     n.value_kind,
                     n.value.to_string_repr(),
                     n.stale_reason.as_deref().unwrap_or("UNKNOWN")
-                );
+                ));
+            }
+        }
+    } else {
+        out.push_str("=== RGT Provenance Graph Status ===\n");
+        out.push_str(&format!("Total Nodes:  {}\n", summary["total_nodes"]));
+        out.push_str(&format!("Active Nodes: {}\n", summary["active_nodes"]));
+        out.push_str(&format!("Stale Nodes:  {}\n\n", summary["stale_nodes"]));
+
+        if stale_nodes.is_empty() {
+            out.push_str("✓ All tracked values are fresh and valid.\n");
+        } else {
+            out.push_str("⚠️  Stale Nodes Found:\n");
+            for n in stale_nodes {
+                out.push_str(&format!(
+                    "  - [{}] Kind: {} | Value: {} | Reason: {}\n",
+                    n.id,
+                    n.value_kind,
+                    n.value.to_string_repr(),
+                    n.stale_reason.as_deref().unwrap_or("UNKNOWN")
+                ));
             }
         }
     }
-
-    Ok(())
+    out
 }
 
 /// Builds the graph-state summary JSON (spec 041 FR-004): returned as a value so
@@ -139,5 +174,43 @@ mod tests {
             false,
         );
         assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn format_status_text_stale_only_empty_and_populated() {
+        use crate::types::{NodeType, TrackedNode, ValueData};
+        use chrono::Utc;
+
+        let empty_summary = serde_json::json!({
+            "total_nodes": 5,
+            "active_nodes": 5,
+            "stale_nodes": 0,
+            "stale_details": [],
+        });
+        let empty_out = format_status_text(&empty_summary, &[], true);
+        assert_eq!(empty_out, "✓ No stale nodes found.\n");
+
+        let stale_node = TrackedNode {
+            id: "stale_1".to_string(),
+            node_type: NodeType::Root,
+            value_kind: ValueData::Number(42.0).kind(),
+            value: ValueData::Number(42.0),
+            source_doc_id: None,
+            line_number: Some(10),
+            is_stale: true,
+            stale_reason: Some("FILE_MODIFIED".to_string()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let pop_summary = serde_json::json!({
+            "total_nodes": 5,
+            "active_nodes": 4,
+            "stale_nodes": 1,
+            "stale_details": [{ "node_id": "stale_1" }],
+        });
+        let pop_out = format_status_text(&pop_summary, &[stale_node], true);
+        assert!(!pop_out.contains("=== RGT Provenance Graph Status ==="));
+        assert!(pop_out.contains("⚠️  Stale Nodes Found (1):"));
+        assert!(pop_out.contains("[stale_1] Kind: NUMBER | Value: 42 | Reason: FILE_MODIFIED"));
     }
 }

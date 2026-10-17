@@ -65,14 +65,27 @@ fn project_triggers_detected() {
 }
 
 #[test]
-fn copilot_detected_via_config_dir_settings() {
+fn copilot_detected_via_config_dir_settings_only_if_copilot_present() {
     let dir = tempdir().unwrap();
     let _guard = set_cwd(dir.path());
     let config_dir = dir.path().join("config");
-    write(&config_dir.join("Code").join("User").join("settings.json"));
+    let settings = config_dir.join("Code").join("User").join("settings.json");
 
+    // Bare VS Code settings without Copilot should NOT detect copilot
+    write(&settings);
     let detected = detect_installed_agents(dir.path(), &config_dir);
-    assert!(detected.contains(&"copilot".to_string()));
+    assert!(
+        !detected.contains(&"copilot".to_string()),
+        "bare VS Code settings must not trigger copilot detection"
+    );
+
+    // Settings mentioning github.copilot SHOULD detect copilot
+    std::fs::write(&settings, r#"{"github.copilot.chat.hooks": {}}"#).unwrap();
+    let detected = detect_installed_agents(dir.path(), &config_dir);
+    assert!(
+        detected.contains(&"copilot".to_string()),
+        "settings with github.copilot must detect copilot"
+    );
 }
 
 #[test]
@@ -87,17 +100,55 @@ fn copilot_detected_via_cli_config_dir() {
 }
 
 #[test]
-fn agent_config_dir_contains_windsurf_and_codex() {
+fn codex_not_detected_via_bare_agents_md() {
     let dir = tempdir().unwrap();
     let _guard = set_cwd(dir.path());
     let config_dir = dir.path().join("config");
     let cwd = dir.path();
 
+    // Bare AGENTS.md must NOT detect codex
     write(&cwd.join("AGENTS.md"));
-    write(&cwd.join(".windsurfrules"));
+    let detected = detect_installed_agents(dir.path(), &config_dir);
+    assert!(
+        !detected.contains(&"codex".to_string()),
+        "bare AGENTS.md must not trigger codex detection"
+    );
 
+    // .codex directory MUST detect codex
+    write(&cwd.join(".codex").join("hooks.json"));
     let detected = detect_installed_agents(dir.path(), &config_dir);
     assert!(detected.contains(&"codex".to_string()));
+}
+
+#[test]
+fn antigravity_not_detected_via_bare_agents_skills() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let config_dir = dir.path().join("config");
+    let cwd = dir.path();
+
+    // Bare .agents/skills should NOT trigger antigravity
+    write(&cwd.join(".agents").join("skills").join("my-skill").join("SKILL.md"));
+    let detected = detect_installed_agents(dir.path(), &config_dir);
+    assert!(
+        !detected.contains(&"antigravity".to_string()),
+        "bare .agents/skills must not trigger antigravity detection"
+    );
+
+    // .agents/rules or antigravity-cli in home SHOULD trigger antigravity
+    write(&dir.path().join(".gemini").join("antigravity-cli").join("config.json"));
+    let detected = detect_installed_agents(dir.path(), &config_dir);
+    assert!(detected.contains(&"antigravity".to_string()));
+}
+
+#[test]
+fn windsurf_detected_via_codeium_dir() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let config_dir = dir.path().join("config");
+
+    write(&dir.path().join(".codeium").join("windsurf").join("hooks.json"));
+    let detected = detect_installed_agents(dir.path(), &config_dir);
     assert!(detected.contains(&"windsurf".to_string()));
 }
 

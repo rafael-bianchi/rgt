@@ -861,4 +861,68 @@ mod tests {
             "{stdout}"
         );
     }
+
+    #[test]
+    fn project_and_user_registrations_coexist_without_ambiguity() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        let home = dir.path().join("home");
+        let config_dir = dir.path().join("config");
+        let executable = std::env::current_exe().unwrap();
+        DbStore::open_in_project(dir.path()).unwrap();
+
+        // 1. Install global (user) hook for claude-code
+        rgt::hooks::installer::detect_and_configure_hooks_with_config_and_exe(
+            &home,
+            &config_dir,
+            true,
+            false,
+            Some("claude-code"),
+            &executable,
+        )
+        .unwrap();
+
+        // 2. Install project hook for claude-code
+        rgt::hooks::installer::detect_and_configure_hooks_with_config_and_exe(
+            &home,
+            &config_dir,
+            false,
+            false,
+            Some("claude-code"),
+            &executable,
+        )
+        .unwrap();
+
+        // 3. Inspect registrations: project scope must take precedence and be Active
+        let registrations =
+            rgt::hooks::registration::inspect_local_registrations(&home, &config_dir);
+        let claude = registrations
+            .iter()
+            .find(|r| r.surface_id == "claude-code")
+            .unwrap();
+        assert_eq!(
+            claude.health,
+            rgt::hooks::registration::RegistrationHealth::Active,
+            "layered project + user registrations must be Active, not Ambiguous"
+        );
+        assert_eq!(
+            claude.scope,
+            rgt::hooks::registration::RegistrationScope::Project
+        );
+
+        // 4. CLI rgt doctor must exit 0
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .arg("doctor")
+            .current_dir(dir.path())
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", &config_dir)
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "doctor must exit 0 with layered project and user registrations, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

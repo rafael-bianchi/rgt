@@ -1,18 +1,10 @@
-mod cli;
-mod detection;
-mod export;
-mod extract;
-mod graph;
-mod hooks;
-mod mcp;
-mod query;
-mod store;
-mod types;
-mod updater;
-mod verify;
-
-use crate::hooks::parser::NumberFormat;
 use clap::{Parser, Subcommand};
+use rgt::cli;
+use rgt::hooks;
+use rgt::hooks::parser::NumberFormat;
+use rgt::mcp;
+use rgt::query::QueryError;
+use rgt::verify;
 
 #[derive(Parser)]
 #[command(name = "rgt")]
@@ -219,7 +211,7 @@ fn main() {
     let process_started = std::time::Instant::now();
     // Reserve time for process-launch and scheduling overhead so a blocked
     // stdout write remains observable as a sub-second CLI failure.
-    let command_deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
+    let command_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     let cli = Cli::parse();
 
     let result = match cli.command {
@@ -255,11 +247,11 @@ fn main() {
             };
             match query_result {
                 Ok(()) => Ok(()),
-                Err(crate::query::QueryError::InvalidInput(message)) => {
+                Err(QueryError::InvalidInput(message)) => {
                     eprintln!("Error: {message}");
                     std::process::exit(2);
                 }
-                Err(crate::query::QueryError::Error(message)) => Err(message),
+                Err(QueryError::Error(message)) => Err(message),
             }
         }
         Commands::Graph {
@@ -332,7 +324,7 @@ fn main() {
             result,
             result_unit,
         } => {
-            crate::verify::run_verify_cli(
+            verify::run_verify_cli(
                 &parents,
                 &operation,
                 expression.as_deref(),

@@ -101,6 +101,16 @@ pub fn render_lineage_text(result: &Value) -> String {
                 display["unit"].as_str().unwrap_or("?")
             ));
         }
+        if let Some(secs) = step.get("duration_seconds") {
+            let secs_str = if let Some(s) = secs.as_str() {
+                s.to_string()
+            } else if let Some(n) = secs.as_i64() {
+                n.to_string()
+            } else {
+                secs.to_string()
+            };
+            out.push_str(&format!("  duration_seconds: {}\n", secs_str));
+        }
         let line = step["line_number"].as_u64();
         out.push_str(&format!(
             "  line:   {}\n",
@@ -128,4 +138,42 @@ pub fn render_lineage_text(result: &Value) -> String {
 
     out.pop(); // drop the trailing blank line
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn render_lineage_text_renders_duration_seconds() {
+        let sample = json!({
+            "node_id": "node_drv_123",
+            "is_stale": false,
+            "total_ancestors": 2,
+            "lineage_steps": [
+                {
+                    "node_id": "node_drv_123",
+                    "node_type": "Derived",
+                    "value": "1d",
+                    "value_kind": "DURATION",
+                    "is_stale": false,
+                    "stale_reason": null,
+                    "parent_ids": ["root_1", "root_2"],
+                    "line_number": null,
+                    "duration_seconds": "86400",
+                    "selected_unit_display": {
+                        "unit": "days",
+                        "decimal": "1",
+                        "approximate": false,
+                        "text": "1 day"
+                    }
+                }
+            ]
+        });
+
+        let rendered = render_lineage_text(&sample);
+        assert!(rendered.contains("display: 1 day (days)"));
+        assert!(rendered.contains("duration_seconds: 86400"));
+    }
 }

@@ -483,15 +483,18 @@ fn configure(
     configure_agent!("cursor", write_cursor(home, global, force, rgt_path));
     configure_agent!("codex", write_codex(home, global, force, rgt_path));
     configure_agent!("windsurf", write_windsurf(home, global, force, rgt_path));
-    configure_agent!("copilot", write_copilot(home, config_dir, force, rgt_path));
+    configure_agent!(
+        "copilot",
+        write_copilot(home, config_dir, global, force, rgt_path)
+    );
     configure_agent!("gemini", write_gemini(home, global, force, rgt_path));
     configure_agent!("vibe", write_vibe(home, global, force, rgt_path));
     configure_agent!("opencode", write_opencode(home, global, force, rgt_path));
     configure_agent!("pi", write_pi(home, global, force, rgt_path));
     configure_agent!("hermes", write_hermes(home, global, force, rgt_path));
-    configure_agent!("cline", write_cline(force));
-    configure_agent!("antigravity", write_antigravity(force));
-    configure_agent!("kilocode", write_kilocode(force));
+    configure_agent!("cline", write_cline(home, global, force));
+    configure_agent!("antigravity", write_antigravity(home, global, force));
+    configure_agent!("kilocode", write_kilocode(home, global, force));
 
     Ok(InstallReport { outcomes })
 }
@@ -514,6 +517,7 @@ fn with_path(path: &Path, mut e: ConfigEditError) -> ConfigEditError {
 fn ensure_json_hooks(
     path: &Path,
     desired: &serde_json::Value,
+    force: bool,
 ) -> Result<WriteOutcome, ConfigEditError> {
     let text = editor::read_config(path)?;
     if text.trim().is_empty() {
@@ -532,7 +536,7 @@ fn ensure_json_hooks(
         .any(|command| editor::is_rgt_command(command));
     let (edited, changed) =
         editor::jsonc_merge_hook_entries(&text, desired).map_err(|e| with_path(path, e))?;
-    if !changed {
+    if !changed && !force {
         return Ok(WriteOutcome::already_current(path));
     }
     let backup = existing_backup_path(path);
@@ -546,14 +550,14 @@ fn ensure_json_hooks(
 
 /// Runs a TOML edit closure against the config at `path`, writing with a backup
 /// when anything changed (FR-004).
-fn ensure_toml<F>(path: &Path, edit: F) -> Result<WriteOutcome, ConfigEditError>
+fn ensure_toml<F>(path: &Path, force: bool, edit: F) -> Result<WriteOutcome, ConfigEditError>
 where
     F: FnOnce(&str) -> Result<(String, bool), ConfigEditError>,
 {
     let text = editor::read_config(path)?;
     let had_rgt_command = text.contains("rgt hook");
     let (edited, changed) = edit(&text).map_err(|e| with_path(path, e))?;
-    if !changed {
+    if !changed && !force {
         return Ok(WriteOutcome::already_current(path));
     }
     let backup = existing_backup_path(path);
@@ -574,7 +578,7 @@ fn ensure_text_block(
     open_marker: &str,
     end_marker: &str,
     block: &str,
-    _force: bool,
+    force: bool,
 ) -> Result<WriteOutcome, ConfigEditError> {
     let text = editor::read_config(path)?;
     let had_rgt_block = text
@@ -582,7 +586,7 @@ fn ensure_text_block(
         .any(|line| line.trim_start().starts_with(open_marker));
     let (edited, changed) = editor::text_replace_block(&text, open_marker, end_marker, block)
         .map_err(|e| with_path(path, e))?;
-    if !changed {
+    if !changed && !force {
         return Ok(WriteOutcome::already_current(path));
     }
     let backup = existing_backup_path(path);
@@ -637,7 +641,7 @@ fn write_claude_code(
             "PreToolUse": [ { "matcher": "Read|Edit|Write|Bash", "hooks": [{ "type": "command", "command": direct_hook_command(rgt_path, "pre", "claude-code") }] } ],
         }
     });
-    let outcome = ensure_json_hooks(&settings_file, &desired)?;
+    let outcome = ensure_json_hooks(&settings_file, &desired, force)?;
 
     // FR-003: write a CLAUDE.md instructions block so Claude Code agents get
     // the non-text-source reporting guidance (project CLAUDE.md, or
@@ -673,7 +677,7 @@ fn write_claude_code(
 fn write_cursor(
     home: &Path,
     global: bool,
-    _force: bool,
+    force: bool,
     rgt_path: &Path,
 ) -> Result<WriteOutcome, ConfigEditError> {
     let cursor_dir = if global {
@@ -690,9 +694,9 @@ fn write_cursor(
             "postToolUse": [ { "command": direct_hook_command(rgt_path, "post", "cursor"), "matcher": "Shell" } ],
         }
     });
-    // Project rules are the documented loadable Cursor guidance location.
+    // Rules location depends on scope.
     // A dedicated filename avoids editing other Cursor rules.
-    let rules_file = PathBuf::from(".cursor/rules/rgt.mdc");
+    let rules_file = crate::hooks::paths::cursor_guidance_path(home, global);
     let existing = editor::read_config(&rules_file)?;
     if !existing.is_empty()
         && (!existing.contains(glue::RGT_MARKER) || !existing.contains(glue::RGT_END_MARKER))
@@ -709,7 +713,7 @@ fn write_cursor(
     } else {
         Some(repair_cursor_frontmatter(&existing, &rules_file)?)
     };
-    let hooks = ensure_json_hooks(&cursor_hooks_file, &desired)?;
+    let hooks = ensure_json_hooks(&cursor_hooks_file, &desired, force)?;
     let guidance = if existing.is_empty() {
         editor::write_config(
             &rules_file,
@@ -727,7 +731,7 @@ fn write_cursor(
             &glue::with_instruction(&codex_section()),
         )
         .map_err(|error| with_path(&rules_file, error))?;
-        if edited == existing && !body_changed {
+        if edited == existing && !body_changed && !force {
             WriteOutcome::already_current(&rules_file)
         } else {
             let backup = existing_backup_path(&rules_file);
@@ -807,9 +811,9 @@ fn write_codex(
             }]
         }
     });
-    let hook_outcome = ensure_json_hooks(&hooks_file, &desired_hooks)?;
+    let hook_outcome = ensure_json_hooks(&hooks_file, &desired_hooks, force)?;
 
-    let agents_file = PathBuf::from("AGENTS.md");
+    let agents_file = crate::hooks::paths::codex_guidance_path(home, global);
     let block = glue::with_instruction(&codex_section());
 
     let text = editor::read_config(&agents_file)?;
@@ -866,9 +870,9 @@ fn write_windsurf(
             }]
         }
     });
-    let hook_outcome = ensure_json_hooks(&hooks_file, &desired_hooks)?;
+    let hook_outcome = ensure_json_hooks(&hooks_file, &desired_hooks, force)?;
 
-    let rules_file = PathBuf::from(".windsurfrules");
+    let rules_file = crate::hooks::paths::windsurf_guidance_path(home, global);
     let base = "# RGT Integration\nRGT tracks numeric and date provenance for AI coding agents.\nAfter reading data files, record extracted values with `rgt record <file>` (add `--number-format <us|eu|auto>` when the file's `.`/`,` separators need a specific locale; the default is the project's persisted setting, then `auto`).\nAfter computing derived values, record them with `rgt derive --parents <ids> --operation EXPRESSION --expression \"a - b\" --result <val>`.\nDerivations are verified before recording; wrong results are rejected.\nFor dates use `--operation DATE_DIFF [--unit days]` (parents `<date1>,<date2>`); for durations use `--operation DURATION_SUM|DURATION_AVG`.\nUse `rgt status` to check provenance graph state, `rgt graph --format ttl` to export PROV-O Turtle, `rgt gc [--vacuum]` to remove obsolete (stale, dependent-free) nodes, and `rgt doctor` to diagnose hook installation and capture health.\nRun `rgt --help` for all available commands.\n";
     let rules_content = glue::with_instruction(base);
     let rules_outcome = ensure_text_block(
@@ -893,16 +897,15 @@ fn write_windsurf(
 fn write_copilot(
     home: &Path,
     config_dir: &Path,
+    global: bool,
     force: bool,
     rgt_path: &Path,
 ) -> Result<WriteOutcome, ConfigEditError> {
-    let settings_file = crate::hooks::paths::copilot_user_settings(config_dir);
     let desired = json!({
         "github.copilot.chat.hooks": {
             "PostToolUse": [ { "matcher": ".*", "hooks": [{ "type": "command", "command": direct_hook_command(rgt_path, "post", "copilot") }] } ],
         }
     });
-    let chat = ensure_json_hooks(&settings_file, &desired)?;
 
     let cli_rules_file =
         crate::hooks::paths::copilot_cli_config_dir(home, config_dir).join("AGENTS.md");
@@ -914,30 +917,36 @@ fn write_copilot(
         force,
     )?;
 
-    let chat_rules_file = PathBuf::from(".github/copilot-instructions.md");
-    let chat_rules = ensure_text_block(
-        &chat_rules_file,
-        glue::RGT_MARKER,
-        glue::RGT_END_MARKER,
-        &glue::with_instruction(&codex_section()),
-        force,
-    )?;
+    if global {
+        let settings_file = crate::hooks::paths::copilot_user_settings(config_dir);
+        let chat = ensure_json_hooks(&settings_file, &desired, force)?;
+        Ok(WriteOutcome::combine(&settings_file, [chat, cli]))
+    } else {
+        let settings_file = crate::hooks::paths::vscode_project_settings();
+        let chat = ensure_json_hooks(&settings_file, &desired, force)?;
 
-    Ok(WriteOutcome::combine(
-        &settings_file,
-        [chat, cli, chat_rules],
-    ))
+        let chat_rules_file = crate::hooks::paths::copilot_project_guidance_path();
+        let chat_rules = ensure_text_block(
+            &chat_rules_file,
+            glue::RGT_MARKER,
+            glue::RGT_END_MARKER,
+            &glue::with_instruction(&codex_section()),
+            force,
+        )?;
+
+        Ok(WriteOutcome::combine(&settings_file, [chat, cli, chat_rules]))
+    }
 }
 
-/// Gemini CLI: `~/.gemini/hooks.toml` PostToolUse entry.
+/// Gemini CLI: hooks.toml PostToolUse entry.
 fn write_gemini(
     home: &Path,
     global: bool,
     force: bool,
     rgt_path: &Path,
 ) -> Result<WriteOutcome, ConfigEditError> {
-    let hooks_file = home.join(".gemini").join("hooks.toml");
-    let hooks = ensure_toml(&hooks_file, |t| {
+    let hooks_file = crate::hooks::paths::gemini_hooks_toml(home, global);
+    let hooks = ensure_toml(&hooks_file, force, |t| {
         editor::toml_ensure_table_entry(
             t,
             &["PostToolUse"],
@@ -968,8 +977,8 @@ fn write_vibe(
     force: bool,
     rgt_path: &Path,
 ) -> Result<WriteOutcome, ConfigEditError> {
-    let hooks_file = home.join(".vibe").join("hooks.toml");
-    let hooks = ensure_toml(&hooks_file, |t| {
+    let hooks_file = crate::hooks::paths::vibe_hooks_toml(home, global);
+    let hooks = ensure_toml(&hooks_file, force, |t| {
         editor::toml_ensure_vibe_pre_tool(t, &direct_hook_command(rgt_path, "pre", "vibe"))
     })?;
 
@@ -995,12 +1004,17 @@ fn write_plugin_file(
     path: &Path,
     content: &str,
     agent: &str,
-    _force: bool,
+    force: bool,
 ) -> Result<WriteOutcome, ConfigEditError> {
     if path.exists() {
         let existing = editor::read_config(path)?;
         if existing == content {
-            return Ok(WriteOutcome::already_current(path));
+            if !force {
+                return Ok(WriteOutcome::already_current(path));
+            }
+            let backup = existing_backup_path(path);
+            editor::write_config_with_backup(path, content)?;
+            return Ok(WriteOutcome::configured(path, backup));
         }
         if !is_rgt_owned_plugin(&existing, agent) {
             return Err(ConfigEditError::new(
@@ -1126,7 +1140,7 @@ fn write_hermes(
     } else {
         PathBuf::from(".hermes").join("config.toml")
     };
-    let config = ensure_toml(&config_file, |t| {
+    let config = ensure_toml(&config_file, force, |t| {
         editor::toml_ensure_array_value(t, &["plugins", "enabled"], "rgt")
     })?;
 
@@ -1150,8 +1164,8 @@ fn write_hermes(
 // ---------------------------------------------------------------------------
 
 /// Cline / Roo Code: append RGT section to `.clinerules`.
-fn write_cline(force: bool) -> Result<WriteOutcome, ConfigEditError> {
-    let rules_file = PathBuf::from(".clinerules");
+fn write_cline(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, ConfigEditError> {
+    let rules_file = crate::hooks::paths::cline_guidance_path(home, global);
     ensure_text_block(
         &rules_file,
         glue::RGT_MARKER,
@@ -1162,10 +1176,8 @@ fn write_cline(force: bool) -> Result<WriteOutcome, ConfigEditError> {
 }
 
 /// Antigravity: rules file under `.agents/rules/`.
-fn write_antigravity(force: bool) -> Result<WriteOutcome, ConfigEditError> {
-    let rules_file = PathBuf::from(".agents")
-        .join("rules")
-        .join("antigravity-rgt-rules.md");
+fn write_antigravity(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, ConfigEditError> {
+    let rules_file = crate::hooks::paths::antigravity_guidance_path(home, global);
     ensure_text_block(
         &rules_file,
         "# RGT Integration",
@@ -1176,10 +1188,8 @@ fn write_antigravity(force: bool) -> Result<WriteOutcome, ConfigEditError> {
 }
 
 /// Kilo: rules file under `.kilocode/rules/`.
-fn write_kilocode(force: bool) -> Result<WriteOutcome, ConfigEditError> {
-    let rules_file = PathBuf::from(".kilocode")
-        .join("rules")
-        .join("rgt-rules.md");
+fn write_kilocode(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, ConfigEditError> {
+    let rules_file = crate::hooks::paths::kilocode_guidance_path(home, global);
     ensure_text_block(
         &rules_file,
         "# RGT Integration",
@@ -1204,41 +1214,54 @@ pub fn detect_installed_agents(home: &Path, config_dir: &Path) -> Vec<String> {
 
     for def in AGENTS {
         let trigger_home = match def.canonical {
-            "claude-code" => home_dir(".claude"),
-            "cursor" => home_dir(".cursor"),
-            "codex" => home_dir(".codex"),
-            "windsurf" => home_dir(".windsurf"),
-            "copilot" => crate::hooks::paths::copilot_user_settings(config_dir),
-            "gemini" => home_dir(".gemini"),
-            "vibe" => home_dir(".vibe"),
-            "opencode" => home_dir(".config").join("opencode"),
-            "pi" => home_dir(".pi"),
-            "hermes" => home_dir(".hermes"),
-            "cline" => home_dir(".cline"),
-            "antigravity" => home_dir(".agents"),
-            "kilocode" => home_dir(".kilocode"),
-            _ => home_dir(""),
+            "claude-code" => home_dir(".claude").exists(),
+            "cursor" => home_dir(".cursor").exists(),
+            "codex" => home_dir(".codex").exists(),
+            "windsurf" => {
+                home_dir(".windsurf").exists()
+                    || home.join(".codeium").join("windsurf").exists()
+            }
+            "copilot" => false,
+            "gemini" => home_dir(".gemini").exists(),
+            "vibe" => home_dir(".vibe").exists(),
+            "opencode" => home_dir(".config").join("opencode").exists(),
+            "pi" => home_dir(".pi").exists(),
+            "hermes" => home_dir(".hermes").exists(),
+            "cline" => home_dir(".cline").exists(),
+            "antigravity" => {
+                home_dir(".agents").join("rules").exists()
+                    || home.join(".gemini").join("antigravity-cli").exists()
+            }
+            "kilocode" => home_dir(".kilocode").exists(),
+            _ => false,
         };
         let trigger_project = match def.canonical {
-            "claude-code" => project(".claude"),
-            "cursor" => project(".cursor"),
-            "codex" => project("AGENTS.md"),
-            "windsurf" => project(".windsurfrules"),
-            "opencode" => project(".opencode"),
-            "pi" => project(".pi"),
-            "hermes" => project(".hermes"),
-            "cline" => project(".clinerules"),
-            "antigravity" => project(".agents"),
-            "kilocode" => project(".kilocode"),
-            _ => project(""),
+            "claude-code" => project(".claude").exists(),
+            "cursor" => project(".cursor").exists(),
+            "codex" => project(".codex").exists(),
+            "windsurf" => project(".windsurfrules").exists(),
+            "copilot" => project(".github").join("copilot-instructions.md").exists(),
+            "gemini" => project(".gemini").exists(),
+            "vibe" => project(".vibe").exists(),
+            "opencode" => project(".opencode").exists(),
+            "pi" => project(".pi").exists(),
+            "hermes" => project(".hermes").exists(),
+            "cline" => project(".clinerules").exists(),
+            "antigravity" => project(".agents").join("rules").exists(),
+            "kilocode" => project(".kilocode").exists(),
+            _ => false,
         };
 
-        let mut present = trigger_home.exists() || trigger_project.exists();
-        // Copilot is installed if either VS Code Chat or the Copilot CLI
-        // config directory exists (T010: detect both surfaces).
+        let mut present = trigger_home || trigger_project;
         if def.canonical == "copilot" {
-            present =
-                present || crate::hooks::paths::copilot_cli_config_dir(home, config_dir).exists();
+            let user_settings = crate::hooks::paths::copilot_user_settings(config_dir);
+            let has_copilot_setting = user_settings.exists()
+                && std::fs::read_to_string(&user_settings)
+                    .map(|s| s.contains("github.copilot"))
+                    .unwrap_or(false);
+            present = present
+                || crate::hooks::paths::copilot_cli_config_dir(home, config_dir).exists()
+                || has_copilot_setting;
         }
         if present {
             detected.push(def.canonical.to_string());

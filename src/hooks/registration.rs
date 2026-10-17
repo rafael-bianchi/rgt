@@ -457,7 +457,10 @@ fn guidance_candidates(
     let user = |path: PathBuf| (path, User);
     match surface_id {
         "claude-code" => vec![project("CLAUDE.md"), user(home.join(".claude/CLAUDE.md"))],
-        "cursor" => vec![project(".cursor/rules/rgt.mdc")],
+        "cursor" => vec![
+            project(".cursor/rules/rgt.mdc"),
+            user(home.join(".cursor/rules/rgt.mdc")),
+        ],
         "copilot-chat" => vec![project(".github/copilot-instructions.md")],
         "copilot-cli" => vec![user(
             crate::hooks::paths::copilot_cli_config_dir(home, config_dir).join("AGENTS.md"),
@@ -469,11 +472,23 @@ fn guidance_candidates(
             user(crate::hooks::paths::pi_guidance_path(home, true)),
         ],
         "hermes" => vec![(crate::hooks::paths::hermes_guidance_path(), Project)],
-        "codex" => vec![project("AGENTS.md")],
-        "windsurf" => vec![project(".windsurfrules")],
-        "cline" | "roo-code" => vec![project(".clinerules")],
-        "antigravity" => vec![project(".agents/rules/antigravity-rgt-rules.md")],
-        "kilocode" => vec![project(".kilocode/rules/rgt-rules.md")],
+        "codex" => vec![project("AGENTS.md"), user(home.join(".codex/AGENTS.md"))],
+        "windsurf" => vec![
+            project(".windsurfrules"),
+            user(home.join(".codeium/windsurf/memories/global_rules.md")),
+        ],
+        "cline" | "roo-code" => vec![
+            project(".clinerules"),
+            user(home.join(".cline/rules/rgt.md")),
+        ],
+        "antigravity" => vec![
+            project(".agents/rules/antigravity-rgt-rules.md"),
+            user(home.join(".agents/rules/antigravity-rgt-rules.md")),
+        ],
+        "kilocode" => vec![
+            project(".kilocode/rules/rgt-rules.md"),
+            user(home.join(".kilocode/rules/rgt-rules.md")),
+        ],
         _ => Vec::new(),
     }
 }
@@ -511,20 +526,37 @@ fn inspect_surface(
         }
     }
 
-    if matched.len() > 1 {
-        let (path, scope, _, _, _) = matched.remove(0);
+    // When both project and user configurations exist, project configuration
+    // takes precedence over user configuration in layered setups.
+    let (project_matched, user_matched): (Vec<_>, Vec<_>) = matched
+        .into_iter()
+        .partition(|(_, scope, _, _, _)| *scope == RegistrationScope::Project);
+
+    let mut effective_matches = if !project_matched.is_empty() {
+        if let Some((_, scope)) = &malformed {
+            if *scope == RegistrationScope::User {
+                malformed = None;
+            }
+        }
+        project_matched
+    } else {
+        user_matched
+    };
+
+    if effective_matches.len() > 1 {
+        let (path, scope, _, _, _) = effective_matches.remove(0);
         let mut registration = surface.local_registration(path, scope, true, Ownership::Ambiguous);
         registration.health = RegistrationHealth::Ambiguous;
         return registration;
     }
-    if !matched.is_empty() && malformed.is_some() {
-        let (path, scope, _, _, phases) = matched.remove(0);
+    if !effective_matches.is_empty() && malformed.is_some() {
+        let (path, scope, _, _, phases) = effective_matches.remove(0);
         let mut registration = surface.local_registration(path, scope, true, Ownership::Ambiguous);
         registration.health = RegistrationHealth::Ambiguous;
         registration.event_phases = phases;
         return registration;
     }
-    if let Some((path, scope, health, ownership, phases)) = matched.pop() {
+    if let Some((path, scope, health, ownership, phases)) = effective_matches.pop() {
         let mut registration = surface.local_registration(path, scope, true, ownership);
         registration.health = health;
         registration.event_phases = phases;
@@ -953,12 +985,21 @@ fn artifact_candidates(
             project(".cursor/hooks.json"),
             user(home.join(".cursor/hooks.json")),
         ],
-        "copilot-chat" => vec![user(crate::hooks::paths::copilot_user_settings(config_dir))],
+        "copilot-chat" => vec![
+            project(".vscode/settings.json"),
+            user(crate::hooks::paths::copilot_user_settings(config_dir)),
+        ],
         "copilot-cli" => vec![user(
             crate::hooks::paths::copilot_cli_config_dir(home, config_dir).join("AGENTS.md"),
         )],
-        "gemini" => vec![user(home.join(".gemini/hooks.toml"))],
-        "vibe" => vec![user(home.join(".vibe/hooks.toml"))],
+        "gemini" => vec![
+            project(".gemini/hooks.toml"),
+            user(home.join(".gemini/hooks.toml")),
+        ],
+        "vibe" => vec![
+            project(".vibe/hooks.toml"),
+            user(home.join(".vibe/hooks.toml")),
+        ],
         "opencode" => vec![
             project(".opencode/plugins/rgt.ts"),
             project(".opencode/plugin/rgt.ts"),
@@ -977,9 +1018,18 @@ fn artifact_candidates(
             user(crate::hooks::paths::codex_hooks_json(home, true)),
         ],
         "windsurf" => windsurf_candidates(home),
-        "cline" | "roo-code" => vec![project(".clinerules")],
-        "antigravity" => vec![project(".agents/rules/antigravity-rgt-rules.md")],
-        "kilocode" => vec![project(".kilocode/rules/rgt-rules.md")],
+        "cline" | "roo-code" => vec![
+            project(".clinerules"),
+            user(home.join(".cline/rules/rgt.md")),
+        ],
+        "antigravity" => vec![
+            project(".agents/rules/antigravity-rgt-rules.md"),
+            user(home.join(".agents/rules/antigravity-rgt-rules.md")),
+        ],
+        "kilocode" => vec![
+            project(".kilocode/rules/rgt-rules.md"),
+            user(home.join(".kilocode/rules/rgt-rules.md")),
+        ],
         _ => Vec::new(),
     }
 }
