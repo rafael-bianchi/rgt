@@ -33,6 +33,7 @@ Thumbs.db
 .kilocode/
 .specify/
 .agents/
+skills-lock.json
 
 # Local design specs; publish the canonical harness compatibility feature
 specs/*
