@@ -41,3 +41,4 @@ specs/*
 !specs/046-value-extraction-and-source-recording-hardening/
 !specs/047-verify-arithmetic-and-duration-hardening/
 !specs/048-harness-hook-payload-hardening/
+!specs/049-agent-installation-and-doctor-hardening/

@@ -109,6 +109,96 @@ pub fn windsurf_legacy_workspace_hooks_json() -> PathBuf {
     PathBuf::from(".windsurf").join("hooks.json")
 }
 
+/// Project-level VS Code settings file.
+pub fn vscode_project_settings() -> PathBuf {
+    PathBuf::from(".vscode").join("settings.json")
+}
+
+/// Project-level Copilot instructions file.
+pub fn copilot_project_guidance_path() -> PathBuf {
+    PathBuf::from(".github").join("copilot-instructions.md")
+}
+
+/// Gemini hooks.toml path for the selected scope.
+pub fn gemini_hooks_toml(home: &Path, global: bool) -> PathBuf {
+    if global {
+        home.join(".gemini").join("hooks.toml")
+    } else {
+        PathBuf::from(".gemini").join("hooks.toml")
+    }
+}
+
+/// Vibe hooks.toml path for the selected scope.
+pub fn vibe_hooks_toml(home: &Path, global: bool) -> PathBuf {
+    if global {
+        home.join(".vibe").join("hooks.toml")
+    } else {
+        PathBuf::from(".vibe").join("hooks.toml")
+    }
+}
+
+/// Cursor guidance path for the selected scope.
+pub fn cursor_guidance_path(home: &Path, global: bool) -> PathBuf {
+    if global {
+        home.join(".cursor").join("rules").join("rgt.mdc")
+    } else {
+        PathBuf::from(".cursor").join("rules").join("rgt.mdc")
+    }
+}
+
+/// Codex guidance path for the selected scope.
+pub fn codex_guidance_path(home: &Path, global: bool) -> PathBuf {
+    if global {
+        home.join(".codex").join("AGENTS.md")
+    } else {
+        PathBuf::from("AGENTS.md")
+    }
+}
+
+/// Windsurf guidance path for the selected scope.
+pub fn windsurf_guidance_path(home: &Path, global: bool) -> PathBuf {
+    if global {
+        home.join(".codeium")
+            .join("windsurf")
+            .join("memories")
+            .join("global_rules.md")
+    } else {
+        PathBuf::from(".windsurfrules")
+    }
+}
+
+/// Cline guidance path for the selected scope.
+pub fn cline_guidance_path(home: &Path, global: bool) -> PathBuf {
+    if global {
+        home.join(".cline").join("rules").join("rgt.md")
+    } else {
+        PathBuf::from(".clinerules")
+    }
+}
+
+/// Antigravity guidance path for the selected scope.
+pub fn antigravity_guidance_path(home: &Path, global: bool) -> PathBuf {
+    if global {
+        home.join(".agents")
+            .join("rules")
+            .join("antigravity-rgt-rules.md")
+    } else {
+        PathBuf::from(".agents")
+            .join("rules")
+            .join("antigravity-rgt-rules.md")
+    }
+}
+
+/// Kilocode guidance path for the selected scope.
+pub fn kilocode_guidance_path(home: &Path, global: bool) -> PathBuf {
+    if global {
+        home.join(".kilocode").join("rules").join("rgt-rules.md")
+    } else {
+        PathBuf::from(".kilocode").join("rules").join("rgt-rules.md")
+    }
+}
+
+
 /// All accepted `--agent` spellings (13 canonical + 3 aliases).
 pub const ALL_AGENT_NAMES: &[&str] = &[
     "claude-code",

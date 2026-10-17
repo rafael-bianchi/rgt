@@ -275,14 +275,14 @@ fn existing_four_agents_write_with_markers() {
     assert!(cursor.contains(&format!("{} hook post", exe_prefix_json())));
     serde_json::from_str::<serde_json::Value>(&cursor).unwrap();
 
-    let agents_md = read(&PathBuf::from("AGENTS.md"));
+    let agents_md = read(&home.join(".codex/AGENTS.md"));
     assert!(agents_md.starts_with("# RGT Agents Instructions"));
     assert!(agents_md.contains("## RGT Integration"));
     assert!(agents_md.contains("rgt record <file>"));
     assert_teaches_temporal_and_turtle(&agents_md, "codex AGENTS.md");
     assert!(agents_md.contains("<!-- /RGT Integration -->"));
 
-    let windsurf = read(&PathBuf::from(".windsurfrules"));
+    let windsurf = read(&home.join(".codeium/windsurf/memories/global_rules.md"));
     assert!(windsurf.starts_with("# RGT Integration\n"));
     assert!(windsurf.contains("rgt derive --parents"));
     assert!(windsurf.contains("<!-- /RGT Integration -->"));
@@ -583,6 +583,123 @@ fn copilot_cli_instructions_teach_full_feature_set() {
     assert_teaches_temporal_and_turtle(&rules, "copilot CLI rules");
 }
 
+#[test]
+fn copilot_writer_respects_global_and_project_scope() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
+    // Project scope: global = false
+    let report = run(&home, &config_dir, false, true, "copilot");
+    assert!(configured(&report).contains(&"copilot".to_string()));
+    assert!(dir.path().join(".github/copilot-instructions.md").exists());
+    assert!(dir.path().join(".vscode/settings.json").exists());
+    assert!(
+        !config_dir.join("Code/User/settings.json").exists(),
+        "project init must not touch global user settings"
+    );
+
+    // Global scope: global = true
+    let dir_global = tempdir().unwrap();
+    std::env::set_current_dir(dir_global.path()).unwrap();
+    let report_global = run(&home, &config_dir, true, true, "copilot");
+    assert!(configured(&report_global).contains(&"copilot".to_string()));
+    assert!(config_dir.join("Code/User/settings.json").exists());
+    assert!(
+        !dir_global.path().join(".github/copilot-instructions.md").exists(),
+        "global init must not write project-local guidance"
+    );
+}
+
+#[test]
+fn gemini_and_vibe_writers_respect_project_scope() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
+    // Project scope: global = false
+    run(&home, &config_dir, false, true, "gemini");
+    assert!(
+        dir.path().join(".gemini/hooks.toml").exists(),
+        "project init must write project .gemini/hooks.toml"
+    );
+    assert!(
+        !home.join(".gemini/hooks.toml").exists(),
+        "project init must not write home .gemini/hooks.toml"
+    );
+
+    run(&home, &config_dir, false, true, "vibe");
+    assert!(
+        dir.path().join(".vibe/hooks.toml").exists(),
+        "project init must write project .vibe/hooks.toml"
+    );
+    assert!(
+        !home.join(".vibe/hooks.toml").exists(),
+        "project init must not write home .vibe/hooks.toml"
+    );
+}
+
+#[test]
+fn guidance_agents_global_scope_writes_to_home() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
+    for agent in ["codex", "cursor", "windsurf", "cline", "antigravity", "kilocode"] {
+        run(&home, &config_dir, true, true, agent);
+        // None of these should have written into CWD
+        assert!(
+            !dir.path().join(".cursor/rules/rgt.mdc").exists(),
+            "{agent} global init must not write to CWD"
+        );
+        assert!(
+            !dir.path().join(".windsurfrules").exists(),
+            "{agent} global init must not write to CWD"
+        );
+        assert!(
+            !dir.path().join(".clinerules").exists(),
+            "{agent} global init must not write to CWD"
+        );
+        assert!(
+            !dir.path().join(".agents/rules/antigravity-rgt-rules.md").exists(),
+            "{agent} global init must not write to CWD"
+        );
+        assert!(
+            !dir.path().join(".kilocode/rules/rgt-rules.md").exists(),
+            "{agent} global init must not write to CWD"
+        );
+    }
+}
+
+#[test]
+fn force_overwrites_conflicting_rules() {
+    let dir = tempdir().unwrap();
+    let _guard = set_cwd(dir.path());
+    let home = dir.path().join("home");
+    let config_dir = dir.path().join("config");
+
+    // 1. Initial init
+    let report1 = run(&home, &config_dir, false, false, "cline");
+    assert!(configured(&report1).contains(&"cline".to_string()));
+
+    // 2. Re-run without force -> skipped (already current)
+    let report2 = run(&home, &config_dir, false, false, "cline");
+    assert!(skipped(&report2).contains(&"cline".to_string()));
+
+    // 3. Re-run with force -> configured (forced overwrite)
+    let report3 = run(&home, &config_dir, false, true, "cline");
+    assert!(
+        configured(&report3).contains(&"cline".to_string()),
+        "force init must re-configure even when already current"
+    );
+    let cline_rules = dir.path().join(".clinerules");
+    let content = read(&cline_rules);
+    assert!(content.contains(rgt::hooks::glue::RGT_MARKER));
+}
+
 // ---------------------------------------------------------------------------
 // US2: loud failures (T016) — malformed config is never silently overwritten
 // ---------------------------------------------------------------------------
@@ -852,7 +969,7 @@ fn init_no_agent_configures_all_detected() {
     write(&PathBuf::from(".clinerules"), "# rules\n");
     write(
         &config_dir.join("Code").join("User").join("settings.json"),
-        "{}",
+        "{\"github.copilot.enable\": true}",
     );
 
     let report = run_none(&home, &config_dir, false, true);
@@ -1374,9 +1491,9 @@ fn unverified_surfaces_get_loadable_guidance_without_automatic_capture_claims() 
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
 
-    for agent in ["cursor", "gemini", "copilot"] {
-        run(&home, &config_dir, true, true, agent);
-    }
+    run(&home, &config_dir, false, true, "cursor");
+    run(&home, &config_dir, true, true, "gemini");
+    run(&home, &config_dir, false, true, "copilot");
     for path in [
         PathBuf::from(".cursor/rules/rgt.mdc"),
         home.join(".gemini/GEMINI.md"),
@@ -1413,7 +1530,7 @@ fn unverified_surfaces_get_loadable_guidance_without_automatic_capture_claims() 
         0,
         "guidance belongs in the documented project instruction file"
     );
-    run(&home, &config_dir, true, true, "cursor");
+    run(&home, &config_dir, false, true, "cursor");
     assert_eq!(
         count_anchor(Path::new(".cursor/rules/rgt.mdc"), NON_TEXT_ANCHOR),
         1
