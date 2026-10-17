@@ -55,11 +55,12 @@ fn aggregate_identity_rejects_duplicate_parents_and_length_delimits_ids() {
 fn human_display_collisions_do_not_collapse_distinct_seconds() {
     let one_day = ValueData::Duration(Duration::seconds(86_400));
     let one_day_and_one_second = ValueData::Duration(Duration::seconds(86_401));
-    assert_eq!(
+    assert_ne!(
         one_day.to_string_repr(),
         one_day_and_one_second.to_string_repr()
     );
     assert_eq!(one_day.to_string_repr(), "1d");
+    assert_eq!(one_day_and_one_second.to_string_repr(), "1d 1s");
     assert_ne!(
         duration_id(&["parent-a", "parent-b"], "DURATION_SUM", 86_400).unwrap(),
         duration_id(&["parent-a", "parent-b"], "DURATION_SUM", 86_401).unwrap()

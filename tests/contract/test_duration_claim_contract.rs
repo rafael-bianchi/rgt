@@ -255,9 +255,9 @@ fn legacy_expression_with_temporal_parents_warns_that_its_result_is_a_number() {
             "--operation",
             "EXPRESSION",
             "--expression",
-            "a - a",
+            "b - a",
             "--result",
-            "0",
+            "3888000",
         ],
     );
     assert!(
