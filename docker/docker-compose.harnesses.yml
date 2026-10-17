@@ -1,0 +1,29 @@
+services:
+  test:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.harnesses
+    container_name: rgt-harness-tester
+    volumes:
+      # Mount current repo directory so local edits can be tested immediately without rebuild
+      - ..:/workspace/rgt
+      # Keep target dir isolated within container to prevent cross-compilation clashes
+      - target-cache:/workspace/rgt/target
+    working_dir: /workspace/rgt
+    command: ["./scripts/test-harnesses-e2e.sh"]
+
+  shell:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.harnesses
+    container_name: rgt-harness-shell
+    stdin_open: true
+    tty: true
+    volumes:
+      - ..:/workspace/rgt
+      - target-cache:/workspace/rgt/target
+    working_dir: /workspace/rgt
+    command: ["/bin/bash"]
+
+volumes:
+  target-cache:

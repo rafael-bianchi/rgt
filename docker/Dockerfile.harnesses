@@ -1,0 +1,80 @@
+# syntax=docker/dockerfile:1
+FROM ubuntu:24.04
+
+LABEL maintainer="RGT Maintainers"
+LABEL description="Complete AI Coding Agent Harness and Provenance Testing Environment for RGT"
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+ENV PATH=/usr/local/cargo/bin:/usr/local/bin:$PATH
+
+# 1. System packages
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    gnupg \
+    jq \
+    libssl-dev \
+    pkg-config \
+    procps \
+    python3 \
+    python3-pip \
+    python3-venv \
+    sqlite3 \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Rust stable toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal \
+    && chmod -R a+w /usr/local/cargo /usr/local/rustup
+
+# 3. Node.js 22 LTS
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y -qq nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# 4. NPM Agent Harnesses (Claude Code, OpenCode, Codex, Pi, Kilo, Copilot, Gemini)
+RUN npm install -g --no-fund --no-audit \
+    @anthropic-ai/claude-code \
+    opencode-ai \
+    @openai/codex \
+    @earendil-works/pi-coding-agent \
+    @kilocode/cli \
+    @github/copilot \
+    @google/gemini-cli \
+    && npm cache clean --force
+
+# 5. Python Agent Harnesses in isolated virtual environments (Mistral Vibe, Hermes)
+RUN python3 -m venv /opt/harnesses/vibe \
+    && /opt/harnesses/vibe/bin/pip install --no-cache-dir mistral-vibe \
+    && ln -s /opt/harnesses/vibe/bin/vibe /usr/local/bin/vibe
+
+RUN python3 -m venv /opt/harnesses/hermes \
+    && /opt/harnesses/hermes/bin/pip install --no-cache-dir hermes-agent \
+    && ln -s /opt/harnesses/hermes/bin/hermes /usr/local/bin/hermes
+
+# 6. Harness shims for GUI-tier / rules-tier agents (Cursor, Windsurf, Cline, Antigravity)
+RUN printf '#!/usr/bin/env bash\necho "cursor 0.45.0 (mock harness runner)"\n' > /usr/local/bin/cursor \
+    && chmod +x /usr/local/bin/cursor \
+    && printf '#!/usr/bin/env bash\necho "windsurf 1.2.0 (mock harness runner)"\n' > /usr/local/bin/windsurf \
+    && chmod +x /usr/local/bin/windsurf \
+    && printf '#!/usr/bin/env bash\necho "cline 3.0.0 (mock harness runner)"\n' > /usr/local/bin/cline \
+    && chmod +x /usr/local/bin/cline \
+    && printf '#!/usr/bin/env bash\necho "agy 1.4.0 (mock harness runner)"\n' > /usr/local/bin/agy \
+    && chmod +x /usr/local/bin/agy
+
+# 7. Copy repository sources into image and build RGT
+WORKDIR /workspace/rgt
+COPY . /workspace/rgt
+
+# Build RGT binary and install to /usr/local/bin
+RUN cargo build --release --locked --bin rgt \
+    && cp target/release/rgt /usr/local/bin/rgt \
+    && chmod +x /usr/local/bin/rgt
+
+# Default execution: run the complete end-to-end harness test suite
+ENTRYPOINT ["/bin/bash"]
+CMD ["./scripts/test-harnesses-e2e.sh"]
