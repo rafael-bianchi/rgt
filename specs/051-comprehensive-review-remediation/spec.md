@@ -60,6 +60,8 @@ When verifying `EXPRESSION` or Duration derivations, RGT must require every decl
 
 **Why this priority**: Prevents bogus provenance edges via unused parents (`a + 0`) and prevents false verification passes on small numbers (`1e-10` vs `2e-10` or `-1e-12`).
 
+**Independent Test**: Run `rgt derive --parents id1,id2 --operation EXPRESSION --expression "a + 0" --result 10` and verify exit code `2`; run `verify` on `1e-10` vs `2e-10` and `-1e-12` vs `1e-12` and verify both are rejected; verify `ValueData::Duration(Duration::seconds(86_401)).to_string_repr()` equals `"1d 1s"`.
+
 **Acceptance Scenarios**:
 
 1. **Given** `--parents id1,id2 --operation EXPRESSION --expression "a + 0"`, **When** `verify` runs, **Then** `validate_parent_variable_references` rejects the expression because parent variable `b` is unused (CLI exit code `2`).
@@ -71,6 +73,10 @@ When verifying `EXPRESSION` or Duration derivations, RGT must require every decl
 ### User Story 4 - 13-Agent Hook/Plugin Dialect, Config Editor & Containerized CLI Parity (Priority: P1)
 
 Across all 13 supported AI coding harnesses, RGT must accurately parse native and shell-read hook payloads, preserve user settings and Windows paths when editing config files, avoid `init` vs `doctor` shape mismatches, and provide a complete containerized testing environment (`docker/Dockerfile.harnesses`) with all 13 agent CLIs (including `vibe` and `hermes`) installed and verified.
+
+**Why this priority**: Ensures reliable passive value capture, non-destructive hook installation, and zero-skip automated verification across all 13 supported coding agents.
+
+**Independent Test**: Build `rgt-harness-env` from `docker/Dockerfile.harnesses` and run `./scripts/test-harnesses-e2e.sh` inside the container; verify all 13 CLIs are detected and all 58 E2E checks pass with 0 failures and 0 skips.
 
 **Acceptance Scenarios**:
 
@@ -87,11 +93,25 @@ Across all 13 supported AI coding harnesses, RGT must accurately parse native an
 
 RGT's MCP server (`rgt mcp`), PROV-O Turtle exporter (`rgt graph --format ttl`), POSIX installer (`install.sh`), and GitHub Actions release workflows (`cd.yml`, `release.yml`) must operate without stdio deadlocks, path leaks, or shell/permission failures.
 
+**Why this priority**: Guarantees that agent MCP integrations, semantic RDF exports, and automated release/installation pipelines succeed deterministically in production.
+
+**Independent Test**: Run `cargo test --test test_mcp_contract` (including `record_values_with_inline_content_and_get_status_staleness_sync`), `cargo test --test test_turtle_contract`, `cargo test --test test_installer_script`, and `sh -n install.sh`.
+
 **Acceptance Scenarios**:
 
 1. **Given** an MCP `record_values` tool call with inline `content: "revenue,250\n"`, **When** `RgtMcpServer::record_values` executes, **Then** `execute_record_with_content` parses the in-memory `content` string directly without reading from the MCP server's `stdin`, and `get_status` runs `sync_staleness` before returning node counts.
 2. **Given** a Turtle export (`rgt graph --format ttl`) on a project with deleted files or `<stdin>` records, **When** `source_location` resolves paths against the canonical project root, **Then** deleted project-internal files retain `rgt:relativePath` (with leading `./` stripped), while `"<stdin>"` emits neither `rgt:relativePath` nor `rgt:absolutePath`.
 3. **Given** `install.sh`, `.github/workflows/cd.yml`, and `.github/workflows/release.yml`, **When** executed in CI/CD or POSIX `sh`, **Then** `install.sh` contains zero `local` bashisms and enforces SHA-256 verification + atomic `mv -f`, `cd.yml` creates and pushes `v$VERSION` before promoting `develop` to `main`, and `release.yml` updates all per-platform `url`/`sha256` blocks in `Formula/rgt.rb`.
+
+---
+
+### Edge Cases
+
+- **Millions in Prose vs. Unspaced CSV Rows**: `Revenue: 1,000,000` and `$12,345,678` remain single numbers, whereas bare comma-delimited rows (`10,200,300`, `10,1.5e10`) split at cell boundaries.
+- **UUIDs, Git SHAs & Ordinals**: Tokens with non-unit trailing letters (`1st`, `7e3a9f1`, `0x1a2b`) or hyphenated hex segments (`96a3adc0-f76e-4faf-81e6-5b0578c2c46d`) are rejected without leaking partial digits.
+- **Invalid Calendar Dates**: Impossible dates matching `YYYY-MM-DD` (`2026-02-30`, `2026-13-45T99:99:99Z`) increment `skipped_malformed` and are masked prior to number extraction.
+- **Repeated `--stdin` Recording**: Consecutive `rgt record --stdin` invocations accumulate root nodes under `"<stdin>"` without marking previous `<stdin>` values stale.
+- **Nested Project Initialization**: Running `rgt init` inside a subdirectory whose ancestor already has `.rgt/store.db` creates a local `.rgt/store.db` in the initialized directory rather than attaching to the ancestor store.
 
 ---
 
@@ -106,6 +126,16 @@ RGT's MCP server (`rgt mcp`), PROV-O Turtle exporter (`rgt graph --format ttl`),
 - **FR-005**: `approx_eq` MUST reject opposite-sign non-zero numbers and enforce `diff <= 1e-9 * largest`.
 - **FR-006**: `RgtMcpServer::record_values` MUST process inline `content` in memory via `execute_record_with_content`, and `RgtMcpServer::get_status` MUST run `sync_staleness`.
 - **FR-007**: `docker/Dockerfile.harnesses` MUST install both Python agent CLIs (`mistral-vibe` $\rightarrow$ `/usr/local/bin/vibe` and `hermes-agent` $\rightarrow$ `/usr/local/bin/hermes`) alongside the 7 NPM agent CLIs and 4 GUI/rules-tier shims so that container test runs execute with 0 skipped harnesses.
+- **FR-008**: `validate_parent_variable_references` MUST verify that every declared parent variable (`a`, `b`, ...) appears as an identifier token in `EXPRESSION`, and `ValueData::Duration::to_string_repr` MUST include non-zero seconds when `days > 0`.
+- **FR-009**: Hook payload parsing, config editing, and installation MUST support Claude Code nested `tool_response.file.content` (with `.claude/hooks.json.rgt.bak` backup), OpenCode `split('\n').count()`, Hermes post-only `plugin.py`, structural shape verification (`shapes_match`) in `merge_array`, Windows double-quoted backslash preservation in `shell_tokens`, and scope-aware `rgt init -g` / layered `rgt doctor`.
+- **FR-010**: `source_location` in `src/export/turtle.rs` MUST exclude `"<stdin>"` from emitting path predicates and MUST preserve normalized `rgt:relativePath` for deleted project-internal files against the resolved `project_root`.
+- **FR-011**: `install.sh` MUST be strictly POSIX-compliant (`sh -n`) with mandatory SHA-256 verification and atomic `mv -f` replacement; `.github/workflows/cd.yml` MUST create and push `v$VERSION` before promoting `develop` to `main`; and `.github/workflows/release.yml` MUST update all platform `url`/`sha256` pairs in `Formula/rgt.rb`.
+
+### Key Entities
+
+- **`DbStore`**: Manages `.rgt/store.db` lifecycle, schema v3 migration, ancestor root discovery (`find_project_root`), explicit initialization (`init_in_project`), and relative path rebasing (`normalize_path_for_project`).
+- **`SourceDocument` & `TrackedNode`**: Represent tracked source files (keyed by path and `(dev, ino)`) and provenance graph nodes (Root and Derived, with cascading `is_stale` and `stale_reason` states).
+- **`RgtMcpServer`**: Embedded JSON-RPC 2.0 stdio MCP server exposing `query_provenance`, `verify`, `derive_and_verify`, `record_values`, and `get_status`.
 
 ---
 

@@ -5,7 +5,7 @@ Consolidates the architecture, design decisions, and verification strategy for a
 
 ## Architecture & Component Changes
 
-### 1. Store, Schema, Staleness & Path Rebasing (`src/store/`, `src/graph/`, `src/detection/`)
+### 1. Store, Schema, Staleness & Path Rebasing (`src/store/`, `src/graph/`, `src/detection/`, `src/cli/`)
 - **`src/store/db.rs`**:
   - `DbStore::find_project_root`: Walks up parent directories to locate `.rgt/store.db`.
   - `DbStore::init_in_project`: Creates `.rgt/store.db` directly in the requested directory for `rgt init` without attaching to an ancestor store.
