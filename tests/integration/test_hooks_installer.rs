@@ -674,10 +674,7 @@ mod tests {
             assert!(updated.contains("# Keep this\r\n"));
             assert!(updated.ends_with("# Keep below\r\n"));
             let bak = rule.with_file_name("rgt.mdc.rgt.bak");
-            assert_eq!(
-                std::fs::read_to_string(bak).unwrap(),
-                original
-            );
+            assert_eq!(std::fs::read_to_string(bak).unwrap(), original);
             let guidance = inspect_local_guidance(&home, &config)
                 .into_iter()
                 .find(|item| item.surface_id == "cursor")
@@ -743,10 +740,7 @@ mod tests {
                 );
                 assert!(updated.contains(&format!("# Keep this{newline}")));
                 let bak = rule.with_file_name("rgt.mdc.rgt.bak");
-                assert_eq!(
-                    std::fs::read_to_string(bak).unwrap(),
-                    original
-                );
+                assert_eq!(std::fs::read_to_string(bak).unwrap(), original);
                 let guidance = inspect_local_guidance(&home, &config)
                     .into_iter()
                     .find(|item| item.surface_id == "cursor")

@@ -219,6 +219,16 @@ pub fn insert_or_reuse_duration(
                 operation,
                 &expected_edge_parents,
             )? {
+                if node.is_stale != existing.is_stale || node.stale_reason != existing.stale_reason
+                {
+                    let mut updated = existing.clone();
+                    updated.is_stale = node.is_stale;
+                    updated.stale_reason = node.stale_reason.clone();
+                    updated.updated_at = node.updated_at;
+                    insert_tracked_node(&tx, &updated).map_err(|error| {
+                        format!("failed to update reused Duration '{candidate}': {error}")
+                    })?;
+                }
                 tx.commit()
                     .map_err(|error| format!("failed to finish Duration reuse: {error}"))?;
                 return Ok(candidate.clone());
@@ -236,6 +246,11 @@ pub fn insert_or_reuse_duration(
             operation,
             &expected_edge_parents,
         )? {
+            if node.is_stale != existing.is_stale || node.stale_reason != existing.stale_reason {
+                insert_tracked_node(&tx, node).map_err(|error| {
+                    format!("failed to update reused Duration '{canonical_id}': {error}")
+                })?;
+            }
             tx.commit()
                 .map_err(|error| format!("failed to finish Duration reuse: {error}"))?;
             return Ok(canonical_id);
@@ -490,7 +505,9 @@ pub fn insert_derivation_edge(
     conn.execute(
         "INSERT INTO derivation_edges (parent_node_id, child_node_id, operation_type, expression)
          VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(parent_node_id, child_node_id) DO NOTHING",
+         ON CONFLICT(parent_node_id, child_node_id) DO UPDATE SET
+            operation_type = excluded.operation_type,
+            expression = excluded.expression",
         params![parent_id, child_id, operation_type, expression],
     )
     .map_err(|e| format!("failed to insert derivation edge: {e}"))?;
@@ -583,6 +600,39 @@ pub fn cascade_invalidation_downstream(
     Ok(count)
 }
 
+fn get_source_document_by_dev_ino(
+    conn: &Connection,
+    dev: u64,
+    ino: u64,
+) -> Result<Option<SourceDocument>> {
+    if dev == 0 && ino == 0 {
+        return Ok(None);
+    }
+    let mut stmt = conn.prepare(
+        "SELECT id, file_path, mtime_nsec, file_size, blake3_hash, last_checked_at, dev, ino
+         FROM source_documents WHERE dev = ?1 AND ino = ?2 LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![dev as i64, ino as i64])?;
+    if let Some(row) = rows.next()? {
+        let last_checked_str: String = row.get(5)?;
+        let last_checked_at = DateTime::parse_from_rfc3339(&last_checked_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        Ok(Some(SourceDocument {
+            id: row.get(0)?,
+            file_path: row.get(1)?,
+            mtime_nsec: row.get(2)?,
+            file_size: row.get(3)?,
+            blake3_hash: row.get(4)?,
+            last_checked_at,
+            dev: row.get(6)?,
+            ino: row.get(7)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Atomically records a batch of extracted values for a file into the store,
 /// performing invalidation of removed/modified root nodes and their downstream
 /// derivations if the file content hash has changed.
@@ -596,33 +646,49 @@ pub fn record_file_batch(
 ) -> Result<SourceDocument> {
     use std::collections::HashSet;
 
-    // 1. Check if the file already exists and whether the hash is changing
-    if let Some(existing_doc) = get_source_document_by_path(conn, file_path)? {
-        if existing_doc.blake3_hash != hash {
-            // Content modified! Find root nodes that are no longer present.
-            let existing_roots = list_nodes_by_source_doc(conn, existing_doc.id)?;
-            let incoming_ids: HashSet<String> = extracted
-                .iter()
-                .map(|ext| {
-                    TrackedNode::generate_root_id(
+    // 1. Check if the file already exists (by path or by `(dev, ino)` alias) and whether the hash is changing.
+    // Skip for `<stdin>` so consecutive `rgt record --stdin` calls accumulate without invalidating prior stdin values.
+    if file_path != "<stdin>" {
+        let existing_doc = match get_source_document_by_path(conn, file_path)? {
+            Some(doc) => Some(doc),
+            None => match (meta.dev, meta.ino) {
+                (Some(dev), Some(ino)) => get_source_document_by_dev_ino(conn, dev, ino)?,
+                _ => None,
+            },
+        };
+        if let Some(existing_doc) = existing_doc {
+            if existing_doc.blake3_hash != hash {
+                // Content modified! Find root nodes that are no longer present.
+                let existing_roots = list_nodes_by_source_doc(conn, existing_doc.id)?;
+                let mut incoming_ids: HashSet<String> = HashSet::new();
+                for ext in extracted {
+                    incoming_ids.insert(TrackedNode::generate_root_id(
                         file_path,
                         ext.line_number,
                         ext.occurrence,
                         &ext.value,
-                    )
-                })
-                .collect();
-
-            let mut stale_root_ids = Vec::new();
-            for root in existing_roots {
-                if !root.is_stale && !incoming_ids.contains(&root.id) {
-                    mark_node_stale(conn, &root.id, "SOURCE_FILE_MODIFIED")?;
-                    stale_root_ids.push(root.id);
+                    ));
+                    if existing_doc.file_path != file_path {
+                        incoming_ids.insert(TrackedNode::generate_root_id(
+                            &existing_doc.file_path,
+                            ext.line_number,
+                            ext.occurrence,
+                            &ext.value,
+                        ));
+                    }
                 }
-            }
 
-            if !stale_root_ids.is_empty() {
-                cascade_invalidation_downstream(conn, &stale_root_ids, "PARENT_NODE_STALE")?;
+                let mut stale_root_ids = Vec::new();
+                for root in existing_roots {
+                    if !root.is_stale && !incoming_ids.contains(&root.id) {
+                        mark_node_stale(conn, &root.id, "SOURCE_FILE_MODIFIED")?;
+                        stale_root_ids.push(root.id);
+                    }
+                }
+
+                if !stale_root_ids.is_empty() {
+                    cascade_invalidation_downstream(conn, &stale_root_ids, "PARENT_NODE_STALE")?;
+                }
             }
         }
     }
@@ -641,12 +707,8 @@ pub fn record_file_batch(
     // 3. Insert newly extracted root nodes
     let now = Utc::now();
     for ext in extracted {
-        let node_id = TrackedNode::generate_root_id(
-            file_path,
-            ext.line_number,
-            ext.occurrence,
-            &ext.value,
-        );
+        let node_id =
+            TrackedNode::generate_root_id(file_path, ext.line_number, ext.occurrence, &ext.value);
         let node = TrackedNode {
             id: node_id.clone(),
             node_type: NodeType::Root,

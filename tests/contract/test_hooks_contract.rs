@@ -346,7 +346,11 @@ mod tests {
 
         let db = rgt::store::DbStore::open_in_project(dir.path()).unwrap();
         let nodes = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
-        assert_eq!(nodes.len(), 1, "OpenCode should capture node from newline-terminated file");
+        assert_eq!(
+            nodes.len(),
+            1,
+            "OpenCode should capture node from newline-terminated file"
+        );
         assert_eq!(nodes[0].value.to_string_repr(), "42");
     }
 }

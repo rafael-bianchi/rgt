@@ -28,7 +28,9 @@ mod tests {
         drop(db);
 
         // A fresh connection must fail fast with the version message (not a SQL error).
-        let err = DbStore::open_in_project(".").err().expect("must fail");
+        let Err(err) = DbStore::open_in_project(".") else {
+            panic!("must fail");
+        };
         let msg = format!("{}", err);
         assert!(msg.contains("newer than this build supports"), "{}", msg);
     }
@@ -144,10 +146,8 @@ mod tests {
 
         rgt::store::queries::insert_derivation_edge(conn, "root", "d1", "EXPRESSION", None)
             .unwrap();
-        rgt::store::queries::insert_derivation_edge(conn, "d1", "d2", "EXPRESSION", None)
-            .unwrap();
-        rgt::store::queries::insert_derivation_edge(conn, "d2", "d3", "EXPRESSION", None)
-            .unwrap();
+        rgt::store::queries::insert_derivation_edge(conn, "d1", "d2", "EXPRESSION", None).unwrap();
+        rgt::store::queries::insert_derivation_edge(conn, "d2", "d3", "EXPRESSION", None).unwrap();
         drop(db);
 
         rgt::cli::execute_gc(false).unwrap();
@@ -159,5 +159,37 @@ mod tests {
             .map(|n| n.id)
             .collect();
         assert_eq!(remaining, vec!["fresh_isolated".to_string()]);
+    }
+
+    #[test]
+    fn derive_from_stale_parent_propagates_staleness() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        rgt::cli::execute_init(false, true, Some("codex"), None).unwrap();
+        let db = DbStore::open_in_project(".").unwrap();
+        insert_root(db.conn(), "stale_p", true);
+        insert_root(db.conn(), "fresh_p", false);
+        drop(db);
+
+        let (child_id, _) = rgt::cli::execute_derive_core(
+            "stale_p,fresh_p",
+            "EXPRESSION",
+            Some("a + b"),
+            Some("2"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let db = DbStore::open_in_project(".").unwrap();
+        let child = rgt::store::queries::get_tracked_node(db.conn(), &child_id)
+            .unwrap()
+            .expect("derived child");
+        assert!(
+            child.is_stale,
+            "derived child of a stale parent must be stale"
+        );
+        assert_eq!(child.stale_reason.as_deref(), Some("PARENT_NODE_STALE"));
     }
 }

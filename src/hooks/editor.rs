@@ -430,7 +430,8 @@ fn merge_array(
         }
     }
 
-    // Idempotency: if the existing RGT entries already carry the same commands,
+    // Idempotency: if the existing RGT entries already carry the same commands
+    // and matching object shape (nested hooks[].type=="command" vs flat command),
     // leave the text untouched regardless of formatting/whitespace differences.
     let mut existing_cmds: Vec<String> = rgt_idx
         .iter()
@@ -439,7 +440,29 @@ fn merge_array(
     let mut desired_cmds: Vec<String> = entries.iter().flat_map(entry_commands).collect();
     existing_cmds.sort();
     desired_cmds.sort();
-    if existing_cmds == desired_cmds {
+    let shapes_match = rgt_idx.len() == entries.len()
+        && rgt_idx.iter().zip(entries.iter()).all(|(&i, desired)| {
+            let desired_has_nested = desired.get("hooks").and_then(|h| h.as_array()).is_some();
+            if let Value::Object(obj) = &existing.elements[i] {
+                if desired_has_nested {
+                    let Some(arr) = obj.get_array("hooks") else {
+                        return false;
+                    };
+                    arr.elements.iter().all(|item| {
+                        matches!(
+                            item,
+                            Value::Object(h)
+                                if h.get_string("type").is_some_and(|t| t.value == "command")
+                        )
+                    })
+                } else {
+                    obj.get_string("command").is_some()
+                }
+            } else {
+                false
+            }
+        });
+    if existing_cmds == desired_cmds && shapes_match {
         return Ok(());
     }
 
@@ -646,7 +669,13 @@ pub(crate) fn shell_tokens(command: &str) -> Option<Vec<String>> {
                 i += 1;
             }
             (Some('"'), '\\') => {
-                escaped = true;
+                let next = chars.get(i + 1).copied();
+                if matches!(next, Some('"' | '\\' | '$' | '`')) {
+                    escaped = true;
+                } else {
+                    token.push('\\');
+                    started = true;
+                }
                 i += 1;
             }
             (Some(_), _) => {

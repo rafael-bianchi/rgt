@@ -86,10 +86,6 @@ import json
 import subprocess
 
 
-def pre_tool_call(args):
-    _capture(args)
-
-
 def post_tool_call(args):
     _capture(args)
 

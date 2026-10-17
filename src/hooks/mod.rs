@@ -117,9 +117,10 @@ pub fn handle_passive_hook_event(event_type: &str, agent: Option<&str>) -> io::R
         Err(_) => return Ok(()),
     };
 
+    let stored_path = DbStore::normalize_path_for_project(path, &root);
     if crate::store::queries::record_file_batch(
         &tx,
-        path,
+        &stored_path,
         &meta,
         &hash,
         &extraction.values,
@@ -278,9 +279,10 @@ fn record_pdf_values(
         Ok(tx) => tx,
         Err(_) => return Ok(false),
     };
+    let stored_path = DbStore::normalize_path_for_project(path, &root);
     if crate::store::queries::record_file_batch(
         &tx,
-        path,
+        &stored_path,
         &meta,
         &hash,
         &extraction.values,
@@ -288,10 +290,10 @@ fn record_pdf_values(
     )
     .is_err()
     {
-        return Ok(true); // rollback on drop; fail open
+        return Ok(false); // rollback on drop; fail open
     }
     if tx.commit().is_err() {
-        return Ok(true);
+        return Ok(false);
     }
     Ok(true)
 }

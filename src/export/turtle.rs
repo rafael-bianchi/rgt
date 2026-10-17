@@ -598,6 +598,12 @@ pub fn source_location(
     project_root: &Path,
     include_absolute: bool,
 ) -> SourceLocation {
+    if stored_path == "<stdin>" {
+        return SourceLocation {
+            relative_path: None,
+            absolute_path: None,
+        };
+    }
     let project = match project_root.canonicalize() {
         Ok(project) => project,
         Err(_) => {
@@ -620,11 +626,27 @@ pub fn source_location(
             .ok()
             .map(path_to_turtle_string)
     } else if path.is_relative()
+        && !path.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        let cleaned: std::path::PathBuf = path
+            .components()
+            .filter(|c| !matches!(c, std::path::Component::CurDir))
+            .collect();
+        (!cleaned.as_os_str().is_empty()).then(|| path_to_turtle_string(&cleaned))
+    } else if path.is_absolute()
         && !path
             .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_)))
+            .any(|c| matches!(c, std::path::Component::ParentDir))
     {
-        Some(path_to_turtle_string(path))
+        candidate
+            .strip_prefix(&project)
+            .ok()
+            .map(path_to_turtle_string)
     } else {
         None
     };

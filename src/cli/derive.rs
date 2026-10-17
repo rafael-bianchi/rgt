@@ -2,7 +2,9 @@ use crate::store::queries::{
     get_tracked_node, insert_derivation_edge, insert_or_reuse_duration, insert_tracked_node,
 };
 use crate::store::DbStore;
-use crate::types::{DurationClaim, DurationDisplay, DurationUnit, NodeType, TrackedNode, ValueData};
+use crate::types::{
+    DurationClaim, DurationDisplay, DurationUnit, NodeType, TrackedNode, ValueData,
+};
 use crate::verify::{
     compute_date_diff_seconds, compute_duration_aggregate, temporal_coercion_warning,
     valid_operation, validate_duration_parent_ids, validate_expression, verify, VerifyDeriveError,
@@ -114,15 +116,22 @@ pub fn execute_derive_core(
             .map_err(VerifyDeriveError::InvalidInput)?;
     }
 
-    let mut db = DbStore::open_in_project(".")
-        .map_err(|error| VerifyDeriveError::Internal(format!("failed to open database: {error}")))?;
+    let mut db = DbStore::open_in_project(".").map_err(|error| {
+        VerifyDeriveError::Internal(format!("failed to open database: {error}"))
+    })?;
     crate::graph::invalidation::sync_staleness(&db)
         .map_err(|error| VerifyDeriveError::Internal(format!("staleness check failed: {error}")))?;
     let conn = db.conn_mut();
     let mut parent_values = Vec::with_capacity(parent_ids.len());
+    let mut any_parent_stale = false;
     for parent_id in &parent_ids {
         match get_tracked_node(conn, parent_id) {
-            Ok(Some(node)) => parent_values.push(node.value),
+            Ok(Some(node)) => {
+                if node.is_stale {
+                    any_parent_stale = true;
+                }
+                parent_values.push(node.value);
+            }
             Ok(None) => {
                 return Err(VerifyDeriveError::InvalidInput(format!(
                     "parent node '{parent_id}' not found in database"
@@ -163,8 +172,8 @@ pub fn execute_derive_core(
         }
         "EXPRESSION" => {
             let expected = expression_result.expect("validated above");
-            let computed_val = verify(&parent_values, operation, expression, expected)
-                .map_err(|err| {
+            let computed_val =
+                verify(&parent_values, operation, expression, expected).map_err(|err| {
                     if err.contains(": expected ") {
                         VerifyDeriveError::VerificationFailed(err)
                     } else {
@@ -177,6 +186,7 @@ pub fn execute_derive_core(
     };
 
     let now = chrono::Utc::now();
+    let stale_reason = any_parent_stale.then(|| "PARENT_NODE_STALE".to_string());
     let node_id = if let ValueData::Duration(duration) = &value {
         let seconds = duration.num_seconds();
         let canonical_id =
@@ -189,8 +199,8 @@ pub fn execute_derive_core(
             value: value.clone(),
             source_doc_id: None,
             line_number: None,
-            is_stale: false,
-            stale_reason: None,
+            is_stale: any_parent_stale,
+            stale_reason: stale_reason.clone(),
             created_at: now,
             updated_at: now,
         };
@@ -212,22 +222,25 @@ pub fn execute_derive_core(
             value: value.clone(),
             source_doc_id: None,
             line_number: None,
-            is_stale: false,
-            stale_reason: None,
+            is_stale: any_parent_stale,
+            stale_reason,
             created_at: now,
             updated_at: now,
         };
-        let tx = conn
-            .unchecked_transaction()
-            .map_err(|error| VerifyDeriveError::Internal(format!("failed to begin derivation transaction: {error}")))?;
-        insert_tracked_node(&tx, &node)
-            .map_err(|error| VerifyDeriveError::Internal(format!("failed to insert derived node: {error}")))?;
+        let tx = conn.unchecked_transaction().map_err(|error| {
+            VerifyDeriveError::Internal(format!("failed to begin derivation transaction: {error}"))
+        })?;
+        insert_tracked_node(&tx, &node).map_err(|error| {
+            VerifyDeriveError::Internal(format!("failed to insert derived node: {error}"))
+        })?;
         for parent_id in &parent_ids {
-            insert_derivation_edge(&tx, parent_id, &node_id, operation, expression)
-                .map_err(|error| VerifyDeriveError::Internal(format!("failed to insert edge: {error}")))?;
+            insert_derivation_edge(&tx, parent_id, &node_id, operation, expression).map_err(
+                |error| VerifyDeriveError::Internal(format!("failed to insert edge: {error}")),
+            )?;
         }
-        tx.commit()
-            .map_err(|error| VerifyDeriveError::Internal(format!("failed to commit derivation transaction: {error}")))?;
+        tx.commit().map_err(|error| {
+            VerifyDeriveError::Internal(format!("failed to commit derivation transaction: {error}"))
+        })?;
         node_id
     };
 

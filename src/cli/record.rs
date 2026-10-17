@@ -80,48 +80,77 @@ pub fn execute_record_with_outcome(
     stdin: bool,
     explicit_format: Option<NumberFormat>,
 ) -> Result<RecordOutcome, String> {
-    let (content, hash, meta) = if file == "<stdin>" {
+    execute_record_with_content(file, stdin, None, explicit_format)
+}
+
+/// Core record operation accepting optional in-memory `explicit_content` (used by
+/// the MCP `record_values` tool so it never reads the JSON-RPC stdio stream).
+pub fn execute_record_with_content(
+    file: &str,
+    stdin: bool,
+    explicit_content: Option<String>,
+    explicit_format: Option<NumberFormat>,
+) -> Result<RecordOutcome, String> {
+    let path_obj = Path::new(file);
+    let (content, hash, meta) = if let Some(text) = explicit_content {
+        if file != "<stdin>" && path_obj.exists() {
+            let meta = get_metadata_snapshot(path_obj)
+                .map_err(|e| format!("failed to get metadata: {}", e))?;
+            let disk_bytes =
+                fs::read(path_obj).map_err(|e| format!("failed to read file: {}", e))?;
+            let hash = compute_blake3_hash_from_bytes(&disk_bytes);
+            (text, hash, meta)
+        } else {
+            let hash = compute_blake3_hash_from_bytes(text.as_bytes());
+            let meta = crate::detection::MetadataSnapshot {
+                mtime_nsec: 0,
+                file_size: text.len() as u64,
+                dev: None,
+                ino: None,
+            };
+            (text, hash, meta)
+        }
+    } else if stdin {
         let mut buf = Vec::new();
         io::stdin()
             .read_to_end(&mut buf)
             .map_err(|e| format!("failed to read stdin: {}", e))?;
-        let hash = compute_blake3_hash_from_bytes(&buf);
-        let content = read_utf8_content(file, buf)?;
-        let meta = crate::detection::MetadataSnapshot {
-            mtime_nsec: 0,
-            file_size: content.len() as u64,
-            dev: None,
-            ino: None,
-        };
-        (content, hash, meta)
-    } else {
-        let path_obj = Path::new(file);
-        if !path_obj.exists() {
-            return Err(format!("file not found: {}", file));
-        }
-        let meta = get_metadata_snapshot(path_obj)
-            .map_err(|e| format!("failed to get metadata: {}", e))?;
-
-        if stdin {
-            let mut buf = Vec::new();
-            io::stdin()
-                .read_to_end(&mut buf)
-                .map_err(|e| format!("failed to read stdin: {}", e))?;
-            let content = read_utf8_content(file, buf)?;
+        let content = read_utf8_content(file, buf.clone())?;
+        if file != "<stdin>" && path_obj.exists() {
+            let meta = get_metadata_snapshot(path_obj)
+                .map_err(|e| format!("failed to get metadata: {}", e))?;
             let disk_bytes =
                 fs::read(path_obj).map_err(|e| format!("failed to read file: {}", e))?;
             let hash = compute_blake3_hash_from_bytes(&disk_bytes);
             (content, hash, meta)
         } else {
-            let bytes = fs::read(file).map_err(|e| format!("failed to read file: {}", e))?;
-            let hash = compute_blake3_hash_from_bytes(&bytes);
-            let content = read_utf8_content(file, bytes)?;
+            let hash = compute_blake3_hash_from_bytes(&buf);
+            let meta = crate::detection::MetadataSnapshot {
+                mtime_nsec: 0,
+                file_size: content.len() as u64,
+                dev: None,
+                ino: None,
+            };
             (content, hash, meta)
         }
+    } else {
+        if !path_obj.exists() {
+            return Err(format!("file not found: {}", file));
+        }
+        let meta = get_metadata_snapshot(path_obj)
+            .map_err(|e| format!("failed to get metadata: {}", e))?;
+        let bytes = fs::read(file).map_err(|e| format!("failed to read file: {}", e))?;
+        let hash = compute_blake3_hash_from_bytes(&bytes);
+        let content = read_utf8_content(file, bytes)?;
+        (content, hash, meta)
     };
 
-    let mut db =
-        DbStore::open_in_project(".").map_err(|e| format!("failed to open database: {}", e))?;
+    let effective_root =
+        DbStore::find_project_root(".").unwrap_or_else(|| std::path::PathBuf::from("."));
+    let stored_path = DbStore::normalize_path_for_project(file, &effective_root);
+
+    let mut db = DbStore::open_in_project(&effective_root)
+        .map_err(|e| format!("failed to open database: {}", e))?;
     let conn = db.conn_mut();
 
     let number_format = resolve_number_format(conn, explicit_format);
@@ -142,7 +171,7 @@ pub fn execute_record_with_outcome(
         .transaction()
         .map_err(|e| format!("failed to begin transaction: {}", e))?;
 
-    crate::store::queries::record_file_batch(&tx, file, &meta, &hash, &extracted, None)
+    crate::store::queries::record_file_batch(&tx, &stored_path, &meta, &hash, &extracted, None)
         .map_err(|e| format!("failed to record file values: {}", e))?;
 
     tx.commit()

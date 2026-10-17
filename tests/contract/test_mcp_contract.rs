@@ -544,4 +544,45 @@ mod tests {
         assert_eq!(status["active_nodes"], 1);
         assert_eq!(status["stale_nodes"], 0);
     }
+
+    #[test]
+    fn record_values_with_inline_content_and_get_status_staleness_sync() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        assert!(std::process::Command::new(rgt())
+            .args(["init", "--agent", "codex"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap()
+            .status
+            .success());
+
+        let file = dir.path().join("inline.csv");
+        std::fs::write(&file, "revenue,250\n").unwrap();
+
+        let mut client = McpClient::spawn(dir.path());
+        client.initialize();
+        let _ = client.list_tools();
+
+        let rec = client.call_tool(
+            3,
+            "record_values",
+            serde_json::json!({
+                "file": file.to_string_lossy(),
+                "content": "revenue,250\n",
+            }),
+        );
+        assert_eq!(
+            rec["result"]["isError"],
+            serde_json::Value::Bool(false),
+            "{rec}"
+        );
+
+        std::fs::remove_file(&file).unwrap();
+        let status_resp = client.call_tool(4, "get_status", serde_json::json!({}));
+        let status: serde_json::Value =
+            serde_json::from_str(&client.text_content(&status_resp)).expect("status JSON");
+        assert_eq!(status["total_nodes"], 1);
+        assert_eq!(status["stale_nodes"], 1);
+    }
 }

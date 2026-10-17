@@ -128,7 +128,12 @@ fn antigravity_not_detected_via_bare_agents_skills() {
     let cwd = dir.path();
 
     // Bare .agents/skills should NOT trigger antigravity
-    write(&cwd.join(".agents").join("skills").join("my-skill").join("SKILL.md"));
+    write(
+        &cwd.join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .join("SKILL.md"),
+    );
     let detected = detect_installed_agents(dir.path(), &config_dir);
     assert!(
         !detected.contains(&"antigravity".to_string()),
@@ -136,7 +141,12 @@ fn antigravity_not_detected_via_bare_agents_skills() {
     );
 
     // .agents/rules or antigravity-cli in home SHOULD trigger antigravity
-    write(&dir.path().join(".gemini").join("antigravity-cli").join("config.json"));
+    write(
+        &dir.path()
+            .join(".gemini")
+            .join("antigravity-cli")
+            .join("config.json"),
+    );
     let detected = detect_installed_agents(dir.path(), &config_dir);
     assert!(detected.contains(&"antigravity".to_string()));
 }
@@ -147,7 +157,12 @@ fn windsurf_detected_via_codeium_dir() {
     let _guard = set_cwd(dir.path());
     let config_dir = dir.path().join("config");
 
-    write(&dir.path().join(".codeium").join("windsurf").join("hooks.json"));
+    write(
+        &dir.path()
+            .join(".codeium")
+            .join("windsurf")
+            .join("hooks.json"),
+    );
     let detected = detect_installed_agents(dir.path(), &config_dir);
     assert!(detected.contains(&"windsurf".to_string()));
 }
@@ -404,15 +419,22 @@ mod detection_tests {
             DetectionResult::VerifiedUnchanged { new_mtime_nsec, .. } => {
                 assert_eq!(new_mtime_nsec, m2.mtime_nsec);
             }
-            _ => panic!("expected VerifiedUnchanged, got {:?}", std::mem::discriminant(&res2)),
+            _ => panic!(
+                "expected VerifiedUnchanged, got {:?}",
+                std::mem::discriminant(&res2)
+            ),
         }
 
         // 3. evaluate_and_invalidate_all syncs mtime in source_documents
-        let mut cascade = rgt::graph::invalidation::InvalidationCascade::build_from_db(&db).unwrap();
+        let mut cascade =
+            rgt::graph::invalidation::InvalidationCascade::build_from_db(&db).unwrap();
         let count = cascade
             .evaluate_and_invalidate_all(&db, dir.path())
             .unwrap();
-        assert_eq!(count, 0, "no nodes should be invalidated on identical content touch");
+        assert_eq!(
+            count, 0,
+            "no nodes should be invalidated on identical content touch"
+        );
 
         // Verify that stored mtime in database was updated
         let stored_mtime: i64 = db
@@ -426,15 +448,8 @@ mod detection_tests {
         assert_eq!(stored_mtime, m2.mtime_nsec);
 
         // Next evaluation without force_hash is now Unchanged without Tier 2 hashing
-        let res3 = evaluate_file_change(
-            &p,
-            stored_mtime,
-            m2.file_size,
-            &hash,
-            m2.dev,
-            m2.ino,
-            false,
-        );
+        let res3 =
+            evaluate_file_change(&p, stored_mtime, m2.file_size, &hash, m2.dev, m2.ino, false);
         assert!(matches!(res3, DetectionResult::Unchanged));
     }
 }

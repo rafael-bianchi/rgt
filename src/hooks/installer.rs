@@ -664,7 +664,12 @@ fn write_claude_code(
     if outcome.kind != WriteKind::AlreadyCurrent {
         // The legacy hooks.json artifact is superseded by settings.json hooks.
         let old_hooks_file = claude_dir.join("hooks.json");
-        if old_hooks_file.exists() {
+        if old_hooks_file.exists()
+            && editor::read_config(&old_hooks_file)
+                .map(|c| c.contains("rgt"))
+                .unwrap_or(false)
+        {
+            let _ = editor::backup_before_write(&old_hooks_file);
             let _ = fs::remove_file(&old_hooks_file);
         }
     }
@@ -934,7 +939,10 @@ fn write_copilot(
             force,
         )?;
 
-        Ok(WriteOutcome::combine(&settings_file, [chat, cli, chat_rules]))
+        Ok(WriteOutcome::combine(
+            &settings_file,
+            [chat, cli, chat_rules],
+        ))
     }
 }
 
@@ -1176,7 +1184,11 @@ fn write_cline(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, C
 }
 
 /// Antigravity: rules file under `.agents/rules/`.
-fn write_antigravity(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, ConfigEditError> {
+fn write_antigravity(
+    home: &Path,
+    global: bool,
+    force: bool,
+) -> Result<WriteOutcome, ConfigEditError> {
     let rules_file = crate::hooks::paths::antigravity_guidance_path(home, global);
     ensure_text_block(
         &rules_file,
@@ -1218,8 +1230,7 @@ pub fn detect_installed_agents(home: &Path, config_dir: &Path) -> Vec<String> {
             "cursor" => home_dir(".cursor").exists(),
             "codex" => home_dir(".codex").exists(),
             "windsurf" => {
-                home_dir(".windsurf").exists()
-                    || home.join(".codeium").join("windsurf").exists()
+                home_dir(".windsurf").exists() || home.join(".codeium").join("windsurf").exists()
             }
             "copilot" => false,
             "gemini" => home_dir(".gemini").exists(),

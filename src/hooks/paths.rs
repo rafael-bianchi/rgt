@@ -194,10 +194,11 @@ pub fn kilocode_guidance_path(home: &Path, global: bool) -> PathBuf {
     if global {
         home.join(".kilocode").join("rules").join("rgt-rules.md")
     } else {
-        PathBuf::from(".kilocode").join("rules").join("rgt-rules.md")
+        PathBuf::from(".kilocode")
+            .join("rules")
+            .join("rgt-rules.md")
     }
 }
-
 
 /// All accepted `--agent` spellings (13 canonical + 3 aliases).
 pub const ALL_AGENT_NAMES: &[&str] = &[

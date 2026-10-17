@@ -919,33 +919,77 @@ mod tests {
         let db = rgt::store::DbStore::open_in_project(dir.path()).unwrap();
         let nodes = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
         assert_eq!(nodes.len(), 2);
-        let id_a = nodes.iter().find(|n| n.value.to_string_repr() == "10").unwrap().id.clone();
-        let id_b = nodes.iter().find(|n| n.value.to_string_repr() == "3").unwrap().id.clone();
+        let id_a = nodes
+            .iter()
+            .find(|n| n.value.to_string_repr() == "10")
+            .unwrap()
+            .id
+            .clone();
+        let id_b = nodes
+            .iter()
+            .find(|n| n.value.to_string_repr() == "3")
+            .unwrap()
+            .id
+            .clone();
 
         // 1. Unused parent 'b' must fail CLI with exit code 2
         let out_unused = Command::new(env!("CARGO_BIN_EXE_rgt"))
-            .args(["derive", "--parents", &format!("{id_a},{id_b}"), "--operation", "EXPRESSION", "--expression", "a + 0", "--result", "10"])
+            .args([
+                "derive",
+                "--parents",
+                &format!("{id_a},{id_b}"),
+                "--operation",
+                "EXPRESSION",
+                "--expression",
+                "a + 0",
+                "--result",
+                "10",
+            ])
             .current_dir(dir.path())
             .output()
             .unwrap();
-        assert_eq!(out_unused.status.code(), Some(2), "missing parent 'b' in expression must exit 2");
+        assert_eq!(
+            out_unused.status.code(),
+            Some(2),
+            "missing parent 'b' in expression must exit 2"
+        );
         let stderr_unused = String::from_utf8_lossy(&out_unused.stderr);
         assert!(stderr_unused.contains("parent variable 'b' is not referenced"));
 
         // 2. Computed value precision: caller claims rounded 3.3333333333, but stored value must be 10/3
         let out_derive = Command::new(env!("CARGO_BIN_EXE_rgt"))
-            .args(["derive", "--parents", &format!("{id_a},{id_b}"), "--operation", "EXPRESSION", "--expression", "a / b", "--result", "3.3333333333"])
+            .args([
+                "derive",
+                "--parents",
+                &format!("{id_a},{id_b}"),
+                "--operation",
+                "EXPRESSION",
+                "--expression",
+                "a / b",
+                "--result",
+                "3.3333333333",
+            ])
             .current_dir(dir.path())
             .output()
             .unwrap();
-        assert!(out_derive.status.success(), "derive 10/3 with close claim must succeed: {}", String::from_utf8_lossy(&out_derive.stderr));
+        assert!(
+            out_derive.status.success(),
+            "derive 10/3 with close claim must succeed: {}",
+            String::from_utf8_lossy(&out_derive.stderr)
+        );
 
         let updated_nodes = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
-        let derived_node = updated_nodes.iter().find(|n| matches!(n.node_type, rgt::types::NodeType::Derived)).expect("derived node exists");
+        let derived_node = updated_nodes
+            .iter()
+            .find(|n| matches!(n.node_type, rgt::types::NodeType::Derived))
+            .expect("derived node exists");
         match &derived_node.value {
             rgt::types::ValueData::Number(val) => {
                 let exact = 10.0 / 3.0;
-                assert_eq!(*val, exact, "derived node must store exact evaluated float, not caller's rounded claim");
+                assert_eq!(
+                    *val, exact,
+                    "derived node must store exact evaluated float, not caller's rounded claim"
+                );
             }
             _ => panic!("expected Number"),
         }

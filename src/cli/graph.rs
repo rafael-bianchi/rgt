@@ -106,12 +106,10 @@ fn execute_turtle(include_absolute_paths: bool, deadline: Instant) -> Result<(),
     crate::graph::invalidation::sync_staleness(&db)
         .map_err(|e| format!("Staleness check failed: {e}"))?;
     let snapshot = load_snapshot(db.conn(), deadline)?;
-    let rendered = turtle::render_turtle(
-        &snapshot,
-        std::path::Path::new("."),
-        include_absolute_paths,
-        deadline,
-    )?;
+    let project_root =
+        DbStore::find_project_root(".").unwrap_or_else(|| std::path::PathBuf::from("."));
+    let rendered =
+        turtle::render_turtle(&snapshot, &project_root, include_absolute_paths, deadline)?;
     if rendered.turtle.len() > MAX_TURTLE_BYTES {
         return Err(format!(
             "Turtle export exceeds the {MAX_TURTLE_BYTES}-byte output limit"

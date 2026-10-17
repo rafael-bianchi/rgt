@@ -34,6 +34,45 @@ impl DbStore {
         None
     }
 
+    /// When a relative `file_path` is recorded from a subdirectory inside `project_root`,
+    /// rebases it relative to `project_root` so subsequent `project_root.join(rel_path)`
+    /// checks in `evaluate_and_invalidate_all` locate the file on disk. When CWD equals
+    /// `project_root` (or `file_path` is absolute or `<stdin>`), preserves `file_path` verbatim.
+    pub fn normalize_path_for_project(file_path: &str, project_root: &Path) -> String {
+        if file_path == "<stdin>" || !Path::new(file_path).is_relative() {
+            return file_path.to_string();
+        }
+        let Ok(cwd_canon) = std::env::current_dir().and_then(std::fs::canonicalize) else {
+            return file_path.to_string();
+        };
+        let Ok(root_canon) = std::fs::canonicalize(project_root) else {
+            return file_path.to_string();
+        };
+        if cwd_canon == root_canon {
+            return file_path.to_string();
+        }
+        if let Ok(sub_rel) = cwd_canon.strip_prefix(&root_canon) {
+            return sub_rel.join(file_path).to_string_lossy().to_string();
+        }
+        file_path.to_string()
+    }
+
+    /// Initializes or opens `.rgt/store.db` directly in `project_root` without walking
+    /// up parent directories (used by `rgt init`, analogous to `git init`).
+    pub fn init_in_project<P: AsRef<Path>>(project_root: P) -> Result<Self> {
+        let rgt_dir = project_root.as_ref().join(".rgt");
+        if !rgt_dir.exists() {
+            fs::create_dir_all(&rgt_dir).map_err(|e| {
+                rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(1),
+                    Some(format!("Failed to create .rgt dir: {}", e)),
+                )
+            })?;
+        }
+        let db_path = rgt_dir.join("store.db");
+        Self::open_with_timeout(db_path, std::time::Duration::from_secs(5))
+    }
+
     pub fn open_in_project<P: AsRef<Path>>(project_root: P) -> Result<Self> {
         Self::open_in_project_with_timeout(project_root, std::time::Duration::from_secs(5))
     }

@@ -47,7 +47,7 @@ pub fn execute_init(
     agent: Option<&str>,
     number_format: Option<NumberFormat>,
 ) -> Result<(), String> {
-    let db = crate::store::DbStore::open_in_project(".")
+    let db = crate::store::DbStore::init_in_project(".")
         .map_err(|e| format!("Database init failed: {}", e))?;
     if let Some(fmt) = number_format {
         set_setting(db.conn(), "number_format", fmt.as_str())

@@ -80,11 +80,14 @@ fn approx_eq(a: f64, b: f64) -> bool {
         return true;
     }
     let largest = a.abs().max(b.abs());
-    if largest > 1e-14 && a.is_sign_positive() != b.is_sign_positive() {
+    if a == 0.0 || b == 0.0 {
+        return largest <= f64::EPSILON * 8.0;
+    }
+    if a.is_sign_positive() != b.is_sign_positive() {
         return false;
     }
     let diff = (a - b).abs();
-    diff <= (1e-9 * largest).max(f64::EPSILON * 8.0)
+    diff <= 1e-9 * largest
 }
 
 /// Checks that all variables for `parents` (`a`.. up to `parents.len()`) are referenced in `expression`.
@@ -93,13 +96,13 @@ fn validate_parent_variable_references(
     parent_count: usize,
 ) -> Result<(), String> {
     let bytes = expression.as_bytes();
-    for i in 0..parent_count {
-        let var = PARENT_VARIABLES[i] as char;
+    for &var_byte in PARENT_VARIABLES.iter().take(parent_count) {
+        let var = var_byte as char;
         let mut found = false;
         for (idx, &b) in bytes.iter().enumerate() {
-            if b == var as u8 {
-                let prev_ok = idx == 0
-                    || (!bytes[idx - 1].is_ascii_alphanumeric() && bytes[idx - 1] != b'_');
+            if b == var_byte {
+                let prev_ok =
+                    idx == 0 || (!bytes[idx - 1].is_ascii_alphanumeric() && bytes[idx - 1] != b'_');
                 let next_ok = idx + 1 == bytes.len()
                     || (!bytes[idx + 1].is_ascii_alphanumeric() && bytes[idx + 1] != b'_');
                 if prev_ok && next_ok {

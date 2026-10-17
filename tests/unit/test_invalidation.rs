@@ -162,4 +162,3 @@ fn rerecord_invalidates_modified_root_nodes_and_their_derivations() {
         .unwrap();
     assert!(!n200.is_stale, "new 200 root node must be fresh");
 }
-

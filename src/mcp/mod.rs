@@ -90,7 +90,7 @@ impl RgtMcpServer {
             None => None,
             Some(raw) => Some(raw.parse().map_err(|e: String| e)?),
         };
-        let outcome = crate::cli::record::execute_record_with_outcome(&file, content.is_some(), fmt)?;
+        let outcome = crate::cli::record::execute_record_with_content(&file, false, content, fmt)?;
         Ok(Json(serde_json::to_value(outcome).unwrap_or_default()))
     }
 
@@ -121,9 +121,13 @@ impl RgtMcpServer {
             result,
         }): Parameters<DeriveParams>,
     ) -> Result<Json<serde_json::Value>, String> {
-        let node_id =
-            crate::cli::derive::execute_derive_mcp(&parents, &operation, expression.as_deref(), result)
-                .map_err(|e| e.to_string())?;
+        let node_id = crate::cli::derive::execute_derive_mcp(
+            &parents,
+            &operation,
+            expression.as_deref(),
+            result,
+        )
+        .map_err(|e| e.to_string())?;
         Ok(Json(serde_json::json!({ "node_id": node_id })))
     }
 
@@ -132,6 +136,8 @@ impl RgtMcpServer {
     async fn get_status(&self) -> Result<Json<serde_json::Value>, String> {
         let db = crate::store::DbStore::open_in_project(".")
             .map_err(|e| format!("failed to open database: {}", e))?;
+        crate::graph::invalidation::sync_staleness(&db)
+            .map_err(|e| format!("failed to evaluate staleness: {}", e))?;
         let conn = db.conn();
         let all = crate::store::queries::list_all_nodes(conn)
             .map_err(|e| format!("failed to list nodes: {}", e))?;

@@ -542,8 +542,9 @@ fn schema_v2_to_v3_migration_adds_duration_secs_and_updates_check_constraint() {
              CREATE TABLE project_settings (
                  key TEXT PRIMARY KEY,
                  value TEXT NOT NULL
-             );"
-        ).unwrap();
+             );",
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO tracked_nodes (id, node_type, value_kind, number_val, is_stale, created_at, updated_at)
              VALUES ('test_node', 'ROOT', 'NUMBER', 42.0, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
@@ -554,7 +555,9 @@ fn schema_v2_to_v3_migration_adds_duration_secs_and_updates_check_constraint() {
     let db = DbStore::open_in_project(dir.path()).unwrap();
     assert_eq!(rgt::store::schema::schema_version(db.conn()).unwrap(), 3);
 
-    let node = rgt::store::queries::get_tracked_node(db.conn(), "test_node").unwrap().unwrap();
+    let node = rgt::store::queries::get_tracked_node(db.conn(), "test_node")
+        .unwrap()
+        .unwrap();
     assert_eq!(node.value, ValueData::Number(42.0));
 
     let dur_node = TrackedNode {
@@ -581,15 +584,9 @@ fn path_aliasing_preserves_source_doc_id_links_across_alias_rerecords() {
     let dev = Some(100u64);
     let ino = Some(200u64);
 
-    let doc1 = rgt::store::queries::upsert_source_document(
-        conn,
-        "data.csv",
-        1000,
-        50,
-        "hash1",
-        dev,
-        ino,
-    ).unwrap();
+    let doc1 =
+        rgt::store::queries::upsert_source_document(conn, "data.csv", 1000, 50, "hash1", dev, ino)
+            .unwrap();
 
     let node1 = root_node("node1", ValueData::Number(10.0), Some(doc1.id), Some(1));
     rgt::store::queries::insert_tracked_node(conn, &node1).unwrap();
@@ -602,16 +599,24 @@ fn path_aliasing_preserves_source_doc_id_links_across_alias_rerecords() {
         "hash1",
         dev,
         ino,
-    ).unwrap();
+    )
+    .unwrap();
 
-    let fetched = rgt::store::queries::get_tracked_node(conn, "node1").unwrap().unwrap();
-    assert_eq!(fetched.source_doc_id, Some(doc2.id), "source_doc_id must be updated, never NULL");
+    let fetched = rgt::store::queries::get_tracked_node(conn, "node1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fetched.source_doc_id,
+        Some(doc2.id),
+        "source_doc_id must be updated, never NULL"
+    );
 
-    let count: i64 = conn.query_row(
-        "SELECT count(*) FROM source_documents WHERE dev = ?1 AND ino = ?2",
-        rusqlite::params![dev, ino],
-        |row| row.get(0),
-    ).unwrap();
+    let count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM source_documents WHERE dev = ?1 AND ino = ?2",
+            rusqlite::params![dev, ino],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert_eq!(count, 1);
 }
-

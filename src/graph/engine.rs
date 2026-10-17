@@ -58,12 +58,7 @@ impl GraphEngine {
 
     /// Adds a derivation edge without running acyclicity checks.
     /// Used for bulk loading from persisted database state.
-    pub fn add_derivation_edge_unchecked(
-        &mut self,
-        parent_id: &str,
-        child_id: &str,
-        op: &str,
-    ) {
+    pub fn add_derivation_edge_unchecked(&mut self, parent_id: &str, child_id: &str, op: &str) {
         let parent_idx = self.get_or_add_node(parent_id);
         let child_idx = self.get_or_add_node(child_id);
         self.graph.add_edge(parent_idx, child_idx, op.to_string());

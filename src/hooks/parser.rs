@@ -163,9 +163,10 @@ pub fn parse_hook_payload(json_str: &str) -> Result<HookPayload, serde_json::Err
 /// the concrete format once per file (FR-004).
 pub fn extract_values_from_content(content: &str, format: NumberFormat) -> ExtractionResult {
     let mut result = ExtractionResult::default();
-    let iso_date_regex =
-        Regex::new(r"\b(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?)\b")
-            .unwrap();
+    let iso_date_regex = Regex::new(
+        r"\b(\d{4}-\d{2}-\d{2}(?:[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})?)?)\b",
+    )
+    .unwrap();
     // FR-004: resolve `Auto` once per file, then reuse the concrete format.
     let format = match format {
         NumberFormat::Auto => resolve_auto_format(content),
@@ -184,7 +185,7 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
             if let Some(m) = cap.get(1) {
                 let s = m.as_str();
                 date_spans.push((m.start(), m.end()));
-                let dt = if s.contains('T') {
+                let dt = if s.contains(['T', 't']) {
                     DateTime::parse_from_rfc3339(s)
                         .map(|d| d.with_timezone(&Utc))
                         .or_else(|_| {
@@ -239,10 +240,45 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
                 }
                 let end = m.start() + trimmed.len();
 
-                // Attach sign, currency context, accounting parens
-                let (prefix, suffix) = candidate_context(line, m.start(), end);
+                // Reject hex/UUID/hash/ordinal tokens (e.g. `96a3adc0`, `7e3a9f1`, `0x1a2b`, `1st`, `4faf`)
+                // while still permitting measurement/time/computing unit suffixes (`12.5kg`, `99.9ms`, `100GB`).
+                let after = &line[end..];
+                if let Some(first_after) = after.chars().next() {
+                    if first_after.is_alphanumeric() || first_after == '_' {
+                        let word_suffix: String = after
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                            .collect();
+                        if !is_allowed_unit_suffix(&word_suffix) || trimmed.contains(['e', 'E']) {
+                            continue;
+                        }
+                    }
+                }
+                // Reject UUID/hex middle segments like `-81e6-` in `96a3adc0-f76e-4faf-81e6-5b0578c2c46d`
+                if trimmed.contains(['e', 'E']) && !trimmed.contains('.') {
+                    let before_hyphen_word = line[..m.start()]
+                        .strip_suffix('-')
+                        .and_then(|b| b.chars().last())
+                        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+                    if before_hyphen_word {
+                        continue;
+                    }
+                }
 
-                match process_candidate(&prefix, trimmed, &suffix, format) {
+                // Attach sign, currency context, accounting parens
+                let (prefix, suffix, has_currency, preceded_by_comma) =
+                    candidate_context_ext(line, m.start(), end);
+                let has_line_whitespace = line.contains([' ', '\t']);
+
+                match process_candidate(
+                    &prefix,
+                    trimmed,
+                    &suffix,
+                    format,
+                    has_currency,
+                    preceded_by_comma,
+                    has_line_whitespace,
+                ) {
                     ProcessedCandidate::Single(num) => {
                         result.values.push(ExtractedValue {
                             value: ValueData::Number(num),
@@ -272,6 +308,77 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
     result
 }
 
+fn is_allowed_unit_suffix(suffix: &str) -> bool {
+    if !suffix.chars().all(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    matches!(
+        suffix.to_ascii_lowercase().as_str(),
+        "s" | "ms"
+            | "us"
+            | "ns"
+            | "m"
+            | "min"
+            | "mins"
+            | "h"
+            | "hr"
+            | "hrs"
+            | "d"
+            | "w"
+            | "wk"
+            | "wks"
+            | "y"
+            | "yr"
+            | "yrs"
+            | "g"
+            | "kg"
+            | "mg"
+            | "ug"
+            | "lb"
+            | "lbs"
+            | "oz"
+            | "km"
+            | "cm"
+            | "mm"
+            | "um"
+            | "nm"
+            | "mi"
+            | "ft"
+            | "in"
+            | "yd"
+            | "l"
+            | "ml"
+            | "b"
+            | "kb"
+            | "mb"
+            | "gb"
+            | "tb"
+            | "pb"
+            | "kib"
+            | "mib"
+            | "gib"
+            | "tib"
+            | "hz"
+            | "khz"
+            | "mhz"
+            | "ghz"
+            | "px"
+            | "pt"
+            | "em"
+            | "rem"
+            | "vw"
+            | "vh"
+            | "v"
+            | "kv"
+            | "mv"
+            | "kw"
+            | "mw"
+            | "ma"
+            | "c"
+            | "k"
+    )
+}
+
 enum ProcessedCandidate {
     Single(f64),
     Split(Vec<f64>),
@@ -283,6 +390,9 @@ fn process_candidate(
     raw: &str,
     suffix: &str,
     format: NumberFormat,
+    has_currency: bool,
+    preceded_by_comma: bool,
+    has_line_whitespace: bool,
 ) -> ProcessedCandidate {
     let (decimal, thousands) = match format {
         NumberFormat::Us => ('.', ','),
@@ -290,8 +400,8 @@ fn process_candidate(
         NumberFormat::Auto => unreachable!("Auto resolved before candidate processing"),
     };
 
-    // Scientific notation check
-    if raw.contains(['e', 'E']) {
+    // Scientific notation check (only when not a comma/dot-separated multi-token row)
+    if raw.contains(['e', 'E']) && !raw.contains(thousands) {
         let has_minus = prefix.starts_with('-');
         let has_parens = prefix.contains('(') && suffix.contains(')');
         let negative = has_minus ^ has_parens;
@@ -319,7 +429,9 @@ fn process_candidate(
         // US format convention: '.' is decimal, ',' is thousands
         if raw.contains(',') {
             // Check if valid single thousands-grouped number
-            let is_valid_single = if let Some(dot_idx) = raw.find('.') {
+            let is_valid_single = if preceded_by_comma {
+                false
+            } else if let Some(dot_idx) = raw.find('.') {
                 let after_dot = &raw[dot_idx + 1..];
                 if after_dot.contains('.')
                     || after_dot.contains(',')
@@ -331,6 +443,7 @@ fn process_candidate(
                     let int_part = &raw[..dot_idx];
                     let groups: Vec<&str> = int_part.split(',').collect();
                     (1..=3).contains(&groups[0].len())
+                        && !groups[0].starts_with('0')
                         && groups[0].chars().all(|c| c.is_ascii_digit())
                         && groups[1..]
                             .iter()
@@ -338,11 +451,23 @@ fn process_candidate(
                 }
             } else {
                 let groups: Vec<&str> = raw.split(',').collect();
-                groups.len() == 2
+                let valid_thousands_shape = groups.len() >= 2
                     && (1..=3).contains(&groups[0].len())
+                    && !groups[0].starts_with('0')
                     && groups[0].chars().all(|c| c.is_ascii_digit())
-                    && groups[1].len() == 3
-                    && groups[1].chars().all(|c| c.is_ascii_digit())
+                    && groups[1..]
+                        .iter()
+                        .all(|g| g.len() == 3 && g.chars().all(|c| c.is_ascii_digit()));
+                if !valid_thousands_shape {
+                    false
+                } else if groups.len() == 2 {
+                    true
+                } else {
+                    // For 3+ groups without a decimal point (e.g. `1,000,000` vs `10,200,300`),
+                    // treat as a single number when in currency/prose context or when any
+                    // thousands group is `"000"`; treat bare whitespace-free CSV rows as split.
+                    has_currency || has_line_whitespace || groups[1..].contains(&"000")
+                }
             };
 
             if is_valid_single {
@@ -401,6 +526,7 @@ fn process_candidate(
                     let int_part = &raw[..comma_idx];
                     let groups: Vec<&str> = int_part.split('.').collect();
                     (1..=3).contains(&groups[0].len())
+                        && !groups[0].starts_with('0')
                         && groups[0].chars().all(|c| c.is_ascii_digit())
                         && groups[1..]
                             .iter()
@@ -408,11 +534,13 @@ fn process_candidate(
                 }
             } else {
                 let groups: Vec<&str> = raw.split('.').collect();
-                groups.len() == 2
+                groups.len() >= 2
                     && (1..=3).contains(&groups[0].len())
+                    && !groups[0].starts_with('0')
                     && groups[0].chars().all(|c| c.is_ascii_digit())
-                    && groups[1].len() == 3
-                    && groups[1].chars().all(|c| c.is_ascii_digit())
+                    && groups[1..]
+                        .iter()
+                        .all(|g| g.len() == 3 && g.chars().all(|c| c.is_ascii_digit()))
             };
 
             if is_valid_single {
@@ -437,17 +565,16 @@ fn process_candidate(
 }
 
 /// Expands a numeric core span into its optional sign/parentheses context:
-/// returns `(prefix, suffix)` strings. The prefix may be a leading `-`/`+`
-/// and/or an opening `(`; the suffix is a closing `)` when an opening `(` was
-/// attached. Attachment is suppressed when the context is preceded by a word
-/// character, so `abc-123` and `abc(500)` do not take on a sign.
-fn candidate_context(line: &str, start: usize, end: usize) -> (String, String) {
+/// returns `(prefix, suffix, has_currency, preceded_by_comma)`.
+fn candidate_context_ext(line: &str, start: usize, end: usize) -> (String, String, bool, bool) {
     let is_currency = |c: char| matches!(c, '$' | '€' | '£' | '¥');
     let before = &line[..start];
 
     // Trim single preceding currency symbol if present
+    let mut has_currency = false;
     let before_trimmed_curr = if let Some(last_char) = before.chars().last() {
         if is_currency(last_char) {
+            has_currency = true;
             &before[..before.len() - last_char.len_utf8()]
         } else {
             before
@@ -464,6 +591,10 @@ fn candidate_context(line: &str, start: usize, end: usize) -> (String, String) {
 
     let sign_byte_len: usize = sign_chars.iter().map(|c| c.len_utf8()).sum();
     let rem = &before_trimmed_curr[..before_trimmed_curr.len() - sign_byte_len];
+    if !has_currency && rem.chars().last().is_some_and(is_currency) {
+        has_currency = true;
+    }
+    let preceded_by_comma = rem.ends_with(',');
     let preceded_by_word = rem
         .chars()
         .last()
@@ -480,13 +611,11 @@ fn candidate_context(line: &str, start: usize, end: usize) -> (String, String) {
     };
 
     let mut suffix = String::new();
-    if end < line.len() && prefix.contains('(') {
-        if line[end..].starts_with(')') {
-            suffix.push(')');
-        }
+    if end < line.len() && prefix.contains('(') && line[end..].starts_with(')') {
+        suffix.push(')');
     }
 
-    (prefix, suffix)
+    (prefix, suffix, has_currency, preceded_by_comma)
 }
 
 /// Normalizes a captured number candidate into an `f64` under the active
@@ -521,6 +650,9 @@ fn normalize_number(
             cleaned.push('.');
             i += 1;
         } else if c == thousands {
+            if decimal_seen {
+                return None;
+            }
             // The group of digits after a thousands separator must be exactly 3.
             let mut count = 0;
             let mut j = i + 1;
@@ -641,11 +773,15 @@ fn opencode_native_read_dialect(value: &serde_json::Value) -> Option<NormalizedC
     let display = metadata.get("display")?;
     let text = display.get("text")?.as_str()?;
     let line_count = u32::try_from(text.lines().count()).ok()?;
+    let split_line_count = u64::try_from(text.split('\n').count()).ok()?;
     let line_start = display.get("lineStart")?.as_u64()?;
     let line_end = display.get("lineEnd")?.as_u64()?;
     let total_lines = display.get("totalLines")?.as_u64()?;
     let line_count_u64 = u64::from(line_count);
-    let lines_match = line_count_u64 == total_lines || line_count_u64 + 1 == total_lines;
+    let lines_match = line_count_u64 == total_lines
+        || line_count_u64 + 1 == total_lines
+        || split_line_count == total_lines
+        || split_line_count + 1 == total_lines;
     if path.is_empty()
         || result.get("output")?.as_str().is_none()
         || [value, result]
@@ -661,6 +797,7 @@ fn opencode_native_read_dialect(value: &serde_json::Value) -> Option<NormalizedC
     {
         return None;
     }
+    let mapped_lines = u32::try_from(total_lines.max(1)).unwrap_or(line_count.max(1));
     let content = text.to_string();
     Some(NormalizedCapture {
         path: Some(path.to_string()),
@@ -668,7 +805,7 @@ fn opencode_native_read_dialect(value: &serde_json::Value) -> Option<NormalizedC
         phase: CapturePhase::After,
         outcome_evidence: OutcomeEvidence::CompletedResult,
         completed_content: Some(content.clone()),
-        source_line_mapping: Some((1..=line_count).collect()),
+        source_line_mapping: Some((1..=mapped_lines).collect()),
         content_complete: true,
         content: Some(content),
         pdf_base64: None,
@@ -715,10 +852,7 @@ fn is_qualifying_read_event(
                 && capture.read_target.is_some()
         }
         (Some("codex"), Some("read_file" | "ReadFile" | "Read")) => capture.read_target.is_some(),
-        (
-            Some("codex"),
-            Some("Bash" | "bash" | "execute_command" | "ExecuteCommand" | "exec"),
-        ) => {
+        (Some("codex"), Some("Bash" | "bash" | "execute_command" | "ExecuteCommand" | "exec")) => {
             let command = value
                 .get("tool_input")
                 .and_then(|input| input.get("command"))

@@ -75,45 +75,56 @@ pub fn stamp_or_migrate_schema(conn: &Connection) -> Result<()> {
                 }
                 found
             };
+            let table_sql: String = conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='tracked_nodes'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or_default();
 
-            conn.execute_batch(
-                "CREATE TABLE tracked_nodes_v3 (
-                    id TEXT PRIMARY KEY,
-                    node_type TEXT NOT NULL CHECK(node_type IN ('ROOT', 'DERIVED')),
-                    value_kind TEXT NOT NULL CHECK(value_kind IN ('NUMBER', 'DATE', 'DURATION')),
-                    number_val REAL,
-                    date_val TEXT,
-                    duration_secs INTEGER,
-                    source_doc_id INTEGER REFERENCES source_documents(id) ON DELETE SET NULL,
-                    line_number INTEGER,
-                    is_stale INTEGER NOT NULL DEFAULT 0,
-                    stale_reason TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );",
-            )?;
-
-            if has_duration_secs {
-                conn.execute_batch(
-                    "INSERT INTO tracked_nodes_v3 (id, node_type, value_kind, number_val, date_val, duration_secs, source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at)
-                     SELECT id, node_type, value_kind, number_val, date_val, duration_secs, source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at
-                     FROM tracked_nodes;",
-                )?;
+            if has_duration_secs && table_sql.contains("'DURATION'") {
+                conn.execute_batch("PRAGMA user_version = 3;")?;
             } else {
                 conn.execute_batch(
-                    "INSERT INTO tracked_nodes_v3 (id, node_type, value_kind, number_val, date_val, duration_secs, source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at)
-                     SELECT id, node_type, value_kind, number_val, date_val, NULL, source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at
-                     FROM tracked_nodes;",
+                    "CREATE TABLE tracked_nodes_v3 (
+                        id TEXT PRIMARY KEY,
+                        node_type TEXT NOT NULL CHECK(node_type IN ('ROOT', 'DERIVED')),
+                        value_kind TEXT NOT NULL CHECK(value_kind IN ('NUMBER', 'DATE', 'DURATION')),
+                        number_val REAL,
+                        date_val TEXT,
+                        duration_secs INTEGER,
+                        source_doc_id INTEGER REFERENCES source_documents(id) ON DELETE SET NULL,
+                        line_number INTEGER,
+                        is_stale INTEGER NOT NULL DEFAULT 0 CHECK(is_stale IN (0, 1)),
+                        stale_reason TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );",
+                )?;
+
+                if has_duration_secs {
+                    conn.execute_batch(
+                        "INSERT INTO tracked_nodes_v3 (id, node_type, value_kind, number_val, date_val, duration_secs, source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at)
+                         SELECT id, node_type, value_kind, number_val, date_val, duration_secs, source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at
+                         FROM tracked_nodes;",
+                    )?;
+                } else {
+                    conn.execute_batch(
+                        "INSERT INTO tracked_nodes_v3 (id, node_type, value_kind, number_val, date_val, duration_secs, source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at)
+                         SELECT id, node_type, value_kind, number_val, date_val, NULL, source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at
+                         FROM tracked_nodes;",
+                    )?;
+                }
+
+                conn.execute_batch(
+                    "DROP TABLE tracked_nodes;
+                     ALTER TABLE tracked_nodes_v3 RENAME TO tracked_nodes;
+                     CREATE INDEX IF NOT EXISTS idx_tracked_nodes_source_doc ON tracked_nodes(source_doc_id);
+                     CREATE INDEX IF NOT EXISTS idx_tracked_nodes_stale ON tracked_nodes(is_stale);
+                     PRAGMA user_version = 3;",
                 )?;
             }
-
-            conn.execute_batch(
-                "DROP TABLE tracked_nodes;
-                 ALTER TABLE tracked_nodes_v3 RENAME TO tracked_nodes;
-                 CREATE INDEX IF NOT EXISTS idx_tracked_nodes_source ON tracked_nodes(source_doc_id);
-                 CREATE INDEX IF NOT EXISTS idx_tracked_nodes_stale ON tracked_nodes(is_stale);
-                 PRAGMA user_version = 3;",
-            )?;
             version = 3;
         }
         if version != SCHEMA_VERSION {

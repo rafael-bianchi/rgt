@@ -607,7 +607,10 @@ fn copilot_writer_respects_global_and_project_scope() {
     assert!(configured(&report_global).contains(&"copilot".to_string()));
     assert!(config_dir.join("Code/User/settings.json").exists());
     assert!(
-        !dir_global.path().join(".github/copilot-instructions.md").exists(),
+        !dir_global
+            .path()
+            .join(".github/copilot-instructions.md")
+            .exists(),
         "global init must not write project-local guidance"
     );
 }
@@ -648,7 +651,14 @@ fn guidance_agents_global_scope_writes_to_home() {
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
 
-    for agent in ["codex", "cursor", "windsurf", "cline", "antigravity", "kilocode"] {
+    for agent in [
+        "codex",
+        "cursor",
+        "windsurf",
+        "cline",
+        "antigravity",
+        "kilocode",
+    ] {
         run(&home, &config_dir, true, true, agent);
         // None of these should have written into CWD
         assert!(
@@ -664,7 +674,9 @@ fn guidance_agents_global_scope_writes_to_home() {
             "{agent} global init must not write to CWD"
         );
         assert!(
-            !dir.path().join(".agents/rules/antigravity-rgt-rules.md").exists(),
+            !dir.path()
+                .join(".agents/rules/antigravity-rgt-rules.md")
+                .exists(),
             "{agent} global init must not write to CWD"
         );
         assert!(

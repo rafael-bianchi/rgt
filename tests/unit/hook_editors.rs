@@ -400,4 +400,3 @@ fn shell_tokens_preserves_windows_paths() {
         Some(("claude-code".to_string(), "post".to_string()))
     );
 }
-

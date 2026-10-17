@@ -1,4 +1,6 @@
-use rgt::hooks::parser::{extract_path_from_command, extract_values_from_content, normalize_agent_event};
+use rgt::hooks::parser::{
+    extract_path_from_command, extract_values_from_content, normalize_agent_event,
+};
 use rgt::hooks::parser::{CapturePhase, OutcomeEvidence};
 
 #[test]
@@ -948,7 +950,10 @@ fn non_finite_numbers_are_skipped_and_negative_zero_canonicalized() {
     let huge = "1".repeat(320);
     let content = format!("val: {huge} and -0.0\n");
     let outcome = extract_values_from_content(&content, rgt::hooks::parser::NumberFormat::Us);
-    assert_eq!(outcome.skipped_malformed, 1, "huge float overflow must be skipped");
+    assert_eq!(
+        outcome.skipped_malformed, 1,
+        "huge float overflow must be skipped"
+    );
     assert_eq!(outcome.values.len(), 1);
     match outcome.values[0].value {
         rgt::types::ValueData::Number(n) => {
@@ -959,3 +964,24 @@ fn non_finite_numbers_are_skipped_and_negative_zero_canonicalized() {
     }
 }
 
+#[test]
+fn millions_and_billions_stay_single_numbers_while_csv_and_uuids_behave_cleanly() {
+    let prose = "Revenue: 1,000,000 and budget $12,345,678\n";
+    assert_eq!(
+        nums(prose, rgt::hooks::parser::NumberFormat::Auto),
+        vec![1_000_000.0, 12_345_678.0]
+    );
+
+    let csv_sci = "10,1.5e10\n";
+    assert_eq!(
+        nums(csv_sci, rgt::hooks::parser::NumberFormat::Auto),
+        vec![10.0, 1.5e10]
+    );
+
+    let ids =
+        "commit 7e3a9f1 and 0x1a2b and uuid 96a3adc0-f76e-4faf-81e6-5b0578c2c46d and 1st place\n";
+    assert!(
+        nums(ids, rgt::hooks::parser::NumberFormat::Auto).is_empty(),
+        "hex strings, UUIDs, and ordinals must not leak bogus numbers"
+    );
+}
