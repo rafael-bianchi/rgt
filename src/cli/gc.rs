@@ -9,13 +9,31 @@ pub fn execute_gc(vacuum: bool) -> Result<(), String> {
     let mut db =
         DbStore::open_in_project(".").map_err(|e| format!("failed to open database: {}", e))?;
 
+    // Evaluate staleness across the project before GC so modified/deleted files are caught.
+    crate::graph::invalidation::sync_staleness(&db)
+        .map_err(|e| format!("staleness check failed: {}", e))?;
+
     let tx = db
         .conn_mut()
         .transaction()
         .map_err(|e| format!("failed to begin transaction: {}", e))?;
 
-    let removed = delete_obsolete_nodes(&tx)
-        .map_err(|e| format!("failed to collect obsolete nodes: {}", e))?;
+    let mut total_removed = 0;
+    loop {
+        let removed = delete_obsolete_nodes(&tx)
+            .map_err(|e| format!("failed to collect obsolete nodes: {}", e))?;
+        if removed == 0 {
+            break;
+        }
+        total_removed += removed;
+    }
+
+    // Clean up orphaned source_documents where no tracked_nodes reference them
+    let _ = tx.execute(
+        "DELETE FROM source_documents
+         WHERE id NOT IN (SELECT DISTINCT source_doc_id FROM tracked_nodes WHERE source_doc_id IS NOT NULL)",
+        [],
+    );
 
     tx.commit()
         .map_err(|e| format!("failed to commit gc transaction: {}", e))?;
@@ -26,7 +44,7 @@ pub fn execute_gc(vacuum: bool) -> Result<(), String> {
             .map_err(|e| format!("failed to vacuum store: {}", e))?;
     }
 
-    println!("Removed {} obsolete node(s)", removed);
+    println!("Removed {} obsolete node(s)", total_removed);
     Ok(())
 }
 

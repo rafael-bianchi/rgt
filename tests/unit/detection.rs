@@ -300,4 +300,90 @@ mod detection_tests {
             .unwrap();
         assert_eq!(count, 1, "case variants of the same file must dedupe");
     }
+
+    #[test]
+    fn tier2_match_updates_mtime_and_does_not_rehash_repeatedly() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = DbStore::open_in_project(dir.path()).unwrap();
+        let p = dir.path().join("values.txt");
+        std::fs::write(&p, "total,100\n").unwrap();
+        let m1 = get_metadata_snapshot(&p).unwrap();
+        let hash = compute_blake3_hash(&p).unwrap();
+
+        upsert_source_document(
+            db.conn(),
+            "values.txt",
+            m1.mtime_nsec,
+            m1.file_size,
+            &hash,
+            m1.dev,
+            m1.ino,
+        )
+        .unwrap();
+
+        // 1. Unchanged file without forced hash returns Unchanged (no hash run)
+        let res = evaluate_file_change(
+            &p,
+            m1.mtime_nsec,
+            m1.file_size,
+            &hash,
+            m1.dev,
+            m1.ino,
+            false,
+        );
+        assert!(matches!(res, DetectionResult::Unchanged));
+
+        // 2. Modify mtime (simulate rewrite with same content)
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::fs::write(&p, "total,100\n").unwrap();
+        let m2 = get_metadata_snapshot(&p).unwrap();
+        assert_ne!(m1.mtime_nsec, m2.mtime_nsec);
+
+        // Tier 1 sees changed mtime, Tier 2 verifies hash matches -> VerifiedUnchanged
+        let res2 = evaluate_file_change(
+            &p,
+            m1.mtime_nsec,
+            m1.file_size,
+            &hash,
+            m1.dev,
+            m1.ino,
+            false,
+        );
+        match res2 {
+            DetectionResult::VerifiedUnchanged { new_mtime_nsec, .. } => {
+                assert_eq!(new_mtime_nsec, m2.mtime_nsec);
+            }
+            _ => panic!("expected VerifiedUnchanged, got {:?}", std::mem::discriminant(&res2)),
+        }
+
+        // 3. evaluate_and_invalidate_all syncs mtime in source_documents
+        let mut cascade = rgt::graph::invalidation::InvalidationCascade::build_from_db(&db).unwrap();
+        let count = cascade
+            .evaluate_and_invalidate_all(&db, dir.path())
+            .unwrap();
+        assert_eq!(count, 0, "no nodes should be invalidated on identical content touch");
+
+        // Verify that stored mtime in database was updated
+        let stored_mtime: i64 = db
+            .conn()
+            .query_row(
+                "SELECT mtime_nsec FROM source_documents WHERE file_path = 'values.txt'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_mtime, m2.mtime_nsec);
+
+        // Next evaluation without force_hash is now Unchanged without Tier 2 hashing
+        let res3 = evaluate_file_change(
+            &p,
+            stored_mtime,
+            m2.file_size,
+            &hash,
+            m2.dev,
+            m2.ino,
+            false,
+        );
+        assert!(matches!(res3, DetectionResult::Unchanged));
+    }
 }

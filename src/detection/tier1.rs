@@ -21,7 +21,11 @@ pub fn get_metadata_snapshot<P: AsRef<Path>>(path: P) -> io::Result<MetadataSnap
     #[cfg(unix)]
     let (mtime_nsec, dev, ino) = {
         use std::os::unix::fs::MetadataExt;
-        let mtime_nsec = meta.mtime() * 1_000_000_000 + meta.mtime_nsec();
+        let mtime_nsec = meta
+            .mtime()
+            .checked_mul(1_000_000_000)
+            .and_then(|v| v.checked_add(meta.mtime_nsec()))
+            .unwrap_or(0);
         (mtime_nsec, Some(meta.dev()), Some(meta.ino()))
     };
 
@@ -31,7 +35,7 @@ pub fn get_metadata_snapshot<P: AsRef<Path>>(path: P) -> io::Result<MetadataSnap
         let duration = modified
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
-        let mtime_nsec = duration.as_nanos() as i64;
+        let mtime_nsec = duration.as_nanos().min(i64::MAX as u128) as i64;
 
         // Stable Rust does not expose resolved-target file identity on Windows.
         // Keep the existing path-based fallback on all non-Unix targets.

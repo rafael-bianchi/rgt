@@ -1,7 +1,7 @@
 use crate::graph::engine::GraphEngine;
 use crate::store::queries::{
-    get_child_edges, get_source_document_by_path, list_all_nodes, list_nodes_by_source_doc,
-    mark_node_stale, touch_source_document, upsert_source_document,
+    get_source_document_by_path, list_nodes_by_source_doc, mark_node_stale, touch_source_document,
+    upsert_source_document,
 };
 use crate::store::DbStore;
 use chrono::{DateTime, Utc};
@@ -18,29 +18,35 @@ impl InvalidationCascade {
         let conn = db.conn();
         let mut engine = GraphEngine::new();
 
-        let all_nodes = list_all_nodes(conn)?;
-        for node in &all_nodes {
-            engine.get_or_add_node(&node.id);
+        // 1. Bulk query all nodes
+        let mut node_stmt = conn.prepare("SELECT id FROM tracked_nodes")?;
+        let node_rows = node_stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for id in node_rows {
+            engine.get_or_add_node(&id?);
         }
 
-        for node in &all_nodes {
-            let edges = get_child_edges(conn, &node.id)?;
-            for edge in edges {
-                // FR-002: surface a cycle encountered during reload rather than
-                // silently dropping the edge (no `let _ =`).
-                engine
-                    .add_derivation_edge(
-                        &edge.parent_node_id,
-                        &edge.child_node_id,
-                        &edge.operation_type,
-                    )
-                    .map_err(|e| {
-                        rusqlite::Error::SqliteFailure(
-                            rusqlite::ffi::Error::new(19),
-                            Some(format!("cycle in persisted derivation graph: {}", e)),
-                        )
-                    })?;
-            }
+        // 2. Bulk query all derivation edges
+        let mut edge_stmt = conn.prepare(
+            "SELECT parent_node_id, child_node_id, operation_type FROM derivation_edges",
+        )?;
+        let edge_rows = edge_stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        for edge in edge_rows {
+            let (parent_id, child_id, op) = edge?;
+            engine.add_derivation_edge_unchecked(&parent_id, &child_id, &op);
+        }
+
+        // 3. Single-pass acyclicity check
+        if engine.is_cyclic() {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(19),
+                Some("cycle in persisted derivation graph".into()),
+            ));
         }
 
         Ok(Self { engine })
@@ -141,7 +147,26 @@ impl InvalidationCascade {
                 force_hash,
             ) {
                 crate::detection::DetectionResult::Unchanged => {
-                    touch_source_document(conn, doc_id)?;
+                    // Tier 1 matched and force_hash was false: Tier 2 hash was not run.
+                    // Preserve last_checked_at so REHASH_THRESHOLD will eventually trigger.
+                }
+                crate::detection::DetectionResult::VerifiedUnchanged {
+                    new_mtime_nsec,
+                    new_file_size,
+                    new_dev,
+                    new_ino,
+                } => {
+                    // Tier 2 hash verified content is identical: update last_checked_at
+                    // and synchronize any updated mtime/size/dev/ino in source_documents.
+                    upsert_source_document(
+                        conn,
+                        &rel_path,
+                        new_mtime_nsec,
+                        new_file_size,
+                        &stored_hash,
+                        new_dev,
+                        new_ino,
+                    )?;
                 }
                 crate::detection::DetectionResult::Changed {
                     new_mtime_nsec,
@@ -174,4 +199,12 @@ impl InvalidationCascade {
 
         Ok(invalidations)
     }
+}
+
+/// Convenience helper to build the cascade from the database and evaluate/invalidate
+/// all files in the project. Finds the project root directory or falls back to ".".
+pub fn sync_staleness(db: &DbStore) -> Result<usize> {
+    let mut cascade = InvalidationCascade::build_from_db(db)?;
+    let root = DbStore::find_project_root(".").unwrap_or_else(|| std::path::PathBuf::from("."));
+    cascade.evaluate_and_invalidate_all(db, root)
 }

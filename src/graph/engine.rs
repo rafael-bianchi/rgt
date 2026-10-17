@@ -33,6 +33,7 @@ impl GraphEngine {
         }
     }
 
+    #[allow(dead_code)]
     pub fn add_derivation_edge(
         &mut self,
         parent_id: &str,
@@ -53,6 +54,24 @@ impl GraphEngine {
         }
 
         Ok(())
+    }
+
+    /// Adds a derivation edge without running acyclicity checks.
+    /// Used for bulk loading from persisted database state.
+    pub fn add_derivation_edge_unchecked(
+        &mut self,
+        parent_id: &str,
+        child_id: &str,
+        op: &str,
+    ) {
+        let parent_idx = self.get_or_add_node(parent_id);
+        let child_idx = self.get_or_add_node(child_id);
+        self.graph.add_edge(parent_idx, child_idx, op.to_string());
+    }
+
+    /// Checks if the directed graph contains any cycle.
+    pub fn is_cyclic(&self) -> bool {
+        is_cyclic_directed(&self.graph)
     }
 
     pub fn get_downstream_dependents(&self, root_node_id: &str) -> Vec<String> {

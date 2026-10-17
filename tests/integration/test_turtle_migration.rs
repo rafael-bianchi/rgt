@@ -30,7 +30,7 @@ fn version_one_store_migrates_capture_table_atomically_and_preserves_rows() {
     }
 
     let db = DbStore::open(&path).unwrap();
-    assert_eq!(schema_version(db.conn()).unwrap(), 2);
+    assert_eq!(schema_version(db.conn()).unwrap(), 3);
     let preserved: i64 = db
         .conn()
         .query_row("SELECT count(*) FROM tracked_nodes", [], |row| row.get(0))
@@ -70,7 +70,7 @@ fn unversioned_store_migrates_directly_to_v2_without_backfilling_attribution() {
         conn.execute_batch("PRAGMA user_version = 0").unwrap();
     }
     let db = DbStore::open(&path).unwrap();
-    assert_eq!(schema_version(db.conn()).unwrap(), 2);
+    assert_eq!(schema_version(db.conn()).unwrap(), 3);
     let captures: i64 = db
         .conn()
         .query_row("SELECT count(*) FROM capture_associations", [], |row| {
@@ -105,7 +105,7 @@ fn migration_rejects_newer_stores_and_capture_rows_cascade_with_nodes() {
     {
         let conn = Connection::open(&path).unwrap();
         initialize_schema(&conn).unwrap();
-        conn.execute_batch("PRAGMA user_version = 3").unwrap();
+        conn.execute_batch("PRAGMA user_version = 4").unwrap();
     }
     let error = DbStore::open(&path).err().unwrap();
     assert!(error.to_string().contains("newer than this build supports"));

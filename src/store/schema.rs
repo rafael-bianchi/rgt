@@ -2,7 +2,7 @@ use rusqlite::{Connection, Result};
 
 /// The current supported store schema version, tracked via SQLite's
 /// `PRAGMA user_version`.
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// Reads the store's recorded schema version (`PRAGMA user_version`).
 pub fn schema_version(conn: &Connection) -> Result<i32> {
@@ -10,7 +10,7 @@ pub fn schema_version(conn: &Connection) -> Result<i32> {
 }
 
 /// Stamps or migrates the store's schema version:
-/// - `0` (unversioned, fresh or pre-029 store) → v1 stamp, then v2 migration;
+/// - `0` (unversioned, fresh or pre-029 store) → v1 stamp, then v2, then v3;
 /// - `== SCHEMA_VERSION` → no-op;
 /// - `< SCHEMA_VERSION` → applies the ordered migrations for that range;
 /// - `> SCHEMA_VERSION` → error (a newer store cannot be opened by this build).
@@ -28,6 +28,9 @@ pub fn stamp_or_migrate_schema(conn: &Connection) -> Result<()> {
     if current == SCHEMA_VERSION {
         return Ok(());
     }
+
+    // Disable foreign keys before opening transaction so table rebuild does not cascade delete.
+    conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
 
     // Serialize concurrent first opens, recheck the version under the write
     // lock, and commit the table plus version change as one migration.
@@ -58,19 +61,76 @@ pub fn stamp_or_migrate_schema(conn: &Connection) -> Result<()> {
             )?;
             version = 2;
         }
+        if version == 2 {
+            let has_duration_secs: bool = {
+                let mut stmt = conn.prepare("PRAGMA table_info(tracked_nodes)")?;
+                let mut rows = stmt.query([])?;
+                let mut found = false;
+                while let Some(row) = rows.next()? {
+                    let name: String = row.get(1)?;
+                    if name == "duration_secs" {
+                        found = true;
+                        break;
+                    }
+                }
+                found
+            };
+
+            conn.execute_batch(
+                "CREATE TABLE tracked_nodes_v3 (
+                    id TEXT PRIMARY KEY,
+                    node_type TEXT NOT NULL CHECK(node_type IN ('ROOT', 'DERIVED')),
+                    value_kind TEXT NOT NULL CHECK(value_kind IN ('NUMBER', 'DATE', 'DURATION')),
+                    number_val REAL,
+                    date_val TEXT,
+                    duration_secs INTEGER,
+                    source_doc_id INTEGER REFERENCES source_documents(id) ON DELETE SET NULL,
+                    line_number INTEGER,
+                    is_stale INTEGER NOT NULL DEFAULT 0,
+                    stale_reason TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );",
+            )?;
+
+            if has_duration_secs {
+                conn.execute_batch(
+                    "INSERT INTO tracked_nodes_v3 (id, node_type, value_kind, number_val, date_val, duration_secs, source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at)
+                     SELECT id, node_type, value_kind, number_val, date_val, duration_secs, source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at
+                     FROM tracked_nodes;",
+                )?;
+            } else {
+                conn.execute_batch(
+                    "INSERT INTO tracked_nodes_v3 (id, node_type, value_kind, number_val, date_val, duration_secs, source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at)
+                     SELECT id, node_type, value_kind, number_val, date_val, NULL, source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at
+                     FROM tracked_nodes;",
+                )?;
+            }
+
+            conn.execute_batch(
+                "DROP TABLE tracked_nodes;
+                 ALTER TABLE tracked_nodes_v3 RENAME TO tracked_nodes;
+                 CREATE INDEX IF NOT EXISTS idx_tracked_nodes_source ON tracked_nodes(source_doc_id);
+                 CREATE INDEX IF NOT EXISTS idx_tracked_nodes_stale ON tracked_nodes(is_stale);
+                 PRAGMA user_version = 3;",
+            )?;
+            version = 3;
+        }
         if version != SCHEMA_VERSION {
             return Err(rusqlite::Error::InvalidQuery);
         }
         Ok(())
     })();
 
-    match migration {
+    let res = match migration {
         Ok(()) => conn.execute_batch("COMMIT"),
         Err(error) => {
             let _ = conn.execute_batch("ROLLBACK");
             Err(error)
         }
-    }
+    };
+    let _ = conn.execute_batch("PRAGMA foreign_keys = ON;");
+    res
 }
 
 /// Initializes the SQLite schema (WAL mode, tables, indexes) idempotently.

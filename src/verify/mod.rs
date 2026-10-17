@@ -162,6 +162,8 @@ pub fn run_verify_core(
 
     let db = crate::store::DbStore::open_in_project(".")
         .map_err(|e| VerifyDeriveError::Internal(format!("failed to open database: {}", e)))?;
+    crate::graph::invalidation::sync_staleness(&db)
+        .map_err(|e| VerifyDeriveError::Internal(format!("staleness check failed: {}", e)))?;
     let conn = db.conn();
 
     let mut parent_values = Vec::new();

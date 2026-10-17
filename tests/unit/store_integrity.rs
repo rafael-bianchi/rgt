@@ -175,6 +175,8 @@ fn hook_capture_records_batch_atomically() {
 
     let dir = tempfile::tempdir().unwrap();
     std::env::set_current_dir(dir.path()).unwrap();
+    // Initialize the repository store so passive hooks capture into this project
+    let _ = DbStore::open_in_project(dir.path()).unwrap();
 
     let file = dir.path().join("data.csv");
     let contents = "amount,120000\ncosts,60000\nprofit,60000\n";
@@ -476,3 +478,140 @@ fn duration_derive_insert_rejects_fractional_result_without_graph_writes() {
         assert_eq!(graph_row_counts(db.conn()), before);
     }
 }
+
+// ---- Spec 045 tests: schema v3 migration and path aliasing preservation ----
+
+#[test]
+fn opening_a_newer_store_fails_before_mutating_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join(".rgt").join("store.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch("PRAGMA user_version = 999;").unwrap();
+    }
+    let err = DbStore::open_in_project(dir.path()).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("newer than this build supports"), "{}", msg);
+}
+
+#[test]
+fn schema_v2_to_v3_migration_adds_duration_secs_and_updates_check_constraint() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join(".rgt").join("store.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "PRAGMA user_version = 2;
+             CREATE TABLE source_documents (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 file_path TEXT NOT NULL UNIQUE,
+                 mtime_nsec INTEGER NOT NULL,
+                 file_size INTEGER NOT NULL,
+                 blake3_hash TEXT NOT NULL,
+                 last_checked_at TEXT NOT NULL,
+                 dev INTEGER,
+                 ino INTEGER
+             );
+             CREATE TABLE tracked_nodes (
+                 id TEXT PRIMARY KEY,
+                 node_type TEXT NOT NULL CHECK(node_type IN ('ROOT', 'DERIVED')),
+                 value_kind TEXT NOT NULL CHECK(value_kind IN ('NUMBER', 'DATE')),
+                 number_val REAL,
+                 date_val TEXT,
+                 source_doc_id INTEGER REFERENCES source_documents(id) ON DELETE SET NULL,
+                 line_number INTEGER,
+                 is_stale INTEGER NOT NULL DEFAULT 0,
+                 stale_reason TEXT,
+                 created_at TEXT NOT NULL,
+                 updated_at TEXT NOT NULL
+             );
+             CREATE TABLE derivation_edges (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 parent_node_id TEXT NOT NULL REFERENCES tracked_nodes(id) ON DELETE CASCADE,
+                 child_node_id TEXT NOT NULL REFERENCES tracked_nodes(id) ON DELETE CASCADE,
+                 operation_type TEXT NOT NULL,
+                 expression TEXT
+             );
+             CREATE TABLE capture_associations (
+                 node_id TEXT NOT NULL REFERENCES tracked_nodes(id) ON DELETE CASCADE,
+                 agent_name TEXT NOT NULL,
+                 PRIMARY KEY(node_id, agent_name)
+             );
+             CREATE TABLE project_settings (
+                 key TEXT PRIMARY KEY,
+                 value TEXT NOT NULL
+             );"
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO tracked_nodes (id, node_type, value_kind, number_val, is_stale, created_at, updated_at)
+             VALUES ('test_node', 'ROOT', 'NUMBER', 42.0, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+    }
+
+    let db = DbStore::open_in_project(dir.path()).unwrap();
+    assert_eq!(rgt::store::schema::schema_version(db.conn()).unwrap(), 3);
+
+    let node = rgt::store::queries::get_tracked_node(db.conn(), "test_node").unwrap().unwrap();
+    assert_eq!(node.value, ValueData::Number(42.0));
+
+    let dur_node = TrackedNode {
+        id: "dur_node_1".into(),
+        node_type: NodeType::Root,
+        value_kind: rgt::types::ValueKind::Duration,
+        value: ValueData::Duration(chrono::Duration::seconds(120)),
+        source_doc_id: None,
+        line_number: None,
+        is_stale: false,
+        stale_reason: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    assert!(rgt::store::queries::insert_tracked_node(db.conn(), &dur_node).is_ok());
+}
+
+#[test]
+fn path_aliasing_preserves_source_doc_id_links_across_alias_rerecords() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = DbStore::open_in_project(dir.path()).unwrap();
+    let conn = db.conn();
+
+    let dev = Some(100u64);
+    let ino = Some(200u64);
+
+    let doc1 = rgt::store::queries::upsert_source_document(
+        conn,
+        "data.csv",
+        1000,
+        50,
+        "hash1",
+        dev,
+        ino,
+    ).unwrap();
+
+    let node1 = root_node("node1", ValueData::Number(10.0), Some(doc1.id), Some(1));
+    rgt::store::queries::insert_tracked_node(conn, &node1).unwrap();
+
+    let doc2 = rgt::store::queries::upsert_source_document(
+        conn,
+        "./data.csv",
+        1000,
+        50,
+        "hash1",
+        dev,
+        ino,
+    ).unwrap();
+
+    let fetched = rgt::store::queries::get_tracked_node(conn, "node1").unwrap().unwrap();
+    assert_eq!(fetched.source_doc_id, Some(doc2.id), "source_doc_id must be updated, never NULL");
+
+    let count: i64 = conn.query_row(
+        "SELECT count(*) FROM source_documents WHERE dev = ?1 AND ino = ?2",
+        rusqlite::params![dev, ino],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(count, 1);
+}
+

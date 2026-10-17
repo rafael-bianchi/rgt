@@ -37,3 +37,4 @@ Thumbs.db
 # Local design specs; publish the canonical harness compatibility feature
 specs/*
 !specs/044-verify-harness-compatibility/
+!specs/045-store-staleness-and-schema-integrity/

@@ -8,12 +8,8 @@ pub mod registration;
 use crate::detection::{compute_blake3_hash_from_bytes, get_metadata_snapshot};
 use crate::extract::pdf::{decode_pdf_base64, extract_pdf_text, render_additional_context};
 use crate::hooks::parser::{extract_values_from_content, normalize_agent_event, NumberFormat};
-use crate::store::queries::{
-    get_setting, insert_capture_association, insert_tracked_node, upsert_source_document,
-};
+use crate::store::queries::get_setting;
 use crate::store::DbStore;
-use crate::types::{NodeType, TrackedNode};
-use chrono::Utc;
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
@@ -79,7 +75,11 @@ pub fn handle_passive_hook_event(event_type: &str, agent: Option<&str>) -> io::R
         return Ok(()); // Path-only, partial, or changed snapshots never create roots.
     };
 
-    let db = match DbStore::open_in_project(".") {
+    let Some(root) = DbStore::find_project_root(".") else {
+        return Ok(());
+    };
+
+    let db = match DbStore::open_in_project(&root) {
         Ok(d) => d,
         Err(_) => return Ok(()),
     };
@@ -88,19 +88,6 @@ pub fn handle_passive_hook_event(event_type: &str, agent: Option<&str>) -> io::R
     let number_format = match get_setting(db.conn(), "number_format") {
         Ok(Some(raw)) => raw.parse().unwrap_or(NumberFormat::Auto),
         _ => NumberFormat::Auto,
-    };
-
-    let doc = match upsert_source_document(
-        db.conn(),
-        path,
-        meta.mtime_nsec,
-        meta.file_size,
-        &hash,
-        meta.dev,
-        meta.ino,
-    ) {
-        Ok(d) => d,
-        Err(_) => return Ok(()),
     };
 
     let mut extraction = extract_values_from_content(content, number_format);
@@ -117,7 +104,6 @@ pub fn handle_passive_hook_event(event_type: &str, agent: Option<&str>) -> io::R
             return Ok(());
         }
     }
-    let now = Utc::now();
 
     // FR-007: record the batch in a single transaction (all-or-nothing). On any
     // error, the transaction is dropped (rolled back) and the hook still fails
@@ -127,28 +113,17 @@ pub fn handle_passive_hook_event(event_type: &str, agent: Option<&str>) -> io::R
         Err(_) => return Ok(()),
     };
 
-    for ext in extraction.values {
-        let node_id =
-            TrackedNode::generate_root_id(path, ext.line_number, ext.occurrence, &ext.value);
-        let node = TrackedNode {
-            id: node_id,
-            node_type: NodeType::Root,
-            value_kind: ext.value.kind(),
-            value: ext.value,
-            source_doc_id: Some(doc.id),
-            line_number: ext.line_number,
-            is_stale: false,
-            stale_reason: None,
-            created_at: now,
-            updated_at: now,
-        };
-
-        if insert_tracked_node(&tx, &node).is_err() {
-            return Ok(()); // rollback on drop; fail open
-        }
-        if insert_capture_association(&tx, &node.id, &canonical_agent).is_err() {
-            return Ok(()); // value and attribution roll back together
-        }
+    if crate::store::queries::record_file_batch(
+        &tx,
+        path,
+        &meta,
+        &hash,
+        &extraction.values,
+        Some(&canonical_agent),
+    )
+    .is_err()
+    {
+        return Ok(()); // rollback on drop; fail open
     }
 
     if tx.commit().is_err() {
@@ -277,7 +252,11 @@ fn record_pdf_values(
         return Ok(false);
     };
 
-    let db = match DbStore::open_in_project(".") {
+    let Some(root) = DbStore::find_project_root(".") else {
+        return Ok(false);
+    };
+
+    let db = match DbStore::open_in_project(&root) {
         Ok(d) => d,
         Err(_) => return Ok(false),
     };
@@ -285,51 +264,22 @@ fn record_pdf_values(
         Ok(Some(raw)) => raw.parse().unwrap_or(NumberFormat::Auto),
         _ => NumberFormat::Auto,
     };
-    let doc = match upsert_source_document(
-        db.conn(),
-        path,
-        meta.mtime_nsec,
-        meta.file_size,
-        &hash,
-        meta.dev,
-        meta.ino,
-    ) {
-        Ok(d) => d,
-        Err(_) => return Ok(false),
-    };
-
     let extraction = extract_values_from_content(text, number_format);
-    if extraction.values.is_empty() {
-        return Ok(true);
-    }
-    let now = Utc::now();
     let tx = match db.conn().unchecked_transaction() {
         Ok(tx) => tx,
         Err(_) => return Ok(false),
     };
-    for ext in extraction.values {
-        let node_id =
-            TrackedNode::generate_root_id(path, ext.line_number, ext.occurrence, &ext.value);
-        let node = TrackedNode {
-            id: node_id,
-            node_type: NodeType::Root,
-            value_kind: ext.value.kind(),
-            value: ext.value,
-            source_doc_id: Some(doc.id),
-            line_number: ext.line_number,
-            is_stale: false,
-            stale_reason: None,
-            created_at: now,
-            updated_at: now,
-        };
-        if insert_tracked_node(&tx, &node).is_err() {
-            return Ok(true); // rollback on drop; fail open
-        }
-        if let Some(agent_name) = agent {
-            if insert_capture_association(&tx, &node.id, agent_name).is_err() {
-                return Ok(true); // rollback value and attribution together
-            }
-        }
+    if crate::store::queries::record_file_batch(
+        &tx,
+        path,
+        &meta,
+        &hash,
+        &extraction.values,
+        agent,
+    )
+    .is_err()
+    {
+        return Ok(true); // rollback on drop; fail open
     }
     if tx.commit().is_err() {
         return Ok(true);

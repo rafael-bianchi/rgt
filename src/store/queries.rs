@@ -48,13 +48,25 @@ pub fn upsert_source_document(
     };
     inserted?;
 
-    // Re-key any duplicate casing row that now resolves to the same identity.
+    // Re-key any duplicate casing or alias row that now resolves to the same identity.
     if let (Some(d), Some(i)) = (dev, ino) {
+        let surviving = get_source_document_by_path(conn, file_path)?
+            .ok_or_else(|| rusqlite::Error::QueryReturnedNoRows)?;
+        // Update all tracked_nodes referencing any duplicate row to the surviving id BEFORE deleting duplicate rows!
+        conn.execute(
+            "UPDATE tracked_nodes SET source_doc_id = ?1
+             WHERE source_doc_id IN (
+                 SELECT id FROM source_documents
+                 WHERE dev = ?2 AND ino = ?3 AND id <> ?1
+             )",
+            params![surviving.id, d, i],
+        )?;
         conn.execute(
             "DELETE FROM source_documents
-             WHERE dev = ?1 AND ino = ?2 AND file_path <> ?3",
-            params![d, i, file_path],
+             WHERE dev = ?1 AND ino = ?2 AND id <> ?3",
+            params![d, i, surviving.id],
         )?;
+        return Ok(surviving);
     }
 
     get_source_document_by_path(conn, file_path)?
@@ -543,6 +555,119 @@ pub fn mark_node_stale(conn: &Connection, node_id: &str, reason: &str) -> Result
     Ok(())
 }
 
+/// Cascades staleness downstream from a set of starting parent node IDs via BFS.
+pub fn cascade_invalidation_downstream(
+    conn: &Connection,
+    start_node_ids: &[String],
+    reason: &str,
+) -> Result<usize> {
+    use std::collections::{HashSet, VecDeque};
+    let mut visited: HashSet<String> = start_node_ids.iter().cloned().collect();
+    let mut queue: VecDeque<String> = start_node_ids.iter().cloned().collect();
+    let mut count = 0;
+
+    let mut stmt =
+        conn.prepare("SELECT child_node_id FROM derivation_edges WHERE parent_node_id = ?1")?;
+
+    while let Some(parent_id) = queue.pop_front() {
+        let mut rows = stmt.query(params![parent_id])?;
+        while let Some(row) = rows.next()? {
+            let child_id: String = row.get(0)?;
+            if visited.insert(child_id.clone()) {
+                mark_node_stale(conn, &child_id, reason)?;
+                queue.push_back(child_id);
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
+/// Atomically records a batch of extracted values for a file into the store,
+/// performing invalidation of removed/modified root nodes and their downstream
+/// derivations if the file content hash has changed.
+pub fn record_file_batch(
+    conn: &Connection,
+    file_path: &str,
+    meta: &crate::detection::MetadataSnapshot,
+    hash: &str,
+    extracted: &[crate::hooks::parser::ExtractedValue],
+    agent_association: Option<&str>,
+) -> Result<SourceDocument> {
+    use std::collections::HashSet;
+
+    // 1. Check if the file already exists and whether the hash is changing
+    if let Some(existing_doc) = get_source_document_by_path(conn, file_path)? {
+        if existing_doc.blake3_hash != hash {
+            // Content modified! Find root nodes that are no longer present.
+            let existing_roots = list_nodes_by_source_doc(conn, existing_doc.id)?;
+            let incoming_ids: HashSet<String> = extracted
+                .iter()
+                .map(|ext| {
+                    TrackedNode::generate_root_id(
+                        file_path,
+                        ext.line_number,
+                        ext.occurrence,
+                        &ext.value,
+                    )
+                })
+                .collect();
+
+            let mut stale_root_ids = Vec::new();
+            for root in existing_roots {
+                if !root.is_stale && !incoming_ids.contains(&root.id) {
+                    mark_node_stale(conn, &root.id, "SOURCE_FILE_MODIFIED")?;
+                    stale_root_ids.push(root.id);
+                }
+            }
+
+            if !stale_root_ids.is_empty() {
+                cascade_invalidation_downstream(conn, &stale_root_ids, "PARENT_NODE_STALE")?;
+            }
+        }
+    }
+
+    // 2. Upsert source document with updated metadata & hash
+    let doc = upsert_source_document(
+        conn,
+        file_path,
+        meta.mtime_nsec,
+        meta.file_size,
+        hash,
+        meta.dev,
+        meta.ino,
+    )?;
+
+    // 3. Insert newly extracted root nodes
+    let now = Utc::now();
+    for ext in extracted {
+        let node_id = TrackedNode::generate_root_id(
+            file_path,
+            ext.line_number,
+            ext.occurrence,
+            &ext.value,
+        );
+        let node = TrackedNode {
+            id: node_id.clone(),
+            node_type: NodeType::Root,
+            value_kind: ext.value.kind(),
+            value: ext.value.clone(),
+            source_doc_id: Some(doc.id),
+            line_number: ext.line_number,
+            is_stale: false,
+            stale_reason: None,
+            created_at: now,
+            updated_at: now,
+        };
+        insert_tracked_node(conn, &node)?;
+        if let Some(agent) = agent_association {
+            insert_capture_association(conn, &node_id, agent)?;
+        }
+    }
+
+    Ok(doc)
+}
+
 /// Lists all nodes currently marked stale.
 pub fn list_stale_nodes(conn: &Connection) -> Result<Vec<TrackedNode>> {
     let mut stmt = conn.prepare("SELECT id FROM tracked_nodes WHERE is_stale = 1")?;
@@ -621,6 +746,20 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
 /// first use. Concurrent openers race through `ON CONFLICT DO NOTHING`, then
 /// all read the same committed value.
 pub fn get_or_create_rdf_project_id(conn: &Connection) -> Result<String> {
+    if let Some(project_id) = get_setting(conn, "rdf_project_id")? {
+        if project_id.len() != 32
+            || !project_id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+                Some("invalid rdf_project_id: expected 32 lowercase hexadecimal characters".into()),
+            ));
+        }
+        return Ok(project_id);
+    }
+
     let candidate = Uuid::new_v4().simple().to_string();
     conn.execute(
         "INSERT INTO project_settings (key, value) VALUES ('rdf_project_id', ?1)

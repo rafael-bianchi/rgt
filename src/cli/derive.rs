@@ -116,6 +116,8 @@ pub fn execute_derive_core(
 
     let mut db = DbStore::open_in_project(".")
         .map_err(|error| VerifyDeriveError::Internal(format!("failed to open database: {error}")))?;
+    crate::graph::invalidation::sync_staleness(&db)
+        .map_err(|error| VerifyDeriveError::Internal(format!("staleness check failed: {error}")))?;
     let conn = db.conn_mut();
     let mut parent_values = Vec::with_capacity(parent_ids.len());
     for parent_id in &parent_ids {

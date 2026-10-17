@@ -23,6 +23,8 @@ pub fn execute_graph_with_options(
     }
 
     let db = DbStore::open_in_project(".").map_err(|e| format!("Failed to open DB: {}", e))?;
+    crate::graph::invalidation::sync_staleness(&db)
+        .map_err(|e| format!("Staleness check failed: {}", e))?;
     let conn = db.conn();
 
     let all_nodes = list_all_nodes(conn).map_err(|e| e.to_string())?;
@@ -101,6 +103,8 @@ fn execute_turtle(include_absolute_paths: bool, deadline: Instant) -> Result<(),
     let remaining = deadline.saturating_duration_since(Instant::now());
     let db = DbStore::open_in_project_with_timeout(".", remaining)
         .map_err(|e| format!("failed to open DB for Turtle export: {e}"))?;
+    crate::graph::invalidation::sync_staleness(&db)
+        .map_err(|e| format!("Staleness check failed: {e}"))?;
     let snapshot = load_snapshot(db.conn(), deadline)?;
     let rendered = turtle::render_turtle(
         &snapshot,

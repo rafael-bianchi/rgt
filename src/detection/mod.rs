@@ -13,7 +13,16 @@ use std::path::Path;
 pub const REHASH_THRESHOLD: chrono::Duration = chrono::Duration::hours(1);
 
 pub enum DetectionResult {
+    /// File is unchanged and Tier 2 hash was not executed.
     Unchanged,
+    /// Tier 2 hash was executed and confirmed content is unchanged.
+    /// Provides refreshed on-disk metadata (mtime, size, dev, ino) to update the store.
+    VerifiedUnchanged {
+        new_mtime_nsec: i64,
+        new_file_size: u64,
+        new_dev: Option<u64>,
+        new_ino: Option<u64>,
+    },
     Changed {
         new_mtime_nsec: i64,
         new_file_size: u64,
@@ -67,7 +76,12 @@ pub fn evaluate_file_change<P: AsRef<Path>>(
     };
 
     if new_hash == stored_blake3_hash {
-        return DetectionResult::Unchanged;
+        return DetectionResult::VerifiedUnchanged {
+            new_mtime_nsec: meta.mtime_nsec,
+            new_file_size: meta.file_size,
+            new_dev: meta.dev,
+            new_ino: meta.ino,
+        };
     }
 
     DetectionResult::Changed {

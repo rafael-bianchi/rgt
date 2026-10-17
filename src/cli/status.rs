@@ -11,10 +11,11 @@ pub fn execute_status(stale_only: bool, json_output: bool) -> Result<(), String>
     let mut cascade = InvalidationCascade::build_from_db(&db)
         .map_err(|e| format!("Failed to build invalidation cascade: {}", e))?;
 
+    let root = DbStore::find_project_root(".").unwrap_or_else(|| std::path::PathBuf::from("."));
     execute_status_with(
         &db,
         &mut cascade,
-        |c, d| c.evaluate_and_invalidate_all(d, "."),
+        |c, d| c.evaluate_and_invalidate_all(d, root),
         stale_only,
         json_output,
     )

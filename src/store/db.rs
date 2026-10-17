@@ -9,11 +9,31 @@ fn schema_init_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+#[derive(Debug)]
 pub struct DbStore {
     conn: Connection,
 }
 
 impl DbStore {
+    /// Walks up parent directories to locate an existing `.rgt/store.db`.
+    pub fn find_project_root<P: AsRef<Path>>(start: P) -> Option<std::path::PathBuf> {
+        let mut curr = start.as_ref().to_path_buf();
+        if curr.is_relative() {
+            if let Ok(abs) = std::fs::canonicalize(&curr) {
+                curr = abs;
+            }
+        }
+        loop {
+            if curr.join(".rgt").join("store.db").is_file() {
+                return Some(curr);
+            }
+            if !curr.pop() {
+                break;
+            }
+        }
+        None
+    }
+
     pub fn open_in_project<P: AsRef<Path>>(project_root: P) -> Result<Self> {
         Self::open_in_project_with_timeout(project_root, std::time::Duration::from_secs(5))
     }
@@ -22,7 +42,9 @@ impl DbStore {
         project_root: P,
         busy_timeout: std::time::Duration,
     ) -> Result<Self> {
-        let rgt_dir = project_root.as_ref().join(".rgt");
+        let effective_root = Self::find_project_root(&project_root)
+            .unwrap_or_else(|| project_root.as_ref().to_path_buf());
+        let rgt_dir = effective_root.join(".rgt");
         if !rgt_dir.exists() {
             fs::create_dir_all(&rgt_dir).map_err(|e| {
                 rusqlite::Error::SqliteFailure(
@@ -55,8 +77,19 @@ impl DbStore {
         let _schema_guard = schema_init_lock()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Fail fast if the database was created by a newer build BEFORE executing any DDL.
+        let current_version = crate::store::schema::schema_version(&conn)?;
+        if current_version > crate::store::schema::SCHEMA_VERSION {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(1),
+                Some(format!(
+                    "store schema version {} is newer than this build supports (max {}); upgrade `rgt`",
+                    current_version, crate::store::schema::SCHEMA_VERSION
+                )),
+            ));
+        }
         initialize_schema(&conn)?;
-        // FR-001: stamp or migrate the schema version; fail fast on a newer store.
+        // FR-001: stamp or migrate the schema version.
         stamp_or_migrate_schema(&conn)?;
         // Establish the immutable export namespace as part of opening any
         // current or legacy store, before a caller can copy or export it.

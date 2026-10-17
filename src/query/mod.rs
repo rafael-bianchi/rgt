@@ -35,6 +35,8 @@ pub fn query_provenance_with_unit(
     unit: Option<DurationUnit>,
 ) -> Result<serde_json::Value, QueryError> {
     let db = DbStore::open_in_project(".").map_err(|e| QueryError::Error(e.to_string()))?;
+    crate::graph::invalidation::sync_staleness(&db)
+        .map_err(|e| QueryError::Error(format!("staleness check failed: {e}")))?;
     let conn = db.conn();
 
     let node = get_tracked_node(conn, node_id)

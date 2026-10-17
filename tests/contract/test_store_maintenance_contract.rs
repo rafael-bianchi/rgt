@@ -126,4 +126,38 @@ mod tests {
         // Second run: nothing to collect.
         rgt::cli::execute_gc(true).unwrap(); // --vacuum path must also be harmless
     }
+
+    #[test]
+    fn gc_deletes_entire_stale_chain_in_single_invocation() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        rgt::cli::execute_init(false, true, Some("codex"), None).unwrap();
+        let db = DbStore::open_in_project(".").unwrap();
+        let conn = db.conn();
+
+        insert_root(conn, "root", true);
+        insert_root(conn, "d1", true);
+        insert_root(conn, "d2", true);
+        insert_root(conn, "d3", true);
+        insert_root(conn, "fresh_isolated", false);
+
+        rgt::store::queries::insert_derivation_edge(conn, "root", "d1", "EXPRESSION", None)
+            .unwrap();
+        rgt::store::queries::insert_derivation_edge(conn, "d1", "d2", "EXPRESSION", None)
+            .unwrap();
+        rgt::store::queries::insert_derivation_edge(conn, "d2", "d3", "EXPRESSION", None)
+            .unwrap();
+        drop(db);
+
+        rgt::cli::execute_gc(false).unwrap();
+
+        let db = DbStore::open_in_project(".").unwrap();
+        let remaining: Vec<String> = rgt::store::queries::list_all_nodes(db.conn())
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+        assert_eq!(remaining, vec!["fresh_isolated".to_string()]);
+    }
 }

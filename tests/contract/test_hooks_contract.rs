@@ -241,4 +241,45 @@ mod tests {
         assert!(output.stdout.is_empty());
         assert!(output.stderr.is_empty());
     }
+
+    #[test]
+    fn passive_hook_in_uninitialized_directory_creates_no_store_and_exits_zero() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.csv");
+        std::fs::write(&file_path, "amount,100\n").unwrap();
+
+        let event = serde_json::json!({
+            "event": "PostToolUse",
+            "tool_name": "Read",
+            "tool_input": { "file_path": file_path.to_string_lossy() },
+            "tool_response": { "content": "amount,100\n" }
+        })
+        .to_string();
+
+        let mut child = Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args(["hook", "post", "--agent", "claude-code"])
+            .current_dir(dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(event.as_bytes())
+            .unwrap();
+
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "hook must exit 0");
+        assert!(
+            !dir.path().join(".rgt").exists(),
+            "passive hook must not create .rgt in uninitialized directory"
+        );
+    }
 }
