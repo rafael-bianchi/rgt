@@ -228,6 +228,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.ref_name || 'develop' }}
 
       - name: Get version
         id: version
@@ -241,7 +243,7 @@ jobs:
         id: sha256_aarch64_darwin
         run: |
           URL="https://github.com/rafael-bianchi/rgt/releases/download/${{ steps.version.outputs.tag }}/rgt-${{ steps.version.outputs.tag }}-aarch64-apple-darwin.tar.gz"
-          curl -fsSL "$URL" -o /tmp/rgt-aarch64-darwin.tar.gz
+          curl -fsSL --retry 5 --retry-delay 2 "$URL" -o /tmp/rgt-aarch64-darwin.tar.gz
           SHA=$(sha256sum /tmp/rgt-aarch64-darwin.tar.gz | cut -d' ' -f1)
           echo "sha=$SHA" >> $GITHUB_OUTPUT
 
@@ -249,7 +251,7 @@ jobs:
         id: sha256_x86_64_linux
         run: |
           URL="https://github.com/rafael-bianchi/rgt/releases/download/${{ steps.version.outputs.tag }}/rgt-${{ steps.version.outputs.tag }}-x86_64-unknown-linux-musl.tar.gz"
-          curl -fsSL "$URL" -o /tmp/rgt-x86_64-linux.tar.gz
+          curl -fsSL --retry 5 --retry-delay 2 "$URL" -o /tmp/rgt-x86_64-linux.tar.gz
           SHA=$(sha256sum /tmp/rgt-x86_64-linux.tar.gz | cut -d' ' -f1)
           echo "sha=$SHA" >> $GITHUB_OUTPUT
 
@@ -257,15 +259,44 @@ jobs:
         id: sha256_aarch64_linux
         run: |
           URL="https://github.com/rafael-bianchi/rgt/releases/download/${{ steps.version.outputs.tag }}/rgt-${{ steps.version.outputs.tag }}-aarch64-unknown-linux-gnu.tar.gz"
-          curl -fsSL "$URL" -o /tmp/rgt-aarch64-linux.tar.gz
+          curl -fsSL --retry 5 --retry-delay 2 "$URL" -o /tmp/rgt-aarch64-linux.tar.gz
           SHA=$(sha256sum /tmp/rgt-aarch64-linux.tar.gz | cut -d' ' -f1)
           echo "sha=$SHA" >> $GITHUB_OUTPUT
 
       - name: Update Formula/rgt.rb with SHA256 values
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.version }}
+          SHA_DARWIN: ${{ steps.sha256_aarch64_darwin.outputs.sha }}
+          SHA_LINUX_INTEL: ${{ steps.sha256_x86_64_linux.outputs.sha }}
+          SHA_LINUX_ARM: ${{ steps.sha256_aarch64_linux.outputs.sha }}
         run: |
-          sed -i "s/REPLACE_WITH_SHA256_AARCH64_DARWIN/${{ steps.sha256_aarch64_darwin.outputs.sha }}/" Formula/rgt.rb
-          sed -i "s/REPLACE_WITH_SHA256_X86_64_LINUX/${{ steps.sha256_x86_64_linux.outputs.sha }}/" Formula/rgt.rb
-          sed -i "s/REPLACE_WITH_SHA256_AARCH64_LINUX/${{ steps.sha256_aarch64_linux.outputs.sha }}/" Formula/rgt.rb
+          python3 - << 'EOF'
+          import os, re
+
+          with open("Formula/rgt.rb", "r") as f:
+              content = f.read()
+
+          v = os.environ["NEW_VERSION"]
+          sha_mac = os.environ["SHA_DARWIN"]
+          sha_intel = os.environ["SHA_LINUX_INTEL"]
+          sha_arm = os.environ["SHA_LINUX_ARM"]
+
+          assert v and sha_mac and sha_intel and sha_arm, "Missing version or SHA values"
+
+          content = re.sub(r'version "[^"]+"', f'version "{v}"', content, count=1)
+          content = re.sub(r'(Hardware::CPU\.arm\?\s*\n\s*url [^\n]+\n\s*sha256 ")[^"]+(")', rf'\g<1>{sha_mac}\g<2>', content, count=1)
+          content = re.sub(r'(Hardware::CPU\.intel\?\s*\n\s*url [^\n]+\n\s*sha256 ")[^"]+(")', rf'\g<1>{sha_intel}\g<2>', content, count=1)
+          content = re.sub(r'(elsif Hardware::CPU\.arm\?\s*\n\s*url [^\n]+\n\s*sha256 ")[^"]+(")', rf'\g<1>{sha_arm}\g<2>', content, count=1)
+
+          assert f'version "{v}"' in content, "Failed to update version in Formula/rgt.rb"
+          assert sha_mac in content, "Failed to update macOS arm sha256 in Formula/rgt.rb"
+          assert sha_intel in content, "Failed to update Linux intel sha256 in Formula/rgt.rb"
+          assert sha_arm in content, "Failed to update Linux arm sha256 in Formula/rgt.rb"
+
+          with open("Formula/rgt.rb", "w") as f:
+              f.write(content)
+          print(f"Successfully updated Formula/rgt.rb to version {v}")
+          EOF
 
       - name: Commit updated formula
         run: |
@@ -273,4 +304,4 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/rgt.rb
           git commit -m "chore: update Homebrew SHA256s for ${{ steps.version.outputs.tag }}" || echo "No changes to commit"
-          git push
+          git push origin HEAD:${{ github.ref_name || 'develop' }}

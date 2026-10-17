@@ -181,7 +181,6 @@ check_deps() {
 }
 
 fetch_release() {
-    local api_url
     if [ "${VERSION}" = "latest" ]; then
         api_url="https://api.github.com/repos/${RGT_GITHUB_REPO}/releases/latest"
     else
@@ -190,12 +189,11 @@ fetch_release() {
 
     info "Fetching release info..."
 
-    local auth_header=""
+    auth_header=""
     if [ -n "${GITHUB_TOKEN:-}" ]; then
         auth_header="Authorization: Bearer ${GITHUB_TOKEN}"
     fi
 
-    local response
     if has curl; then
         response=$(curl -fsSL ${auth_header:+-H "${auth_header}"} "${api_url}" 2>/dev/null) || {
             err "Failed to fetch release info from GitHub API."
@@ -212,8 +210,8 @@ fetch_release() {
     RGT_RELEASE_TAG=$(echo "${response}" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
     [ -z "${RGT_RELEASE_TAG}" ] && { err "Could not determine release tag from response."; exit 2; }
 
-    local version_no_v="${RGT_RELEASE_TAG#v}"
-    local ext="tar.gz"
+    version_no_v="${RGT_RELEASE_TAG#v}"
+    ext="tar.gz"
     RGT_ARCHIVE_NAME="rgt-v${version_no_v}-${RGT_TARGET_TRIPLE}.${ext}"
 
     RGT_DOWNLOAD_URL=$(echo "${response}" | grep '"browser_download_url"' | grep "${RGT_ARCHIVE_NAME}" | head -1 | sed 's/.*"browser_download_url": *"\([^"]*\)".*/\1/')
@@ -250,7 +248,6 @@ download_and_verify() {
 
     if [ -f "${RGT_CHECKSUMS_PATH}" ]; then
         info "Verifying SHA-256 checksum..."
-        local expected_hash
         expected_hash=$(grep "${RGT_ARCHIVE_NAME}" "${RGT_CHECKSUMS_PATH}" | awk '{print $1}')
 
         if [ -z "${expected_hash}" ]; then
@@ -258,7 +255,6 @@ download_and_verify() {
             exit 2
         fi
 
-        local actual_hash
         if has shasum; then
             actual_hash=$(shasum -a 256 "${RGT_ARCHIVE_PATH}" | awk '{print $1}')
         else
@@ -302,7 +298,6 @@ extract_archive() {
 }
 
 install_binary() {
-    local extracted
     extracted=$(find "${RGT_TMP_DIR}" -name "${RGT_BIN_NAME}" -type f 2>/dev/null | head -1)
     if [ -z "${extracted}" ]; then
         err "Could not find ${RGT_BIN_NAME} binary in extracted archive."
@@ -319,8 +314,8 @@ install_binary() {
         fi
     }
 
-    local dest="${BIN_DIR}/${RGT_BIN_NAME}"
-    local tmp_dest="${BIN_DIR}/${RGT_BIN_NAME}.tmp.$$"
+    dest="${BIN_DIR}/${RGT_BIN_NAME}"
+    tmp_dest="${BIN_DIR}/${RGT_BIN_NAME}.tmp.$$"
     if ! cp "${extracted}" "${tmp_dest}" 2>/dev/null; then
         if [ "${SYSTEM_INSTALL}" -eq 1 ]; then
             warn "Cannot write to ${BIN_DIR}. Attempting sudo..."
