@@ -162,7 +162,11 @@ pub fn execute_doctor() -> Result<i32, String> {
         )
     });
     let (mut diagnostics, mut code) = run_doctor(
-        || std::path::Path::new(".rgt").join("store.db").exists(),
+        || {
+            DbStore::find_project_root(".")
+                .map(|root| root.join(".rgt").join("store.db").exists())
+                .unwrap_or(false)
+        },
         || DbStore::open_in_project(".").map_err(|e| e.to_string()),
         || hooks_present,
     );
