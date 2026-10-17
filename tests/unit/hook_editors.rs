@@ -386,3 +386,18 @@ fn text_replace_block_ignores_midline_and_commented_markers() {
     // new block appended, not spliced mid-line
     assert!(out.ends_with("<!-- /RGT Integration -->\n"));
 }
+
+#[test]
+fn shell_tokens_preserves_windows_paths() {
+    let cmd = r"C:\Users\rafael\.cargo\bin\rgt.exe hook post --agent claude-code";
+    assert!(
+        rgt::hooks::editor::is_rgt_command(cmd),
+        "Windows unquoted path must be recognized as rgt command"
+    );
+    let identity = rgt::hooks::editor::rgt_hook_identity(cmd);
+    assert_eq!(
+        identity,
+        Some(("claude-code".to_string(), "post".to_string()))
+    );
+}
+

@@ -641,6 +641,11 @@ fn opencode_native_read_dialect(value: &serde_json::Value) -> Option<NormalizedC
     let display = metadata.get("display")?;
     let text = display.get("text")?.as_str()?;
     let line_count = u32::try_from(text.lines().count()).ok()?;
+    let line_start = display.get("lineStart")?.as_u64()?;
+    let line_end = display.get("lineEnd")?.as_u64()?;
+    let total_lines = display.get("totalLines")?.as_u64()?;
+    let line_count_u64 = u64::from(line_count);
+    let lines_match = line_count_u64 == total_lines || line_count_u64 + 1 == total_lines;
     if path.is_empty()
         || result.get("output")?.as_str().is_none()
         || [value, result]
@@ -650,9 +655,9 @@ fn opencode_native_read_dialect(value: &serde_json::Value) -> Option<NormalizedC
         || display.get("truncated")?.as_bool()?
         || display.get("type")?.as_str()? != "file"
         || display.get("path")?.as_str()? != path
-        || display.get("lineStart")?.as_u64()? != 1
-        || display.get("lineEnd")?.as_u64()? != u64::from(line_count)
-        || display.get("totalLines")?.as_u64()? != u64::from(line_count)
+        || line_start != 1
+        || line_end != total_lines
+        || !lines_match
     {
         return None;
     }
@@ -710,6 +715,18 @@ fn is_qualifying_read_event(
                 && capture.read_target.is_some()
         }
         (Some("codex"), Some("read_file" | "ReadFile" | "Read")) => capture.read_target.is_some(),
+        (
+            Some("codex"),
+            Some("Bash" | "bash" | "execute_command" | "ExecuteCommand" | "exec"),
+        ) => {
+            let command = value
+                .get("tool_input")
+                .and_then(|input| input.get("command"))
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| value.get("command").and_then(serde_json::Value::as_str));
+            command.is_some_and(|command| extract_path_from_command(command).is_some())
+                && capture.read_target.is_some()
+        }
         _ => false,
     }
 }
@@ -722,6 +739,22 @@ fn is_qualifying_read_event(
 /// `pdf_base64` so the hook can decode and extract it locally (spec 033). The
 /// shape is an undocumented internal detail, so any mismatch falls through with
 /// the content-less capture unchanged (fail open).
+fn extract_text_content(tool_response: &serde_json::Value) -> Option<String> {
+    if let Some(c) = tool_response.get("content").and_then(|c| c.as_str()) {
+        return Some(c.to_string());
+    }
+    if let Some(c) = tool_response
+        .pointer("/file/content")
+        .and_then(|c| c.as_str())
+    {
+        return Some(c.to_string());
+    }
+    if let Some(t) = tool_response.get("text").and_then(|t| t.as_str()) {
+        return Some(t.to_string());
+    }
+    None
+}
+
 fn default_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
     let payload = parse_hook_payload(&value.to_string()).ok()?;
     let path = payload
@@ -731,7 +764,8 @@ fn default_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
     let content = payload
         .tool_response
         .as_ref()
-        .and_then(|r| r.content.clone());
+        .and_then(|r| r.content.clone())
+        .or_else(|| value.get("tool_response").and_then(extract_text_content));
     // Inspect the raw JSON, not the round-tripped struct: HookToolResponse only
     // carries `content`, so the envelope's `type`/`file` fields survive only on
     // the original value.

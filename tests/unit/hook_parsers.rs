@@ -451,6 +451,57 @@ fn claude_and_codex_reject_explicit_error_fields_on_complete_reads() {
     }
 }
 
+#[test]
+fn claude_code_nested_file_response_payload() {
+    let payloads = [
+        serde_json::json!({
+            "event": "PostToolUse",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/tmp/source.txt"},
+            "tool_response": {
+                "type": "text",
+                "file": {
+                    "filePath": "/tmp/source.txt",
+                    "content": "amount 47\n"
+                }
+            }
+        }),
+        serde_json::json!({
+            "event": "PostToolUse",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/tmp/source.txt"},
+            "tool_response": {
+                "file": {
+                    "content": "amount 47\n"
+                }
+            }
+        }),
+        serde_json::json!({
+            "event": "PostToolUse",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/tmp/source.txt"},
+            "tool_response": {
+                "text": "amount 47\n"
+            }
+        }),
+    ];
+
+    for (i, payload) in payloads.iter().enumerate() {
+        let capture = normalize_agent_event(Some("claude-code"), &payload.to_string())
+            .unwrap_or_else(|| panic!("payload {i} should normalize"));
+        assert!(
+            capture.is_value_capture_eligible(),
+            "payload {i} should be value capture eligible"
+        );
+        assert_eq!(
+            capture.completed_content.as_deref(),
+            Some("amount 47\n"),
+            "payload {i} content mismatch"
+        );
+        assert_eq!(capture.read_target.as_deref(), Some("/tmp/source.txt"));
+    }
+}
+
 // ---- T005 (US1): dispatch fallback for claude-code/cursor ----
 
 #[test]
@@ -463,6 +514,23 @@ fn bash_payload_is_captured_for_claude_and_cursor() {
         if agent != Some("cursor") {
             assert!(cap.is_value_capture_eligible());
         }
+    }
+}
+
+#[test]
+fn codex_cli_shell_read_commands_are_qualifying() {
+    for tool in ["Bash", "bash", "execute_command", "ExecuteCommand", "exec"] {
+        let payload = format!(
+            r#"{{"event":"PostToolUse","tool_name":"{tool}","tool_input":{{"command":"cat /tmp/data.csv"}},"tool_response":{{"stdout":"amount,42\n"}}}}"#
+        );
+        let capture = normalize_agent_event(Some("codex"), &payload)
+            .unwrap_or_else(|| panic!("tool {tool} should normalize"));
+        assert!(
+            capture.is_value_capture_eligible(),
+            "tool {tool} for codex should be value capture eligible"
+        );
+        assert_eq!(capture.read_target.as_deref(), Some("/tmp/data.csv"));
+        assert_eq!(capture.completed_content.as_deref(), Some("amount,42\n"));
     }
 }
 
