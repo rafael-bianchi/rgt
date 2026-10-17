@@ -164,18 +164,14 @@ pub fn parse_hook_payload(json_str: &str) -> Result<HookPayload, serde_json::Err
 pub fn extract_values_from_content(content: &str, format: NumberFormat) -> ExtractionResult {
     let mut result = ExtractionResult::default();
     let iso_date_regex =
-        Regex::new(r"\b(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)?)\b").unwrap();
+        Regex::new(r"\b(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?)\b")
+            .unwrap();
     // FR-004: resolve `Auto` once per file, then reuse the concrete format.
     let format = match format {
         NumberFormat::Auto => resolve_auto_format(content),
         other => other,
     };
-    let (decimal, thousands) = match format {
-        NumberFormat::Us => ('.', ','),
-        NumberFormat::Eu => (',', '.'),
-        NumberFormat::Auto => unreachable!("Auto resolved above"),
-    };
-    let number_regex = Regex::new(r"\b(\d[\d.,]*\d|\d)\b").unwrap();
+    let number_regex = Regex::new(r"(\d[\d.,]*(?:[eE][+-]?\d+)?)").unwrap();
 
     for (idx, line) in content.lines().enumerate() {
         let line_num = (idx + 1) as u32;
@@ -187,9 +183,14 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
         for cap in iso_date_regex.captures_iter(line) {
             if let Some(m) = cap.get(1) {
                 let s = m.as_str();
+                date_spans.push((m.start(), m.end()));
                 let dt = if s.contains('T') {
                     DateTime::parse_from_rfc3339(s)
                         .map(|d| d.with_timezone(&Utc))
+                        .or_else(|_| {
+                            DateTime::parse_from_rfc3339(&format!("{}Z", s))
+                                .map(|d| d.with_timezone(&Utc))
+                        })
                         .ok()
                 } else {
                     DateTime::parse_from_rfc3339(&format!("{}T00:00:00Z", s))
@@ -198,32 +199,51 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
                 };
 
                 if let Some(valid_dt) = dt {
-                    date_spans.push((m.start(), m.end()));
                     result.values.push(ExtractedValue {
                         value: ValueData::Date(valid_dt),
                         line_number: Some(line_num),
                         occurrence,
                     });
                     occurrence += 1;
+                } else {
+                    result.skipped_malformed += 1;
                 }
             }
         }
 
         for cap in number_regex.captures_iter(line) {
             if let Some(m) = cap.get(1) {
-                // Skip any number match that lies inside a recognized date.
+                // Must not be preceded by a word character (e.g. `foo123`), unless it's a sign/context handled later
+                if m.start() > 0
+                    && line[..m.start()]
+                        .chars()
+                        .last()
+                        .map(|c| c.is_alphanumeric() || c == '_')
+                        .unwrap_or(false)
+                {
+                    continue;
+                }
+
+                // Skip any number match that lies inside a recognized date span.
                 if date_spans
                     .iter()
                     .any(|(s, e)| m.start() >= *s && m.end() <= *e)
                 {
                     continue;
                 }
-                // FR-001: attach an immediately-adjacent leading `-`/`+` and
-                // accounting `(...)` pair (only when not preceded by a word
-                // char, so `abc-123` stays `123`, not `-123`).
-                let (prefix, suffix) = candidate_context(line, m.start(), m.end());
-                match normalize_number(&prefix, m.as_str(), &suffix, decimal, thousands) {
-                    Some(num) => {
+
+                // Trim trailing commas or dots (e.g. from sentence period or trailing punctuation)
+                let trimmed = m.as_str().trim_end_matches(['.', ',']);
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let end = m.start() + trimmed.len();
+
+                // Attach sign, currency context, accounting parens
+                let (prefix, suffix) = candidate_context(line, m.start(), end);
+
+                match process_candidate(&prefix, trimmed, &suffix, format) {
+                    ProcessedCandidate::Single(num) => {
                         result.values.push(ExtractedValue {
                             value: ValueData::Number(num),
                             line_number: Some(line_num),
@@ -231,7 +251,19 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
                         });
                         occurrence += 1;
                     }
-                    None => result.skipped_malformed += 1,
+                    ProcessedCandidate::Split(nums) => {
+                        for num in nums {
+                            result.values.push(ExtractedValue {
+                                value: ValueData::Number(num),
+                                line_number: Some(line_num),
+                                occurrence,
+                            });
+                            occurrence += 1;
+                        }
+                    }
+                    ProcessedCandidate::Malformed => {
+                        result.skipped_malformed += 1;
+                    }
                 }
             }
         }
@@ -240,31 +272,220 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
     result
 }
 
+enum ProcessedCandidate {
+    Single(f64),
+    Split(Vec<f64>),
+    Malformed,
+}
+
+fn process_candidate(
+    prefix: &str,
+    raw: &str,
+    suffix: &str,
+    format: NumberFormat,
+) -> ProcessedCandidate {
+    let (decimal, thousands) = match format {
+        NumberFormat::Us => ('.', ','),
+        NumberFormat::Eu => (',', '.'),
+        NumberFormat::Auto => unreachable!("Auto resolved before candidate processing"),
+    };
+
+    // Scientific notation check
+    if raw.contains(['e', 'E']) {
+        let has_minus = prefix.starts_with('-');
+        let has_parens = prefix.contains('(') && suffix.contains(')');
+        let negative = has_minus ^ has_parens;
+
+        let s = if decimal != '.' {
+            raw.replace(decimal, ".")
+        } else {
+            raw.to_string()
+        };
+        return match s.parse::<f64>() {
+            Ok(mut val) if val.is_finite() => {
+                if negative {
+                    val = -val;
+                }
+                if val == 0.0 && val.is_sign_negative() {
+                    val = 0.0;
+                }
+                ProcessedCandidate::Single(val)
+            }
+            _ => ProcessedCandidate::Malformed,
+        };
+    }
+
+    if decimal == '.' {
+        // US format convention: '.' is decimal, ',' is thousands
+        if raw.contains(',') {
+            // Check if valid single thousands-grouped number
+            let is_valid_single = if let Some(dot_idx) = raw.find('.') {
+                let after_dot = &raw[dot_idx + 1..];
+                if after_dot.contains('.')
+                    || after_dot.contains(',')
+                    || after_dot.is_empty()
+                    || !after_dot.chars().all(|c| c.is_ascii_digit())
+                {
+                    false
+                } else {
+                    let int_part = &raw[..dot_idx];
+                    let groups: Vec<&str> = int_part.split(',').collect();
+                    (1..=3).contains(&groups[0].len())
+                        && groups[0].chars().all(|c| c.is_ascii_digit())
+                        && groups[1..]
+                            .iter()
+                            .all(|g| g.len() == 3 && g.chars().all(|c| c.is_ascii_digit()))
+                }
+            } else {
+                let groups: Vec<&str> = raw.split(',').collect();
+                groups.len() == 2
+                    && (1..=3).contains(&groups[0].len())
+                    && groups[0].chars().all(|c| c.is_ascii_digit())
+                    && groups[1].len() == 3
+                    && groups[1].chars().all(|c| c.is_ascii_digit())
+            };
+
+            if is_valid_single {
+                return match normalize_number(prefix, raw, suffix, decimal, thousands) {
+                    Some(num) => ProcessedCandidate::Single(num),
+                    None => ProcessedCandidate::Malformed,
+                };
+            }
+
+            // Conflicting EU-formatted number (e.g. 1.234,56 or 1.234.567,89) must not be split
+            let eu_fmt_regex = Regex::new(r"^\d{1,3}(\.\d{3})+,\d+$").unwrap();
+            if eu_fmt_regex.is_match(raw) {
+                return ProcessedCandidate::Malformed;
+            }
+
+            // Not a valid single formatted number: check if unspaced CSV row
+            let pieces: Vec<&str> = raw.split(',').collect();
+            let mut parsed_pieces = Vec::new();
+            let has_minus = prefix.starts_with('-');
+            let has_parens = prefix.contains('(') && suffix.contains(')');
+            let negative = has_minus ^ has_parens;
+
+            for (i, p) in pieces.iter().enumerate() {
+                if p.is_empty() {
+                    return ProcessedCandidate::Malformed;
+                }
+                match p.parse::<f64>() {
+                    Ok(mut val) if val.is_finite() => {
+                        if i == 0 && negative {
+                            val = -val;
+                        }
+                        if val == 0.0 && val.is_sign_negative() {
+                            val = 0.0;
+                        }
+                        parsed_pieces.push(val);
+                    }
+                    _ => return ProcessedCandidate::Malformed,
+                }
+            }
+
+            return ProcessedCandidate::Split(parsed_pieces);
+        }
+    } else {
+        // EU format convention: ',' is decimal, '.' is thousands
+        if raw.contains('.') {
+            // Check if valid single thousands-grouped number
+            let is_valid_single = if let Some(comma_idx) = raw.find(',') {
+                let after_comma = &raw[comma_idx + 1..];
+                if after_comma.contains('.')
+                    || after_comma.contains(',')
+                    || after_comma.is_empty()
+                    || !after_comma.chars().all(|c| c.is_ascii_digit())
+                {
+                    false
+                } else {
+                    let int_part = &raw[..comma_idx];
+                    let groups: Vec<&str> = int_part.split('.').collect();
+                    (1..=3).contains(&groups[0].len())
+                        && groups[0].chars().all(|c| c.is_ascii_digit())
+                        && groups[1..]
+                            .iter()
+                            .all(|g| g.len() == 3 && g.chars().all(|c| c.is_ascii_digit()))
+                }
+            } else {
+                let groups: Vec<&str> = raw.split('.').collect();
+                groups.len() == 2
+                    && (1..=3).contains(&groups[0].len())
+                    && groups[0].chars().all(|c| c.is_ascii_digit())
+                    && groups[1].len() == 3
+                    && groups[1].chars().all(|c| c.is_ascii_digit())
+            };
+
+            if is_valid_single {
+                return match normalize_number(prefix, raw, suffix, decimal, thousands) {
+                    Some(num) => ProcessedCandidate::Single(num),
+                    None => ProcessedCandidate::Malformed,
+                };
+            }
+
+            // Conflicting US-formatted number (e.g. 1,234.56 or 1,234,567.89) must not be split
+            let us_fmt_regex = Regex::new(r"^\d{1,3}(,\d{3})+\.\d+$").unwrap();
+            if us_fmt_regex.is_match(raw) {
+                return ProcessedCandidate::Malformed;
+            }
+        }
+    }
+
+    match normalize_number(prefix, raw, suffix, decimal, thousands) {
+        Some(num) => ProcessedCandidate::Single(num),
+        None => ProcessedCandidate::Malformed,
+    }
+}
+
 /// Expands a numeric core span into its optional sign/parentheses context:
 /// returns `(prefix, suffix)` strings. The prefix may be a leading `-`/`+`
 /// and/or an opening `(`; the suffix is a closing `)` when an opening `(` was
 /// attached. Attachment is suppressed when the context is preceded by a word
 /// character, so `abc-123` and `abc(500)` do not take on a sign.
 fn candidate_context(line: &str, start: usize, end: usize) -> (String, String) {
-    let bytes = line.as_bytes();
-    let max_run = start.min(2);
-    let mut run_len = 0;
-    while run_len < max_run && matches!(bytes[start - run_len - 1], b'-' | b'+' | b'(') {
-        run_len += 1;
-    }
-    let prefix_bytes = &bytes[start - run_len..start];
-    let preceded_by_word = start > run_len
-        && (bytes[start - run_len - 1].is_ascii_alphanumeric()
-            || bytes[start - run_len - 1] == b'_');
+    let is_currency = |c: char| matches!(c, '$' | '€' | '£' | '¥');
+    let before = &line[..start];
+
+    // Trim single preceding currency symbol if present
+    let before_trimmed_curr = if let Some(last_char) = before.chars().last() {
+        if is_currency(last_char) {
+            &before[..before.len() - last_char.len_utf8()]
+        } else {
+            before
+        }
+    } else {
+        before
+    };
+
+    let sign_chars: Vec<char> = before_trimmed_curr
+        .chars()
+        .rev()
+        .take_while(|&c| matches!(c, '-' | '+' | '('))
+        .collect();
+
+    let sign_byte_len: usize = sign_chars.iter().map(|c| c.len_utf8()).sum();
+    let rem = &before_trimmed_curr[..before_trimmed_curr.len() - sign_byte_len];
+    let preceded_by_word = rem
+        .chars()
+        .last()
+        .map(|c| c.is_alphanumeric() || c == '_')
+        .unwrap_or(false);
+
     let prefix = if preceded_by_word {
         String::new()
+    } else if sign_chars.iter().filter(|&&c| c == '-').count() >= 2 {
+        // Multi-hyphen CLI flags (e.g. --100 or ---50) are not unary minus
+        String::new()
     } else {
-        String::from_utf8_lossy(prefix_bytes).into_owned()
+        sign_chars.into_iter().rev().collect()
     };
+
     let mut suffix = String::new();
-    if end < bytes.len() && bytes[end] == b')' && prefix.contains('(') {
-        suffix.push(')');
+    if end < line.len() && prefix.contains('(') {
+        if line[end..].starts_with(')') {
+            suffix.push(')');
+        }
     }
+
     (prefix, suffix)
 }
 
@@ -320,8 +541,14 @@ fn normalize_number(
     }
 
     let mut value = cleaned.parse::<f64>().ok()?;
+    if !value.is_finite() {
+        return None;
+    }
     if negative {
         value = -value;
+    }
+    if value == 0.0 && value.is_sign_negative() {
+        value = 0.0;
     }
     Some(value)
 }
@@ -332,19 +559,19 @@ fn normalize_number(
 /// format falls back to `Us`.
 fn resolve_auto_format(content: &str) -> NumberFormat {
     let candidate_regex = Regex::new(r"\d[\d.,]*\d").unwrap();
+    let us_fmt_regex = Regex::new(r"^\d{1,3}(,\d{3})+\.\d+$").unwrap();
+    let eu_fmt_regex = Regex::new(r"^\d{1,3}(\.\d{3})+,\d+$").unwrap();
+
     for line in content.lines() {
         for cap in candidate_regex.captures_iter(line) {
             if let Some(m) = cap.get(0) {
                 let s = m.as_str();
-                let has_dot = s.contains('.');
-                let has_comma = s.contains(',');
-                if has_dot && has_comma {
-                    if let Some(idx) = s.rfind(['.', ',']) {
-                        return if s.as_bytes()[idx] == b'.' {
-                            NumberFormat::Us
-                        } else {
-                            NumberFormat::Eu
-                        };
+                if s.contains('.') && s.contains(',') {
+                    if us_fmt_regex.is_match(s) {
+                        return NumberFormat::Us;
+                    }
+                    if eu_fmt_regex.is_match(s) {
+                        return NumberFormat::Eu;
                     }
                 }
             }

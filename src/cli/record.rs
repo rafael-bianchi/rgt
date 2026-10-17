@@ -80,31 +80,45 @@ pub fn execute_record_with_outcome(
     stdin: bool,
     explicit_format: Option<NumberFormat>,
 ) -> Result<RecordOutcome, String> {
-    let path_obj = Path::new(file);
-
-    if !path_obj.exists() {
-        return Err(format!("file not found: {}", file));
-    }
-
-    // FR-002: hash the exact in-memory bytes that are parsed for values (no
-    // second file read — avoids the §7.4 TOCTOU between extraction and hashing).
-    let (content, hash) = if stdin {
+    let (content, hash, meta) = if file == "<stdin>" {
         let mut buf = Vec::new();
         io::stdin()
             .read_to_end(&mut buf)
             .map_err(|e| format!("failed to read stdin: {}", e))?;
         let hash = compute_blake3_hash_from_bytes(&buf);
         let content = read_utf8_content(file, buf)?;
-        (content, hash)
+        let meta = crate::detection::MetadataSnapshot {
+            mtime_nsec: 0,
+            file_size: content.len() as u64,
+            dev: None,
+            ino: None,
+        };
+        (content, hash, meta)
     } else {
-        let bytes = fs::read(file).map_err(|e| format!("failed to read file: {}", e))?;
-        let hash = compute_blake3_hash_from_bytes(&bytes);
-        let content = read_utf8_content(file, bytes)?;
-        (content, hash)
-    };
+        let path_obj = Path::new(file);
+        if !path_obj.exists() {
+            return Err(format!("file not found: {}", file));
+        }
+        let meta = get_metadata_snapshot(path_obj)
+            .map_err(|e| format!("failed to get metadata: {}", e))?;
 
-    let meta =
-        get_metadata_snapshot(path_obj).map_err(|e| format!("failed to get metadata: {}", e))?;
+        if stdin {
+            let mut buf = Vec::new();
+            io::stdin()
+                .read_to_end(&mut buf)
+                .map_err(|e| format!("failed to read stdin: {}", e))?;
+            let content = read_utf8_content(file, buf)?;
+            let disk_bytes =
+                fs::read(path_obj).map_err(|e| format!("failed to read file: {}", e))?;
+            let hash = compute_blake3_hash_from_bytes(&disk_bytes);
+            (content, hash, meta)
+        } else {
+            let bytes = fs::read(file).map_err(|e| format!("failed to read file: {}", e))?;
+            let hash = compute_blake3_hash_from_bytes(&bytes);
+            let content = read_utf8_content(file, bytes)?;
+            (content, hash, meta)
+        }
+    };
 
     let mut db =
         DbStore::open_in_project(".").map_err(|e| format!("failed to open database: {}", e))?;

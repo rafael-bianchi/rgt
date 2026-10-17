@@ -9,7 +9,7 @@ mod tests {
     static CWD_MUTEX: Mutex<()> = Mutex::new(());
 
     fn set_cwd(dir: &std::path::Path) -> std::sync::MutexGuard<'static, ()> {
-        let guard = CWD_MUTEX.lock().unwrap();
+        let guard = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_current_dir(dir).unwrap();
         guard
     }
@@ -793,5 +793,112 @@ mod tests {
             .find(|n| n.value.to_string_repr() == format!("{}", v))
             .expect("node with value")
             .id
+    }
+
+    // ========================================================================
+    // Spec 046: rgt record --stdin without file and with existing file
+    // ========================================================================
+
+    #[test]
+    fn record_stdin_without_file_argument_defaults_to_stdin_virtual_source() {
+        use std::process::{Command, Stdio};
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
+
+        let mut child = Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args(["record", "--stdin"])
+            .current_dir(dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn rgt record --stdin");
+
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(b"Amount: 1234.56\n")
+            .unwrap();
+
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            out.status.success(),
+            "record --stdin without file argument must succeed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let db = rgt::store::DbStore::open_in_project(dir.path()).unwrap();
+        let nodes = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].value.to_string_repr(), "1234.56");
+        assert!(!nodes[0].is_stale);
+
+        // Status check must not mark virtual <stdin> node as stale
+        let status_out = Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .arg("status")
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(status_out.status.success());
+        let status_str = String::from_utf8_lossy(&status_out.stdout);
+        assert!(status_str.contains("All tracked values are fresh and valid"));
+    }
+
+    #[test]
+    fn record_stdin_with_disk_file_preserves_disk_file_hash() {
+        use std::process::{Command, Stdio};
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        assert!(execute_init(false, true, Some("codex"), None).is_ok());
+
+        let file_path = dir.path().join("report.pdf");
+        std::fs::write(&file_path, b"%PDF-1.4 raw binary dummy content").unwrap();
+
+        let mut child = Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args(["record", "report.pdf", "--stdin"])
+            .current_dir(dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn rgt record report.pdf --stdin");
+
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(b"extracted text: Total: 999.0\n")
+            .unwrap();
+
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            out.status.success(),
+            "record report.pdf --stdin must succeed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let db = rgt::store::DbStore::open_in_project(dir.path()).unwrap();
+        let doc = rgt::store::queries::get_source_document_by_path(db.conn(), "report.pdf")
+            .unwrap()
+            .expect("source document exists");
+        let disk_hash = rgt::detection::compute_blake3_hash(&file_path).unwrap();
+        assert_eq!(
+            doc.blake3_hash, disk_hash,
+            "recorded hash must match on-disk file bytes, not stdin text bytes"
+        );
+
+        // Status check must verify on-disk file and keep nodes fresh
+        let status_out = Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .arg("status")
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(status_out.status.success());
+        let status_str = String::from_utf8_lossy(&status_out.stdout);
+        assert!(status_str.contains("All tracked values are fresh and valid"));
     }
 }

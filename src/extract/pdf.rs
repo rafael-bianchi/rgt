@@ -7,10 +7,21 @@ use base64::prelude::*;
 /// today; a future setting can surface it without changing call sites.
 pub const MAX_CONTEXT_CHARS: usize = 8000;
 
+/// Maximum allowed decoded PDF size or decompressed text output (10 MiB limit).
+pub const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
+
 /// Decodes a base64 PDF envelope's bytes, or `None` on malformed input
-/// (fail open — spec 033 FR-005).
+/// (fail open — spec 033 FR-005). Enforces a 10 MiB limit on decoded bytes.
 pub fn decode_pdf_base64(base64_str: &str) -> Option<Vec<u8>> {
-    BASE64_STANDARD.decode(base64_str.trim()).ok()
+    let trimmed = base64_str.trim();
+    if trimmed.len() > MAX_PDF_BYTES * 4 / 3 + 1024 {
+        return None;
+    }
+    let bytes = BASE64_STANDARD.decode(trimmed).ok()?;
+    if bytes.len() > MAX_PDF_BYTES {
+        return None;
+    }
+    Some(bytes)
 }
 
 /// Runs local PDF text extraction on in-memory bytes.
@@ -21,9 +32,25 @@ pub fn decode_pdf_base64(base64_str: &str) -> Option<Vec<u8>> {
 /// undocumented, so it is wrapped in `catch_unwind` to preserve the hook's
 /// fail-open contract (spec 033 Risks; Constitution XI "zero unhandled panics").
 pub fn extract_pdf_text(decoded: &[u8]) -> Option<String> {
+    if decoded.len() > MAX_PDF_BYTES {
+        return None;
+    }
     std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(decoded))
         .ok()
         .and_then(|r| r.ok())
+        .map(|text| {
+            if text.len() > MAX_PDF_BYTES {
+                let split = text
+                    .char_indices()
+                    .take_while(|(idx, _)| *idx <= MAX_PDF_BYTES)
+                    .last()
+                    .map(|(idx, c)| idx + c.len_utf8())
+                    .unwrap_or(0);
+                text[..split].to_string()
+            } else {
+                text
+            }
+        })
 }
 
 /// Renders the `additionalContext` string for a PDF capture.
@@ -37,11 +64,17 @@ pub fn render_additional_context(text: &str) -> String {
     if text.trim().is_empty() {
         return "RGT: no text layer found in this PDF; provenance capture requires the agent to extract values manually via rgt record --stdin".to_string();
     }
-    if text.chars().count() <= MAX_CONTEXT_CHARS {
+    let total_chars = text.chars().count();
+    if total_chars <= MAX_CONTEXT_CHARS {
         return text.to_string();
     }
-    let truncated: String = text.chars().take(MAX_CONTEXT_CHARS).collect();
-    let omitted = text.chars().count() - MAX_CONTEXT_CHARS;
+    let split_byte = text
+        .char_indices()
+        .nth(MAX_CONTEXT_CHARS)
+        .map(|(idx, _)| idx)
+        .unwrap_or(text.len());
+    let truncated = &text[..split_byte];
+    let omitted = total_chars - MAX_CONTEXT_CHARS;
     format!(
         "{}\n[... truncated: {omitted} characters omitted; full text was still extracted and recorded to the provenance graph ...]",
         truncated

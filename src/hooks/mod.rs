@@ -18,6 +18,7 @@ use std::time::Duration;
 
 const MAX_HOOK_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const HOOK_STDIN_DEADLINE: Duration = Duration::from_millis(250);
+pub const VALUE_LIMIT: usize = 10_000;
 
 /// Processes a passive hook event (PreToolUse/PostToolUse) by reading tool event
 /// JSON from stdin, normalizing it to the internal completed-read model
@@ -91,6 +92,9 @@ pub fn handle_passive_hook_event(event_type: &str, agent: Option<&str>) -> io::R
     };
 
     let mut extraction = extract_values_from_content(content, number_format);
+    if extraction.values.len() > VALUE_LIMIT {
+        extraction.values.truncate(VALUE_LIMIT);
+    }
     for value in &mut extraction.values {
         let Some(source_line) = value.line_number else {
             return Ok(());
@@ -264,7 +268,10 @@ fn record_pdf_values(
         Ok(Some(raw)) => raw.parse().unwrap_or(NumberFormat::Auto),
         _ => NumberFormat::Auto,
     };
-    let extraction = extract_values_from_content(text, number_format);
+    let mut extraction = extract_values_from_content(text, number_format);
+    if extraction.values.len() > VALUE_LIMIT {
+        extraction.values.truncate(VALUE_LIMIT);
+    }
     let tx = match db.conn().unchecked_transaction() {
         Ok(tx) => tx,
         Err(_) => return Ok(false),
