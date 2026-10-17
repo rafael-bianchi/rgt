@@ -64,10 +64,10 @@ section() {
 # Resolve RGT binary to test
 RGT_BIN="${RGT_BIN:-}"
 if [ -z "$RGT_BIN" ]; then
-    if [ -x "./target/release/rgt" ]; then
-        RGT_BIN="./target/release/rgt"
-    elif [ -x "./target/debug/rgt" ]; then
+    if [ -x "./target/debug/rgt" ]; then
         RGT_BIN="./target/debug/rgt"
+    elif [ -x "./target/release/rgt" ]; then
+        RGT_BIN="./target/release/rgt"
     elif command -v rgt >/dev/null 2>&1; then
         RGT_BIN="$(command -v rgt)"
     else
@@ -574,6 +574,185 @@ if command -v hermes >/dev/null 2>&1; then
 else
     skip "Hermes not installed on host"
 fi
+
+# ------------------------------------------------------------------------------
+# 8. Hardening Regressions & Provenance Invariants (Specs 045–050)
+# ------------------------------------------------------------------------------
+section "Suite 7: Hardening Regressions & Provenance Invariants (Specs 045–050)"
+
+HARDEN_DIR="$TEST_ROOT/hardening-invariants"
+mkdir -p "$HARDEN_DIR"
+(
+    cd "$HARDEN_DIR"
+    "$RGT_BIN" init --agent claude-code >/dev/null
+
+    # 7.1 Unspaced CSV and locale extraction (Spec 046)
+    printf "a,b,c\n10,200,300\n1.5,2.5,3.5\n" > unspaced.csv
+    "$RGT_BIN" record unspaced.csv >/dev/null
+    GRAPH_UNSPACED="$("$RGT_BIN" graph)"
+    if echo "$GRAPH_UNSPACED" | grep -q "10200300"; then
+        fail "Spec 046: Unspaced CSV merged columns into bogus 10200300"
+    elif echo "$GRAPH_UNSPACED" | grep -q "10" && echo "$GRAPH_UNSPACED" | grep -q "200" && echo "$GRAPH_UNSPACED" | grep -q "300"; then
+        success "Spec 046: Unspaced CSV (10,200,300) correctly extracted as separate values"
+    else
+        fail "Spec 046: Unspaced CSV values missing in graph: $GRAPH_UNSPACED"
+    fi
+
+    # 7.2 Timestamp timezone offset and currency signs (Spec 046)
+    printf "Created: 2026-01-15T10:30:00-03:00\nPrice: -\$1,200.00\n" > formats.txt
+    "$RGT_BIN" record formats.txt >/dev/null
+    GRAPH_FMT="$("$RGT_BIN" graph)"
+    if echo "$GRAPH_FMT" | grep -q "2026-01-15T10:30:00-03:00" || echo "$GRAPH_FMT" | grep -q "2026-01-15T13:30:00+00:00"; then
+        success "Spec 046: ISO-8601 with timezone offset parsed as single Date node"
+    else
+        fail "Spec 046: ISO-8601 timestamp with offset failed or shattered into numbers: $GRAPH_FMT"
+    fi
+    if echo "$GRAPH_FMT" | grep -q -- "-1200"; then
+        success "Spec 046: Currency with leading negative sign (-\$1,200.00) preserved negative value (-1200)"
+    else
+        fail "Spec 046: Currency sign stripping failure: $GRAPH_FMT"
+    fi
+
+    # 7.3 Unused parent detection in EXPRESSION (Spec 047)
+    ID_10=$(echo "$GRAPH_UNSPACED" | grep "10" | grep -o "node_raw_[a-f0-9]*" | head -n 1)
+    ID_200=$(echo "$GRAPH_UNSPACED" | grep "200" | grep -o "node_raw_[a-f0-9]*" | head -n 1)
+    if [ -n "$ID_10" ] && [ -n "$ID_200" ]; then
+        set +e
+        "$RGT_BIN" derive --parents "$ID_10,$ID_200" --operation EXPRESSION --expression "a + 0" --result 10 >/dev/null 2>&1
+        UNUSED_EXIT=$?
+        set -e
+        if [ "$UNUSED_EXIT" -eq 2 ]; then
+            success "Spec 047: Expression with unused parent 'b' strictly rejected with exit code 2"
+        else
+            fail "Spec 047: Expression with unused parent should exit 2, got $UNUSED_EXIT"
+        fi
+    fi
+
+    # 7.4 Typed Duration operations DURATION_SUM & Query duration_seconds (Spec 047 & 050)
+    printf "2026-01-01\n2026-01-05\n2026-01-10\n" > dates.txt
+    "$RGT_BIN" record dates.txt >/dev/null
+    GRAPH_DATES="$("$RGT_BIN" graph)"
+    D1=$(echo "$GRAPH_DATES" | grep "2026-01-01" | grep -o "node_raw_[a-f0-9]*" | head -n 1)
+    D2=$(echo "$GRAPH_DATES" | grep "2026-01-05" | grep -o "node_raw_[a-f0-9]*" | head -n 1)
+    D3=$(echo "$GRAPH_DATES" | grep "2026-01-10" | grep -o "node_raw_[a-f0-9]*" | head -n 1)
+    OUT1=$("$RGT_BIN" derive --parents "$D1,$D2" --operation DATE_DIFF --unit days)
+    DUR1=$(echo "$OUT1" | grep -o "node_drv_[a-f0-9]*" | head -n 1)
+    OUT2=$("$RGT_BIN" derive --parents "$D2,$D3" --operation DATE_DIFF --unit days)
+    DUR2=$(echo "$OUT2" | grep -o "node_drv_[a-f0-9]*" | head -n 1)
+    OUT3=$("$RGT_BIN" derive --parents "$DUR1,$DUR2" --operation DURATION_SUM --unit days)
+    SUM_DUR_ID=$(echo "$OUT3" | grep -o "node_drv_[a-f0-9]*" | head -n 1)
+    if [ -n "$SUM_DUR_ID" ]; then
+        QUERY_SUM="$("$RGT_BIN" query "$SUM_DUR_ID" --unit days)"
+        if echo "$QUERY_SUM" | grep -q "duration_seconds: 777600" || echo "$QUERY_SUM" | grep -q "display: 9 days"; then
+            success "Spec 047 & 050: DURATION_SUM computed typed duration and query printed duration_seconds"
+        else
+            fail "Spec 047 & 050: DURATION_SUM query output missing expected fields: $QUERY_SUM"
+        fi
+    fi
+
+    # 7.5 Scope-aware init and doctor layered precedence (Spec 049)
+    USER_HOME="$TEST_ROOT/user_home_layered"
+    mkdir -p "$USER_HOME"
+    HOME="$USER_HOME" "$RGT_BIN" init -g --agent cursor >/dev/null
+    if [ -f "$USER_HOME/.cursor/rules/rgt.mdc" ]; then
+        success "Spec 049: rgt init -g writes guidance to user home (~/.cursor/rules/rgt.mdc)"
+    else
+        fail "Spec 049: rgt init -g failed to write to user home"
+    fi
+
+    # Project init coexisting with global user init (in an independent project directory)
+    PROJ_DIR="$TEST_ROOT/proj_layered"
+    mkdir -p "$PROJ_DIR"
+    (
+        cd "$PROJ_DIR"
+        HOME="$USER_HOME" "$RGT_BIN" init --agent cursor >/dev/null
+        set +e
+        HOME="$USER_HOME" "$RGT_BIN" doctor >/dev/null 2>&1
+        DOCTOR_LAYERED_EXIT=$?
+        set -e
+        if [ "$DOCTOR_LAYERED_EXIT" -eq 0 ]; then
+            success "Spec 049: rgt doctor resolves coexisting user + project configs with Active health (exit 0)"
+        else
+            fail "Spec 049: rgt doctor failed on layered project/user configuration (exit $DOCTOR_LAYERED_EXIT)"
+        fi
+    )
+
+    # 7.6 Staleness Invalidation and rgt status --stale-only (Spec 045 & Spec 050)
+    STALE_DIR="$HARDEN_DIR/staleness_test"
+    mkdir -p "$STALE_DIR"
+    (
+        cd "$STALE_DIR"
+        "$RGT_BIN" init --agent codex >/dev/null
+        echo "qty: 50" > stock.txt
+        "$RGT_BIN" record stock.txt >/dev/null
+        # Edit the file
+        echo "qty: 90" > stock.txt
+        # status --stale-only must show the stale node
+        STATUS_STALE="$("$RGT_BIN" status --stale-only)"
+        if echo "$STATUS_STALE" | grep -q "Stale Nodes Found" && echo "$STATUS_STALE" | grep -q "50"; then
+            success "Spec 045 & 050: rgt status --stale-only reports invalidated node after file modification"
+        else
+            fail "Spec 045 & 050: rgt status --stale-only failed to report modified node: $STATUS_STALE"
+        fi
+
+        STATUS_JSON="$("$RGT_BIN" status --stale-only --json)"
+        if echo "$STATUS_JSON" | grep -q '"stale_nodes": 1' && echo "$STATUS_JSON" | grep -q '"stale_details"'; then
+            success "Spec 050: rgt status --stale-only --json produces filtered JSON summary"
+        else
+            fail "Spec 050: rgt status --stale-only --json failed: $STATUS_JSON"
+        fi
+
+        # 7.7 Subdirectory discovery in nested path (Spec 045)
+        mkdir -p "$STALE_DIR/nested/deep"
+        (
+            cd "$STALE_DIR/nested/deep"
+            "$RGT_BIN" status >/dev/null
+            if [ ! -d ".rgt" ]; then
+                success "Spec 045: Subdirectory invocation discovered project root without creating local .rgt/"
+            else
+                fail "Spec 045: Subdirectory invocation created local .rgt directory instead of using project root"
+            fi
+        )
+    )
+
+    # 7.8 Turtle export relativePath preservation for deleted file (Spec 050)
+    TTL_DIR="$HARDEN_DIR/turtle_deleted"
+    mkdir -p "$TTL_DIR"
+    (
+        cd "$TTL_DIR"
+        "$RGT_BIN" init --agent codex >/dev/null
+        echo "123" > temp_metrics.txt
+        "$RGT_BIN" record temp_metrics.txt >/dev/null
+        rm -f temp_metrics.txt
+        TTL_EXPORT="$("$RGT_BIN" graph --format ttl 2>&1)"
+        if echo "$TTL_EXPORT" | grep -q 'rgt:relativePath "temp_metrics.txt"'; then
+            success "Spec 050: Turtle export preserves rgt:relativePath for deleted project file"
+        else
+            fail "Spec 050: Turtle export lost relativePath for deleted file: $TTL_EXPORT"
+        fi
+    )
+
+    # 7.9 Claude Code nested payload extraction (Spec 048)
+    NESTED_DIR="$TEST_ROOT/claude_nested"
+    mkdir -p "$NESTED_DIR"
+    (
+        cd "$NESTED_DIR"
+        "$RGT_BIN" init --agent claude-code >/dev/null
+        printf "Score: 999\n" > nested_doc.txt
+        doc_path="$NESTED_DIR/nested_doc.txt"
+        doc_content="$(cat "$doc_path")"
+        nested_payload=$(jq -n \
+            --arg file "$doc_path" \
+            --arg content "$doc_content" \
+            '{"event": "PostToolUse", "tool_name": "Read", "tool_input": {"file_path": $file, "path": $file}, "tool_response": {"type": "text", "file": {"filePath": $file, "content": $content}}}')
+        echo "$nested_payload" | "$RGT_BIN" hook post --agent claude-code >/dev/null 2>&1 || true
+        if "$RGT_BIN" graph | grep -q "999"; then
+            success "Spec 048: Claude Code nested tool response payload successfully captured value (999)"
+        else
+            fail "Spec 048: Claude Code nested payload failed to capture value"
+        fi
+    )
+)
 
 # ------------------------------------------------------------------------------
 # Summary Report
