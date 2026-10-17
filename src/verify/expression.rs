@@ -73,8 +73,49 @@ pub fn validate_expression(expression: &str) -> Result<(), String> {
 }
 
 fn approx_eq(a: f64, b: f64) -> bool {
-    let abs = (a - b).abs();
-    abs < 1e-9 || abs / b.abs().max(1e-10) < 1e-12
+    if !a.is_finite() || !b.is_finite() {
+        return false;
+    }
+    if a == b {
+        return true;
+    }
+    let largest = a.abs().max(b.abs());
+    if largest > 1e-14 && a.is_sign_positive() != b.is_sign_positive() {
+        return false;
+    }
+    let diff = (a - b).abs();
+    diff <= (1e-9 * largest).max(f64::EPSILON * 8.0)
+}
+
+/// Checks that all variables for `parents` (`a`.. up to `parents.len()`) are referenced in `expression`.
+fn validate_parent_variable_references(
+    expression: &str,
+    parent_count: usize,
+) -> Result<(), String> {
+    let bytes = expression.as_bytes();
+    for i in 0..parent_count {
+        let var = PARENT_VARIABLES[i] as char;
+        let mut found = false;
+        for (idx, &b) in bytes.iter().enumerate() {
+            if b == var as u8 {
+                let prev_ok = idx == 0
+                    || (!bytes[idx - 1].is_ascii_alphanumeric() && bytes[idx - 1] != b'_');
+                let next_ok = idx + 1 == bytes.len()
+                    || (!bytes[idx + 1].is_ascii_alphanumeric() && bytes[idx + 1] != b'_');
+                if prev_ok && next_ok {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            return Err(format!(
+                "parent variable '{}' is not referenced in expression '{}'",
+                var, expression
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Verifies that an arithmetic expression evaluated against parent values matches a claimed result.
@@ -85,13 +126,13 @@ fn approx_eq(a: f64, b: f64) -> bool {
 /// - `result`: The caller-claimed numeric result.
 ///
 /// # Returns
-/// `Ok(())` if the evaluated expression matches `result` within float tolerance.
+/// `Ok(computed_val)` if the evaluated expression matches `result` within float tolerance.
 /// `Err(message)` on evaluation failure (unknown variable, division by zero) or mismatch.
 pub fn verify_expression(
     parents: &[ValueData],
     expression: &str,
     result: f64,
-) -> Result<(), String> {
+) -> Result<f64, String> {
     // FR-001: reject over-limit expressions before any evaluation.
     validate_expression(expression)?;
 
@@ -104,6 +145,9 @@ pub fn verify_expression(
             parents.len()
         ));
     }
+
+    // Verify all parent variables are referenced in the expression
+    validate_parent_variable_references(expression, parents.len())?;
 
     let mut context = evalexpr::HashMapContext::<evalexpr::DefaultNumericTypes>::new();
 
@@ -136,8 +180,15 @@ pub fn verify_expression(
         .as_number()
         .map_err(|_| "Expression did not evaluate to a number".to_string())?;
 
+    if !computed_val.is_finite() {
+        return Err(format!(
+            "expression evaluated to non-finite value: {}",
+            computed_val
+        ));
+    }
+
     if approx_eq(computed_val, result) {
-        Ok(())
+        Ok(computed_val)
     } else {
         Err(format!(
             "{}: expected {}, got {}",
@@ -215,7 +266,7 @@ mod tests {
 
     #[test]
     fn verify_expression_integer_literal_coerces() {
-        assert_eq!(verify_expression(&[], "2*50", 100.0), Ok(()));
+        assert_eq!(verify_expression(&[], "2*50", 100.0), Ok(100.0));
     }
 
     #[test]
@@ -257,7 +308,11 @@ mod tests {
     #[test]
     fn verify_expression_accepts_exactly_26_parents() {
         let parents = (0..26).map(|_| ValueData::Number(1.0)).collect::<Vec<_>>();
-        assert!(verify_expression(&parents, "z", 1.0).is_ok());
+        let expr = (0..26)
+            .map(|i| (PARENT_VARIABLES[i] as char).to_string())
+            .collect::<Vec<_>>()
+            .join(" + ");
+        assert!(verify_expression(&parents, &expr, 26.0).is_ok());
     }
 
     // ---- existing behavior ----
@@ -315,5 +370,46 @@ mod tests {
             ValueData::Number(14.0),
         ];
         assert!(verify_expression(&parents, "a / b", 86400.0).is_ok());
+    }
+
+    // ---- Spec 047: T001 Unused parent variables ----
+
+    #[test]
+    fn test_expression_rejects_missing_parent_variable_references() {
+        let parents = vec![ValueData::Number(10.0), ValueData::Number(20.0)];
+        // 'b' is never used:
+        let err = verify_expression(&parents, "a + 0", 10.0).unwrap_err();
+        assert!(
+            err.contains("parent variable 'b' is not referenced"),
+            "expected error about unused parent 'b', got: {err}"
+        );
+
+        // Neither 'a' nor 'b' is used:
+        let err2 = verify_expression(&parents, "42", 42.0).unwrap_err();
+        assert!(
+            err2.contains("parent variable 'a' is not referenced")
+                || err2.contains("parent variable 'b' is not referenced"),
+            "expected error about unused parent, got: {err2}"
+        );
+    }
+
+    // ---- Spec 047: T002 Tolerance hardening ----
+
+    #[test]
+    fn test_approx_eq_rejects_small_number_false_positives() {
+        // Must reject 0.0 vs 1e-10
+        assert!(!approx_eq(1e-10, 0.0), "1e-10 must not match 0.0");
+        assert!(!approx_eq(0.0, 1e-10), "0.0 must not match 1e-10");
+
+        // Must reject opposite signs
+        assert!(!approx_eq(1e-10, -1e-10), "opposite signs must not match");
+        assert!(!approx_eq(1e-8, -1e-8), "opposite signs must not match");
+
+        // Relative tolerance for small quantities
+        assert!(approx_eq(1e-10, 1.0000000001e-10));
+        assert!(!approx_eq(1e-10, 2e-10));
+
+        // Sub-epsilon exact equality near zero
+        assert!(approx_eq(0.0, 0.0));
     }
 }

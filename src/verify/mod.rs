@@ -37,7 +37,7 @@ pub fn verify(
     operation: &str,
     expression: Option<&str>,
     result: f64,
-) -> Result<(), String> {
+) -> Result<f64, String> {
     if !valid_operation(operation) {
         return Err(format!(
             "unknown operation '{}' — valid operations: EXPRESSION, DATE_DIFF, DURATION_SUM, DURATION_AVG",
@@ -202,7 +202,14 @@ pub fn run_verify_core(
                 ));
             }
             verify(&parent_values, operation, expression, parsed)
-                .map_err(VerifyDeriveError::VerificationFailed)
+                .map(|_| ())
+                .map_err(|err| {
+                    if err.contains(": expected ") {
+                        VerifyDeriveError::VerificationFailed(err)
+                    } else {
+                        VerifyDeriveError::InvalidInput(err)
+                    }
+                })
         }
         "DATE_DIFF" | "DURATION_SUM" | "DURATION_AVG" => verify_temporal_claim(
             &parent_values,

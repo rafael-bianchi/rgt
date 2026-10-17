@@ -39,3 +39,4 @@ specs/*
 !specs/044-verify-harness-compatibility/
 !specs/045-store-staleness-and-schema-integrity/
 !specs/046-value-extraction-and-source-recording-hardening/
+!specs/047-verify-arithmetic-and-duration-hardening/

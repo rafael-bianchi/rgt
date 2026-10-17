@@ -163,9 +163,15 @@ pub fn execute_derive_core(
         }
         "EXPRESSION" => {
             let expected = expression_result.expect("validated above");
-            verify(&parent_values, operation, expression, expected)
-                .map_err(VerifyDeriveError::VerificationFailed)?;
-            ValueData::Number(expected)
+            let computed_val = verify(&parent_values, operation, expression, expected)
+                .map_err(|err| {
+                    if err.contains(": expected ") {
+                        VerifyDeriveError::VerificationFailed(err)
+                    } else {
+                        VerifyDeriveError::InvalidInput(err)
+                    }
+                })?;
+            ValueData::Number(computed_val)
         }
         _ => unreachable!("valid_operation rejected unsupported operation"),
     };

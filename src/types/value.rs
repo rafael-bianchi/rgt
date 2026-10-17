@@ -64,12 +64,18 @@ impl ValueData {
                 let mins = (abs_secs % 3_600) / 60;
                 let secs = abs_secs % 60;
                 if days > 0 {
-                    if hours == 0 && mins == 0 {
+                    if hours == 0 && mins == 0 && secs == 0 {
                         format!("{}{}d", sign, days)
-                    } else if mins == 0 {
+                    } else if hours == 0 && mins == 0 {
+                        format!("{}{}d {}s", sign, days, secs)
+                    } else if mins == 0 && secs == 0 {
                         format!("{}{}d {}h", sign, days, hours)
-                    } else {
+                    } else if secs == 0 {
                         format!("{}{}d {}h {}m", sign, days, hours, mins)
+                    } else if mins == 0 {
+                        format!("{}{}d {}h 0m {}s", sign, days, hours, secs)
+                    } else {
+                        format!("{}{}d {}h {}m {}s", sign, days, hours, mins, secs)
                     }
                 } else if hours > 0 {
                     if mins == 0 && secs == 0 {

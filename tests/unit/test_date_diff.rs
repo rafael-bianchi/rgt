@@ -73,6 +73,16 @@ mod tests {
         assert_eq!(ValueData::Duration(dur).to_string_repr(), "-30s");
     }
 
+    #[test]
+    fn test_duration_to_string_days_with_seconds() {
+        let dur_1d_1s = Duration::seconds(86_401);
+        assert_eq!(ValueData::Duration(dur_1d_1s).to_string_repr(), "1d 1s");
+        let dur_1d_1h_5s = Duration::seconds(86_400 + 3600 + 5);
+        assert_eq!(ValueData::Duration(dur_1d_1h_5s).to_string_repr(), "1d 1h 0m 5s");
+        let dur_1d_2h_3m_4s = Duration::seconds(86_400 + 2 * 3600 + 3 * 60 + 4);
+        assert_eq!(ValueData::Duration(dur_1d_2h_3m_4s).to_string_repr(), "1d 2h 3m 4s");
+    }
+
     fn parsed(value: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(value)
             .unwrap()
