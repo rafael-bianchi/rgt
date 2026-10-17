@@ -46,7 +46,7 @@ require_terms README_zh.md \
 # Language-neutral markers for the Duration (0.6) and Turtle export (0.6)
 # features that must survive alongside the 0.5 hardening content.
 for f in README_es.md README_fr.md README_ja.md README_ko.md README_pt.md README_zh.md; do
-    require_terms "$f" "DURATION_SUM" "DURATION_AVG" "graph --format ttl\|ttl"
+    require_terms "$f" "rgt mcp" "DURATION_SUM" "DURATION_AVG" "graph --format ttl\|ttl"
 done
 
 # Language-switcher bar: every README (incl. English) must link all 7 variants.

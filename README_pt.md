@@ -195,25 +195,61 @@ rgt status [--stale-only] [--json]         # estado do grafo e obsolescência
 rgt query <node_id> [--json]               # linhagem completa de um valor
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # exporta o grafo
 rgt gc [--vacuum]                          # remove nós obsoletos (obsoletos, sem dependentes)
+rgt mcp                                   # executa como servidor Model Context Protocol via stdio
 ```
 
 `rgt record --number-format` substitui o formato persistido por uma chamada; caso contrário, a configuração persistida (do `rgt init`) é usada, com fallback para `auto`. A análise de números é sensível à localidade: um `-` inicial e os parênteses contábeis `(N)` fazem parte do valor, separadores de milhares/decimal são respeitados conforme o formato ativo, e valores que não podem ser analisados nesse formato são ignorados (com aviso) em vez de divididos em nós incorretos.
 
+#### Exportação de procedência em Turtle
+
+`rgt graph --format ttl` gera Turtle determinístico usando entidades, atividades, usos e agentes de ferramentas de codificação do PROV-O. Os IRIs de valores no escopo do projeto mantêm diferenciados os IDs de nós locais correspondentes entre bancos independentes quando as exportações são combinadas como uma união RDF; copiar um banco preserva sua identidade de projeto. O ID de nó original permanece disponível como `rgt:localNodeId`.
+
+Por padrão, os documentos de origem têm IRIs sem caminho. Um caminho relativo verificado de forma segura em relação ao projeto é incluído quando o arquivo está disponível; caminhos externos, ausentes ou não classificáveis não possuem literal de caminho. A flag opcional `--include-absolute-paths` inclui caminhos absolutos de origem disponíveis e pode expor nomes de usuário ou diretórios locais. Expressões livres preservadas também podem conter texto com aparência de caminho.
+
+A exportação em Turtle é limitada a 10.000 valores registrados, 30.000 arestas de derivação, 64 MiB de UTF-8 gerado e um limite de tempo de execução de um segundo. Limite excedido ou erro prévio não gera saída Turtle no stdout.
+
 `rgt gc` remove os **nós obsoletos** — valores marcados como obsoletos dos quais nada deriva — e informa quantos removeu. Ele nunca toca em nós não obsoletos nem em nada ainda dependido. `rgt gc --vacuum` adicionalmente recupera as páginas de disco liberadas com `VACUUM` do SQLite (opcional; a execução padrão só exclui linhas).
 
-Operações: `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM` e `DURATION_AVG`. `DATE_DIFF` calcula automaticamente o tempo decorrido entre duas datas ordenadas; soma e média aceitam de 2 a 26 Durações distintas. Os resultados são armazenados como segundos inteiros exatos. A média que não resulta em um segundo inteiro é rejeitada. As variáveis pai correspondem a `parent[0]=a, parent[1]=b, ...` (no máximo 26, `a`–`z`).
+### Cálculos e exibição de duração
 
-As unidades fixas de exibição são `seconds`, `minutes`, `hours`, `days` e `weeks`; meses e anos de calendário não são aceitos. `--result-unit` qualifica o valor informado, enquanto `--unit` só altera a exibição. Por exemplo:
+Operações: `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM` e `DURATION_AVG`. `DATE_DIFF` calcula automaticamente o tempo decorrido entre duas datas ordenadas (`date2 - date1`). Intervalos negativos ou com frações de segundo são rejeitados. `DURATION_SUM` e `DURATION_AVG` aceitam de 2 a 26 Durações distintas. Os resultados são armazenados como segundos inteiros exatos. Qualquer média ou reivindicação que exija frações de segundo é rejeitada. As variáveis pai correspondem a `parent[0]=a, parent[1]=b, ...` (no máximo 26, `a`–`z`).
+
+As unidades fixas de tempo decorrido são `seconds`, `minutes`, `hours`, `days` e `weeks`; meses e anos de calendário não são aceitos porque sua duração varia. `--result-unit` apenas qualifica uma reivindicação e `--unit` apenas seleciona uma exibição. Nenhuma das duas unidades é persistida como metadado do nó:
 
 ```bash
 rgt derive --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days --unit hours
 rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM --unit minutes
+rgt verify --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days
 rgt query <duration_id> --unit days [--json]
 ```
 
-A consulta mantém `value` e acrescenta `duration_seconds` exato como texto e `selected_unit_display` apenas ao nó solicitado. Conversões decimais repetidas são marcadas como aproximadas; os segundos continuam exatos. `EXPRESSION` com datas usa segundos Unix e com Durações usa segundos decorridos, retorna um Number e emite um aviso.
+A consulta mantém `value`, acrescenta `duration_seconds` exato como texto decimal e inclui `selected_unit_display` apenas no nó solicitado. Conversões decimais periódicas são marcadas como aproximadas; os segundos exatos continuam disponíveis. Consultar uma Data ou Número com `--unit` é rejeitado. `EXPRESSION` com pais Date ou Duration retorna um Number e emite um aviso.
 
 `--operation` diferencia maiúsculas de minúsculas (`EXPRESSION`/`DATE_DIFF`/`DURATION_SUM`/`DURATION_AVG`); qualquer outra coisa é rejeitada com o código de saída 2 — a verificação nunca é ignorada silenciosamente. `--expression` é limitada a 4096 bytes e 256 níveis de aninhamento de parênteses (entrada acima do limite é rejeitada com o código 2, nunca uma quebra). As expressões são avaliadas com as funções integradas desabilitadas — apenas suas variáveis pai e `+ - * / % ^` e parênteses estão disponíveis, então a avaliação é determinística.
+
+### Servidor MCP
+
+`rgt mcp` executa o RGT como um servidor de [Model Context Protocol](https://modelcontextprotocol.io/) via stdio, expondo as mesmas operações como ferramentas MCP — uma superfície de integração documentada em vez de formatos de hook específicos por agente. Funciona com qualquer cliente compatível com MCP (Claude Code, Cursor, VS Code, ChatGPT, ...):
+
+| Ferramenta | O que faz |
+|------------|-----------|
+| `query_provenance` | Rastrea a linhagem completa de um valor |
+| `get_status` | Estado do grafo (nodos totais/ativos/obsoletos) |
+| `record_values` | Registra valores a partir do conteúdo do arquivo |
+| `verify_only` | Verifica uma derivação sem registrar |
+| `derive_and_verify` | Verifica uma derivação e depois a registra |
+
+Configure seu cliente MCP para iniciá-lo como um subprocesso stdio no diretório do seu projeto, por exemplo:
+
+```json
+{
+  "mcpServers": {
+    "rgt": { "command": "rgt", "args": ["mcp"] }
+  }
+}
+```
+
+O servidor é executado a partir do diretório do projeto no qual foi iniciado. Qualquer entrada inválida retorna um erro de ferramenta ao cliente — o servidor nunca encerra por falha de ferramenta.
 
 ## Ferramentas de IA compatíveis
 

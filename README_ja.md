@@ -195,25 +195,61 @@ rgt status [--stale-only] [--json]         # グラフの状態とデータの�
 rgt query <node_id> [--json]               # 値の完全な系譜
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # 依存グラフを出力
 rgt gc [--vacuum]                          # 廃止ノード（古く、依存先のないもの）を削除
+rgt mcp                                   # stdio 経由で Model Context Protocol サーバーを実行
 ```
 
 `rgt record --number-format` は 1 回の呼び出しで永続化された形式を上書きします。それ以外は（`rgt init` の）永続化設定が使われ、`auto` にフォールバックします。数値解析はロケール対応です：先頭の `-` と会計括弧 `(N)` は値の一部、有効な形式に応じて桁区切り/小数点が尊重され、その形式で解析できない値は（警告付きで）スキップされ、誤ったノードに分割されることはありません。
 
+#### Turtle 来歴エクスポート
+
+`rgt graph --format ttl` は、PROV-O のエンティティ、アクティビティ、利用関係、エージェントを用いて決定論的な Turtle を出力します。プロジェクトスコープの値 IRI により、独立したストアからの出力を RDF 統合した際にもローカルノード ID の衝突を防ぎます。元のノード ID は `rgt:localNodeId` として保持されます。
+
+デフォルトではソースドキュメントはパスを含まない IRI を持ちます。ファイルが存在する場合、安全に検証されたプロジェクト相対パスが付与されます。`--include-absolute-paths` を指定すると絶対パスが出力されますが、ユーザー名やローカルパス情報が含まれる場合があります。
+
+Turtle エクスポートは 10,000 個の記録値、30,000 本の導出エッジ、64 MiB、1 秒の実行期限に制限されています。
+
 `rgt gc` は**廃止ノード** — 古いとマークされ、何も派生していない値 — を削除し、削除数を報告します。古くないノードや依存されているものには一切触れません。`rgt gc --vacuum` はさらに SQLite の `VACUUM` で解放されたディスクページを回収します（オプション；デフォルト実行は行の削除のみ）。
 
-操作：`EXPRESSION`、`DATE_DIFF`、`DURATION_SUM`、`DURATION_AVG`。`DATE_DIFF` は順序付きの2つの日付から経過時間を自動計算します。合計と平均は、重複しない2〜26個の Duration を受け取ります。結果は正確な整数秒として保存され、整数秒にならない平均は拒否されます。親変数は `parent[0]=a, parent[1]=b, ...` と対応します（最大 26、`a`–`z`）。
+### 期間の計算と表示
 
-表示単位は `seconds`、`minutes`、`hours`、`days`、`weeks` です。暦上の月と年は長さが変わるためサポートしません。`--result-unit` は入力した値の単位を指定し、`--unit` は表示だけを変えます。
+操作：`EXPRESSION`、`DATE_DIFF`、`DURATION_SUM`、`DURATION_AVG`。`DATE_DIFF` は順序付きの2つの日付から経過時間を自動計算します（`date2 - date1`）。負の値や秒未満の端数は拒否されます。合計と平均は、重複しない2〜26個の Duration を受け取ります。結果は正確な整数秒として保存され、端数秒を要する計算は拒否されます。親変数は `parent[0]=a, parent[1]=b, ...` と対応します（最大 26、`a`–`z`）。
+
+表示単位は `seconds`、`minutes`、`hours`、`days`、`weeks` です。暦上の月と年は長さが変わるためサポートしません。`--result-unit` は入力した値の単位を指定し、`--unit` は表示だけを変えます。どちらの単位もノードのメタデータとしては永続化されません：
 
 ```bash
 rgt derive --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days --unit hours
 rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM --unit minutes
+rgt verify --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days
 rgt query <duration_id> --unit days [--json]
 ```
 
 クエリは既存の `value` を保持し、要求したノードだけに正確な秒数を文字列で示す `duration_seconds` と `selected_unit_display` を追加します。循環小数の変換には近似の印が付きますが、秒数は常に正確です。`EXPRESSION` は日付を Unix タイムスタンプ秒、Duration を経過秒として扱い、Number を返して警告を出します。
 
 `--operation` は大文字小文字を区別します（`EXPRESSION`/`DATE_DIFF`/`DURATION_SUM`/`DURATION_AVG`）；それ以外は終了コード 2 で拒否され、検証が黙ってスキップされることはありません。`--expression` は 4096 バイトと括弧の入れ子 256 レベルに制限されます（超過はクラッシュではなく終了コード 2 で拒否）。式は組み込み関数を無効化して評価されるため、親変数と `+ - * / % ^`、括弧だけが使え、評価は決定的です。
+
+### MCP サーバー
+
+`rgt mcp` は RGT を stdio 経由の [Model Context Protocol](https://modelcontextprotocol.io/) サーバーとして実行し、同じ操作を MCP ツールとして公開します。エージェントごとのフック形式に代わる単一のドキュメント化された統合手段として機能します（Claude Code, Cursor, VS Code, ChatGPT 等に対応）：
+
+| ツール | 説明 |
+|--------|------|
+| `query_provenance` | 値の完全な系譜を追跡 |
+| `get_status` | グラフ状態（全ノード/有効/無効）を取得 |
+| `record_values` | ファイル内容から値を抽出・記録 |
+| `verify_only` | 記録せずに導出の正確性を検証 |
+| `derive_and_verify` | 導出を検証し、合格時に記録 |
+
+プロジェクト設定で MCP サーバーを起動するように設定します（例）：
+
+```json
+{
+  "mcpServers": {
+    "rgt": { "command": "rgt", "args": ["mcp"] }
+  }
+}
+```
+
+サーバーは起動元のプロジェクトディレクトリで動作します。無効な入力はツールエラーとして返され、サーバープロセスがクラッシュすることはありません。
 
 ## 対応 AI ツール
 

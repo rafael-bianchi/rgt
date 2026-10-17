@@ -195,25 +195,61 @@ rgt status [--stale-only] [--json]         # 图状态与过期情况
 rgt query <node_id> [--json]               # 某个值的完整谱系
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # 导出依赖图
 rgt gc [--vacuum]                          # 移除过期（陈旧且无派生的）节点
+rgt mcp                                   # 通过 stdio 运行 Model Context Protocol 服务器
 ```
 
 `rgt record --number-format` 仅对单次调用覆盖持久化格式；否则使用（来自 `rgt init` 的）持久化设置，并回退到 `auto`。数字解析是区域感知的：前导 `-` 和会计括号 `(N)` 属于值的一部分，按当前格式尊重千分位/小数点分隔符，而无法在该格式下解析的值会被跳过（带警告），而不是被拆分成错误的节点。
 
+#### Turtle 溯源导出
+
+`rgt graph --format ttl` 使用 PROV-O 实体、活动、用法和编程工具代理写入确定性的 Turtle。项目范围的值 IRI 可在通过 RDF 联合合并导出结果时，保持来自独立存储的匹配本地节点 ID 相互区分；复制存储可保留其项目标识。原始节点 ID 保留为 `rgt:localNodeId`。
+
+默认情况下，源文档具有无路径的 IRI。当文件可用时，会包含一个经过安全验证的项目相对路径；外部、缺失或无法分类的路径则没有路径字面量。可选的 `--include-absolute-paths` 标志会添加可用的绝对源路径，这可能会暴露用户名或本地目录名。
+
+Turtle 导出受限于 10,000 个记录值、30,000 条推导边、64 MiB 生成的 UTF-8 和 1 秒的命令截止时间。
+
 `rgt gc` 移除**过期节点**——被标记为过期且没有任何派生的值——并报告移除了多少个。它绝不会触碰非过期节点或仍被依赖的内容。`rgt gc --vacuum` 额外用 SQLite `VACUUM` 回收释放的磁盘页（可选；默认运行仅删除行）。
 
-操作类型：`EXPRESSION`、`DATE_DIFF`、`DURATION_SUM` 和 `DURATION_AVG`。`DATE_DIFF` 会自动计算两个有序日期之间的经过时间；求和和平均接受 2 到 26 个互不重复的 Duration。结果以精确的整数秒存储；无法得到整数秒的平均值会被拒绝。父变量映射为 `parent[0]=a, parent[1]=b, ...`（最多 26 个，`a`–`z`）。
+### 时长计算与显示
 
-固定显示单位为 `seconds`、`minutes`、`hours`、`days` 和 `weeks`。日历月和年长度不固定，因此不支持。`--result-unit` 指定输入结果的单位，`--unit` 只改变显示方式。
+操作类型：`EXPRESSION`、`DATE_DIFF`、`DURATION_SUM` 和 `DURATION_AVG`。`DATE_DIFF` 会自动计算两个有序日期之间的经过时间（`date2 - date1`）。负时间间隔或包含秒分数的间隔会被拒绝。求和和平均接受 2 到 26 个互不重复的 Duration。结果以精确的整数秒存储；需要秒分数的平均值或断言会被拒绝。父变量映射为 `parent[0]=a, parent[1]=b, ...`（最多 26 个，`a`–`z`）。
+
+固定显示单位为 `seconds`、`minutes`、`hours`、`days` 和 `weeks`。日历月和年长度不固定，因此不支持。`--result-unit` 仅修饰断言单位，`--unit` 仅选择显示单位。这两个单位都不会作为节点元数据持久化：
 
 ```bash
 rgt derive --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days --unit hours
 rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM --unit minutes
+rgt verify --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days
 rgt query <duration_id> --unit days [--json]
 ```
 
-查询会保留现有 `value`，并且只为请求的节点添加以字符串表示的精确秒数 `duration_seconds` 和 `selected_unit_display`。循环小数转换会标记为近似值，但秒数仍然精确。`EXPRESSION` 将日期解释为 Unix 时间戳秒、将 Duration 解释为经过秒，结果类型是 Number，并会输出警告。
+查询会保留现有 `value`，并且只为请求的节点添加以十进制字符串表示的精确秒数 `duration_seconds` 和 `selected_unit_display`。循环小数转换会标记为近似值，但精确秒数仍然可用。携带 `--unit` 查询日期或数字会被拒绝。`EXPRESSION` 带 Date 或 Duration 父节点时返回 Number 并输出警告。
 
 `--operation` 区分大小写（`EXPRESSION`/`DATE_DIFF`/`DURATION_SUM`/`DURATION_AVG`）；其他值一律以退出码 2 拒绝——验证绝不会被静默跳过。`--expression` 限制为 4096 字节和 256 层括号嵌套（超出限制的输入以退出码 2 拒绝，绝不会崩溃）。表达式以内置函数禁用方式求值——只有你的父变量和 `+ - * / % ^` 及括号可用，因此求值是确定性的。
+
+### MCP 服务器
+
+`rgt mcp` 将 RGT 作为基于 stdio 的 [Model Context Protocol](https://modelcontextprotocol.io/) 服务器运行，将相同的操作作为标准 MCP 工具公开，提供单一的文档化集成界面替代各代理专用的钩子格式（支持 Claude Code, Cursor, VS Code, ChatGPT 等）：
+
+| 工具 | 功能说明 |
+|------|----------|
+| `query_provenance` | 追溯某个值的完整谱系 |
+| `get_status` | 获取图状态（总节点数/活跃数/陈旧数） |
+| `record_values` | 从文件内容中提取并记录值 |
+| `verify_only` | 验证推导计算而不记录 |
+| `derive_and_verify` | 验证推导并在通过时记录结果 |
+
+在你的项目目录中配置 MCP 客户端将其作为 stdio 子进程启动，例如：
+
+```json
+{
+  "mcpServers": {
+    "rgt": { "command": "rgt", "args": ["mcp"] }
+  }
+}
+```
+
+服务器从启动它的项目目录运行。任何无效输入都会作为工具错误返回给客户端——服务器进程绝不会因工具失败而崩溃。
 
 ## 支持的 AI 工具
 

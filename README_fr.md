@@ -195,25 +195,61 @@ rgt status [--stale-only] [--json]         # état du graphe et obsolescence
 rgt query <node_id> [--json]               # lignée complète d'une valeur
 rgt graph [-f text|mermaid|dot|ttl] [--include-absolute-paths] # exporte le graphe
 rgt gc [--vacuum]                          # supprime les nœuds obsolètes (obsolètes, sans dépendants)
+rgt mcp                                   # s'exécute en tant que serveur Model Context Protocol sur stdio
 ```
 
 `rgt record --number-format` remplace le format enregistré pour un appel ; sinon, le paramètre enregistré (depuis `rgt init`) est utilisé, en retombant sur `auto`. L'analyse des nombres tient compte de la locale : un `-` initial et les parenthèses comptables `(N)` font partie de la valeur, les séparateurs de milliers/décimales sont respectés selon le format actif, et les valeurs qui ne peuvent pas être analysées dans ce format sont ignorées (avec un avertissement) plutôt que divisées en nœuds erronés.
 
+#### Exportation de provenance Turtle
+
+`rgt graph --format ttl` génère du Turtle déterministe en utilisant les entités, activités, usages et agents d'outils de codage PROV-O. Les IRIs de valeurs délimités au projet maintiennent distincts les identifiants de nœuds locaux correspondants issus de bases indépendantes lorsque les exports sont combinés sous forme d'union RDF ; la copie d'une base préserve son identité de projet. L'identifiant de nœud d'origine reste disponible sous `rgt:localNodeId`.
+
+Par défaut, les documents sources ont des IRIs sans chemin. Un chemin relatif vérifié de manière sécurisée par rapport au projet est inclus lorsque le fichier est disponible ; les chemins externes, manquants ou non classifiables n'ont aucun littéral de chemin. L'option `--include-absolute-paths` ajoute les chemins sources absolus disponibles et peut exposer des noms d'utilisateurs ou des répertoires locaux. Les expressions en texte brut conservées peuvent également contenir du texte ressemblant à des chemins.
+
+L'export Turtle est limité à 10 000 valeurs enregistrées, 30 000 arêtes de dérivation, 64 Mo d'UTF-8 généré et un délai de commande d'une seconde. Tout dépassement de limite ou erreur préalable ne produit aucune sortie Turtle sur stdout.
+
 `rgt gc` supprime les **nœuds obsolètes** — valeurs marquées obsolètes dont rien ne dérive — et indique combien il en a supprimés. Il ne touche jamais aux nœuds non obsolètes ni à rien dont on dépend encore. `rgt gc --vacuum` récupère en plus les pages disque libérées avec `VACUUM` SQLite (optionnel ; l'exécution par défaut ne supprime que des lignes).
 
-Opérations : `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM` et `DURATION_AVG`. `DATE_DIFF` calcule automatiquement la durée écoulée entre deux dates ordonnées ; la somme et la moyenne acceptent de 2 à 26 Durations distinctes. Les résultats sont stockés en secondes entières exactes. Une moyenne qui ne donne pas un nombre entier de secondes est rejetée. Les variables parentes correspondent à `parent[0]=a, parent[1]=b, ...` (au plus 26, `a`–`z`).
+### Calculs et affichage de durée
 
-Les unités fixes d’affichage sont `seconds`, `minutes`, `hours`, `days` et `weeks` ; les mois et années calendaires ne sont pas pris en charge. `--result-unit` qualifie la valeur fournie, tandis que `--unit` ne change que l’affichage. Exemples :
+Opérations : `EXPRESSION`, `DATE_DIFF`, `DURATION_SUM` et `DURATION_AVG`. `DATE_DIFF` calcule automatiquement la durée écoulée entre deux dates ordonnées (`date2 - date1`). Les intervalles négatifs ou avec des fractions de seconde sont rejetés. `DURATION_SUM` et `DURATION_AVG` acceptent de 2 à 26 Durations distinctes. Les résultats sont stockés en secondes entières exactes. Toute moyenne ou revendication exigeant des fractions de seconde est rejetée. Les variables parentes correspondent à `parent[0]=a, parent[1]=b, ...` (au plus 26, `a`–`z`).
+
+Les unités fixes d’affichage sont `seconds`, `minutes`, `hours`, `days` et `weeks` ; les mois et années calendaires ne sont pas pris en charge car leur durée varie. `--result-unit` ne fait que qualifier une revendication, et `--unit` ne sélectionne qu'un affichage. Aucune de ces deux unités n'est conservée comme métadonnée du nœud :
 
 ```bash
 rgt derive --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days --unit hours
 rgt derive --parents <duration1>,<duration2> --operation DURATION_SUM --unit minutes
+rgt verify --parents <date1>,<date2> --operation DATE_DIFF --result 45 --result-unit days
 rgt query <duration_id> --unit days [--json]
 ```
 
-La requête conserve `value` et ajoute `duration_seconds` exact sous forme de texte ainsi que `selected_unit_display` uniquement au nœud demandé. Les conversions décimales périodiques sont marquées comme approximatives ; les secondes restent exactes. `EXPRESSION` interprète les dates comme des secondes Unix et les Durations comme des secondes écoulées, renvoie un Number et affiche un avertissement.
+La requête conserve `value`, ajoute `duration_seconds` exact sous forme de texte décimal et inclut `selected_unit_display` uniquement sur le nœud demandé. Les conversions décimales périodiques sont marquées comme approximatives ; les secondes exactes restent disponibles. Interroger une Date ou un Nombre avec `--unit` est rejeté. `EXPRESSION` avec des parents Date ou Duration renvoie un Number et affiche un avertissement.
 
 `--operation` est sensible à la casse (`EXPRESSION`/`DATE_DIFF`/`DURATION_SUM`/`DURATION_AVG`) ; toute autre valeur est rejetée avec le code de sortie 2 — la vérification n'est jamais silencieusement ignorée. `--expression` est limitée à 4096 octets et 256 niveaux d'imbrication de parenthèses (une entrée au-delà de la limite est rejetée avec le code 2, jamais un plantage). Les expressions sont évaluées avec les fonctions intégrées désactivées — seules vos variables parentes et `+ - * / % ^` et les parenthèses sont disponibles, l'évaluation est donc déterministe.
+
+### Serveur MCP
+
+`rgt mcp` exécute RGT en tant que serveur [Model Context Protocol](https://modelcontextprotocol.io/) sur stdio, exposant les mêmes opérations sous forme d'outils MCP — une interface d'intégration documentée unique au lieu de formats de hooks par agent. Il fonctionne avec tout client compatible MCP (Claude Code, Cursor, VS Code, ChatGPT, ...) :
+
+| Outil | Ce qu'il fait |
+|-------|---------------|
+| `query_provenance` | Retrace la lignée complète d'une valeur |
+| `get_status` | État du graphe (nœuds totaux/actifs/obsolètes) |
+| `record_values` | Enregistre des valeurs à partir du contenu d'un fichier |
+| `verify_only` | Vérifie une dérivation sans l'enregistrer |
+| `derive_and_verify` | Vérifie une dérivation puis l'enregistre |
+
+Configurez votre client MCP pour le lancer en tant que sous-processus stdio dans le répertoire de votre projet, par exemple :
+
+```json
+{
+  "mcpServers": {
+    "rgt": { "command": "rgt", "args": ["mcp"] }
+  }
+}
+```
+
+Le serveur s'exécute à partir du répertoire du projet dans lequel il est lancé. Toute entrée non valide renvoie une erreur d'outil au client — le serveur ne quitte jamais suite à l'échec d'un outil.
 
 ## Outils pris en charge
 
