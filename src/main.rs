@@ -162,9 +162,10 @@ enum Commands {
     /// Record numeric and date values from a file into the provenance graph
     Record {
         /// Path to the data file to record values from
-        file: String,
+        #[arg(required_unless_present = "stdin")]
+        file: Option<String>,
 
-        /// Read file content from stdin instead of disk (path still required for node IDs)
+        /// Read file content from stdin instead of disk (defaults path to "<stdin>")
         #[arg(long)]
         stdin: bool,
 
@@ -344,7 +345,14 @@ fn main() {
             file,
             stdin,
             number_format,
-        } => cli::execute_record(&file, stdin, parse_number_format(number_format.as_deref())),
+        } => {
+            let target_file = file.unwrap_or_else(|| "<stdin>".to_string());
+            cli::execute_record(
+                &target_file,
+                stdin,
+                parse_number_format(number_format.as_deref()),
+            )
+        }
         Commands::Derive {
             parents,
             operation,

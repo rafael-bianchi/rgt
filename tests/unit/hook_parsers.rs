@@ -1,4 +1,4 @@
-use rgt::hooks::parser::{extract_path_from_command, normalize_agent_event};
+use rgt::hooks::parser::{extract_path_from_command, extract_values_from_content, normalize_agent_event};
 use rgt::hooks::parser::{CapturePhase, OutcomeEvidence};
 
 #[test]
@@ -717,3 +717,177 @@ fn copilot_cli_unknown_shape_is_a_noop() {
     let cap = normalize_agent_event(Some("copilot"), payload);
     assert_eq!(cap.and_then(|c| c.path), None);
 }
+
+// ============================================================================
+// Spec 046: Value Extraction and Source Recording Hardening Tests
+// ============================================================================
+
+// ---- T001 [US1]: Unspaced CSV rows & auto format stability ----
+
+#[test]
+fn unspaced_csv_rows_extract_independent_cell_numbers() {
+    let content = "10,200,300\n1.5,200\n10,20,30\n1.5,2.5\n";
+    for format in [
+        rgt::hooks::parser::NumberFormat::Auto,
+        rgt::hooks::parser::NumberFormat::Us,
+    ] {
+        let outcome = extract_values_from_content(content, format);
+        assert_eq!(
+            outcome.skipped_malformed, 0,
+            "zero numbers should be skipped as malformed in unspaced CSV rows for {:?}",
+            format
+        );
+        let extracted_nums: Vec<f64> = outcome
+            .values
+            .into_iter()
+            .map(|v| match v.value {
+                rgt::types::ValueData::Number(n) => n,
+                _ => panic!("expected Number"),
+            })
+            .collect();
+        assert_eq!(
+            extracted_nums,
+            vec![10.0, 200.0, 300.0, 1.5, 200.0, 10.0, 20.0, 30.0, 1.5, 2.5],
+            "all 10 individual cell values must be extracted without merging across commas"
+        );
+    }
+}
+
+#[test]
+fn unspaced_csv_leading_group_over_three_digits_splits() {
+    let content = "12345,678\n";
+    let n = nums(content, rgt::hooks::parser::NumberFormat::Us);
+    assert_eq!(n, vec![12345.0, 678.0]);
+}
+
+#[test]
+fn auto_format_on_unspaced_csv_row_does_not_switch_to_eu() {
+    let content = "1.5,2\n";
+    let outcome = extract_values_from_content(content, rgt::hooks::parser::NumberFormat::Auto);
+    let extracted_nums: Vec<f64> = outcome
+        .values
+        .into_iter()
+        .map(|v| match v.value {
+            rgt::types::ValueData::Number(n) => n,
+            _ => panic!("expected Number"),
+        })
+        .collect();
+    assert_eq!(extracted_nums, vec![1.5, 2.0]);
+}
+
+// ---- T002 [US2]: Full ISO-8601 / RFC 3339 offsets & local datetimes ----
+
+#[test]
+fn offset_and_local_datetimes_do_not_leak_numbers() {
+    let content = "recorded 2026-01-15T10:30:00-03:00 and updated 2026-01-15T10:30:00\n";
+    let outcome = extract_values_from_content(content, rgt::hooks::parser::NumberFormat::Auto);
+
+    let mut dates = Vec::new();
+    let mut numbers = Vec::new();
+    for v in outcome.values {
+        match v.value {
+            rgt::types::ValueData::Date(dt) => dates.push(dt),
+            rgt::types::ValueData::Number(n) => numbers.push(n),
+            _ => {}
+        }
+    }
+    assert_eq!(dates.len(), 2, "must parse exactly 2 dates");
+    assert_eq!(
+        dates[0].to_rfc3339(),
+        "2026-01-15T13:30:00+00:00",
+        "offset timestamp -03:00 must convert to UTC"
+    );
+    assert_eq!(
+        dates[1].to_rfc3339(),
+        "2026-01-15T10:30:00+00:00",
+        "timezone-less local datetime must parse as UTC"
+    );
+    assert!(
+        numbers.is_empty(),
+        "zero number nodes must leak from timestamps, got: {:?}",
+        numbers
+    );
+}
+
+#[test]
+fn positive_offset_timestamp_parses_to_utc() {
+    let content = "created 2026-01-15T10:30:00+05:30\n";
+    let outcome = extract_values_from_content(content, rgt::hooks::parser::NumberFormat::Auto);
+    assert_eq!(outcome.values.len(), 1);
+    match &outcome.values[0].value {
+        rgt::types::ValueData::Date(dt) => {
+            assert_eq!(dt.to_rfc3339(), "2026-01-15T05:00:00+00:00");
+        }
+        _ => panic!("expected Date"),
+    }
+}
+
+#[test]
+fn invalid_calendar_date_spans_are_masked_never_leaking_numbers() {
+    let content = "dates: 2026-02-30 and 2026-13-45T99:99:99Z\n";
+    let outcome = extract_values_from_content(content, rgt::hooks::parser::NumberFormat::Auto);
+    let numbers: Vec<f64> = outcome
+        .values
+        .into_iter()
+        .filter_map(|v| match v.value {
+            rgt::types::ValueData::Number(n) => Some(n),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        numbers.is_empty(),
+        "invalid dates must not shatter into number nodes, got: {:?}",
+        numbers
+    );
+    assert!(
+        outcome.skipped_malformed >= 1,
+        "invalid dates must be counted as skipped_malformed"
+    );
+}
+
+// ---- T003 [US3]: Scientific notation, unit suffixes, currency negatives, float guards ----
+
+#[test]
+fn scientific_notation_extracts_full_significand_and_exponent() {
+    let content = "values: 1.5e10, 1.5e-4, -2.5E-3, 1e6\n";
+    let n = nums(content, rgt::hooks::parser::NumberFormat::Us);
+    assert_eq!(n, vec![1.5e10, 0.00015, -0.0025, 1_000_000.0]);
+}
+
+#[test]
+fn unit_suffixes_do_not_backtrack_to_decimal_point() {
+    let content = "specs: 12.5kg, 99.9ms, 100%\n";
+    let n = nums(content, rgt::hooks::parser::NumberFormat::Us);
+    assert_eq!(n, vec![12.5, 99.9, 100.0]);
+}
+
+#[test]
+fn currency_symbols_preserve_negative_signs() {
+    let content = "balance: -$1,200.00 and ($500.25) and -€500 and -£42.50\n";
+    let n = nums(content, rgt::hooks::parser::NumberFormat::Us);
+    assert_eq!(n, vec![-1200.0, -500.25, -500.0, -42.5]);
+}
+
+#[test]
+fn multi_hyphen_cli_flags_are_not_unary_minus() {
+    let content = "flag: --100 and ---50\n";
+    let n = nums(content, rgt::hooks::parser::NumberFormat::Us);
+    assert_eq!(n, vec![100.0, 50.0]);
+}
+
+#[test]
+fn non_finite_numbers_are_skipped_and_negative_zero_canonicalized() {
+    let huge = "1".repeat(320);
+    let content = format!("val: {huge} and -0.0\n");
+    let outcome = extract_values_from_content(&content, rgt::hooks::parser::NumberFormat::Us);
+    assert_eq!(outcome.skipped_malformed, 1, "huge float overflow must be skipped");
+    assert_eq!(outcome.values.len(), 1);
+    match outcome.values[0].value {
+        rgt::types::ValueData::Number(n) => {
+            assert_eq!(n, 0.0);
+            assert!(n.is_sign_positive(), "-0.0 must be normalized to +0.0");
+        }
+        _ => panic!("expected Number"),
+    }
+}
+

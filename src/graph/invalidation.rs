@@ -128,6 +128,10 @@ impl InvalidationCascade {
                 stored_ino,
                 last_checked_str,
             ) = row?;
+            // Virtual sources (<stdin>) have no on-disk file to evaluate for changes
+            if rel_path == "<stdin>" {
+                continue;
+            }
             let full_path = project_root.as_ref().join(&rel_path);
 
             let last_checked = DateTime::parse_from_rfc3339(&last_checked_str)
