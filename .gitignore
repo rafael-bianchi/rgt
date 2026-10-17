@@ -42,3 +42,4 @@ specs/*
 !specs/047-verify-arithmetic-and-duration-hardening/
 !specs/048-harness-hook-payload-hardening/
 !specs/049-agent-installation-and-doctor-hardening/
+!specs/050-cli-export-updater-hardening/

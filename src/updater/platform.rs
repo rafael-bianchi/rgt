@@ -44,14 +44,18 @@ impl Platform {
     }
 
     fn detect_arch() -> Arch {
-        match env::consts::ARCH {
-            "x86_64" | "x86" => Arch::X86_64,
+        Self::parse_arch(env::consts::ARCH)
+    }
+
+    pub fn parse_arch(arch: &str) -> Arch {
+        match arch {
+            "x86_64" | "amd64" => Arch::X86_64,
             "aarch64" | "arm64" => Arch::Aarch64,
             other => Arch::Unknown(other.to_string()),
         }
     }
 
-    fn build_target_triple(os: &Os, arch: &Arch) -> String {
+    pub fn build_target_triple(os: &Os, arch: &Arch) -> String {
         match (os, arch) {
             (Os::Darwin, Arch::X86_64) => "x86_64-apple-darwin".to_string(),
             (Os::Darwin, Arch::Aarch64) => "aarch64-apple-darwin".to_string(),
@@ -60,16 +64,16 @@ impl Platform {
             (Os::Windows, Arch::X86_64) => "x86_64-pc-windows-msvc".to_string(),
             _ => format!(
                 "{}-{}",
+                match arch {
+                    Arch::X86_64 => "x86_64",
+                    Arch::Aarch64 => "aarch64",
+                    Arch::Unknown(s) => s.as_str(),
+                },
                 match os {
                     Os::Darwin => "apple-darwin",
                     Os::Linux => "unknown-linux-musl",
                     Os::Windows => "pc-windows-msvc",
                     Os::Unknown(s) => s.as_str(),
-                },
-                match arch {
-                    Arch::X86_64 => "x86_64",
-                    Arch::Aarch64 => "aarch64",
-                    Arch::Unknown(s) => s.as_str(),
                 }
             ),
         }
@@ -166,5 +170,25 @@ mod tests {
             platform.asset_name("v0.1.0"),
             "rgt-v0.1.0-x86_64-unknown-linux-musl.tar.gz"
         );
+    }
+
+    #[test]
+    fn test_parse_arch_rejects_32bit_x86() {
+        assert_eq!(Platform::parse_arch("x86"), Arch::Unknown("x86".into()));
+        assert_eq!(Platform::parse_arch("x86_64"), Arch::X86_64);
+        assert_eq!(Platform::parse_arch("amd64"), Arch::X86_64);
+        assert_eq!(Platform::parse_arch("arm64"), Arch::Aarch64);
+        assert_eq!(Platform::parse_arch("aarch64"), Arch::Aarch64);
+    }
+
+    #[test]
+    fn test_build_target_triple_fallback() {
+        let triple = Platform::build_target_triple(&Os::Windows, &Arch::Aarch64);
+        assert_eq!(triple, "aarch64-pc-windows-msvc");
+        let triple_unknown = Platform::build_target_triple(
+            &Os::Unknown("freebsd".into()),
+            &Arch::Unknown("riscv64".into()),
+        );
+        assert_eq!(triple_unknown, "riscv64-freebsd");
     }
 }

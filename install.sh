@@ -235,16 +235,17 @@ download_and_verify() {
 
     info "Downloading ${RGT_ARCHIVE_NAME}..."
 
+    if [ -z "${RGT_CHECKSUMS_URL}" ]; then
+        err "No checksums.txt release asset found. Aborting for security."
+        exit 2
+    fi
+
     if has curl; then
         curl -fsSL -o "${RGT_ARCHIVE_PATH}" "${RGT_DOWNLOAD_URL}" || { err "Download failed."; exit 2; }
-        if [ -n "${RGT_CHECKSUMS_URL}" ]; then
-            curl -fsSL -o "${RGT_CHECKSUMS_PATH}" "${RGT_CHECKSUMS_URL}" 2>/dev/null || true
-        fi
+        curl -fsSL -o "${RGT_CHECKSUMS_PATH}" "${RGT_CHECKSUMS_URL}" || { err "Failed to download checksums.txt verification file."; exit 2; }
     else
         wget -qO "${RGT_ARCHIVE_PATH}" "${RGT_DOWNLOAD_URL}" || { err "Download failed."; exit 2; }
-        if [ -n "${RGT_CHECKSUMS_URL}" ]; then
-            wget -qO "${RGT_CHECKSUMS_PATH}" "${RGT_CHECKSUMS_URL}" 2>/dev/null || true
-        fi
+        wget -qO "${RGT_CHECKSUMS_PATH}" "${RGT_CHECKSUMS_URL}" || { err "Failed to download checksums.txt verification file."; exit 2; }
     fi
 
     if [ -f "${RGT_CHECKSUMS_PATH}" ]; then
@@ -253,8 +254,8 @@ download_and_verify() {
         expected_hash=$(grep "${RGT_ARCHIVE_NAME}" "${RGT_CHECKSUMS_PATH}" | awk '{print $1}')
 
         if [ -z "${expected_hash}" ]; then
-            warn "No checksum entry for ${RGT_ARCHIVE_NAME}. Skipping verification."
-            return
+            err "No checksum entry for ${RGT_ARCHIVE_NAME} in checksums.txt. Aborting."
+            exit 2
         fi
 
         local actual_hash
@@ -274,7 +275,8 @@ download_and_verify() {
         fi
         info "Checksum OK."
     else
-        warn "checksums.txt not available. Skipping verification."
+        err "checksums.txt not available. Aborting."
+        exit 2
     fi
 }
 
@@ -318,17 +320,20 @@ install_binary() {
     }
 
     local dest="${BIN_DIR}/${RGT_BIN_NAME}"
-    if ! cp "${extracted}" "${dest}" 2>/dev/null; then
+    local tmp_dest="${BIN_DIR}/${RGT_BIN_NAME}.tmp.$$"
+    if ! cp "${extracted}" "${tmp_dest}" 2>/dev/null; then
         if [ "${SYSTEM_INSTALL}" -eq 1 ]; then
-            warn "Cannot write to ${dest}. Attempting sudo..."
-            sudo cp "${extracted}" "${dest}" || { err "Permission denied."; exit 3; }
-            sudo chmod 0755 "${dest}"
+            warn "Cannot write to ${BIN_DIR}. Attempting sudo..."
+            sudo cp "${extracted}" "${tmp_dest}" || { err "Permission denied."; exit 3; }
+            sudo chmod 0755 "${tmp_dest}"
+            sudo mv -f "${tmp_dest}" "${dest}" || { err "Atomic replace failed."; exit 3; }
         else
             err "Permission denied: ${dest}"
             exit 3
         fi
     else
-        chmod 0755 "${dest}" 2>/dev/null || true
+        chmod 0755 "${tmp_dest}" 2>/dev/null || true
+        mv -f "${tmp_dest}" "${dest}" || { err "Atomic replace failed."; exit 3; }
     fi
 
     info "Installed: ${dest}"

@@ -614,12 +614,20 @@ pub fn source_location(
         project.join(path)
     };
     let canonical = candidate.canonicalize().ok();
-    let relative_path = canonical.as_ref().and_then(|canonical| {
+    let relative_path = if let Some(canonical) = canonical.as_ref() {
         canonical
             .strip_prefix(&project)
             .ok()
             .map(path_to_turtle_string)
-    });
+    } else if path.is_relative()
+        && !path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_)))
+    {
+        Some(path_to_turtle_string(path))
+    } else {
+        None
+    };
     let absolute_path =
         include_absolute.then(|| path_to_turtle_string(canonical.as_deref().unwrap_or(&candidate)));
     SourceLocation {
