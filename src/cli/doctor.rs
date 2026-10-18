@@ -155,11 +155,7 @@ pub fn execute_doctor() -> Result<i32, String> {
     let guidance_inspections =
         crate::hooks::registration::inspect_local_guidance(&home, &config_dir);
     let hooks_present = surface_registrations.iter().any(|registration| {
-        matches!(
-            registration.health,
-            crate::hooks::registration::RegistrationHealth::Active
-                | crate::hooks::registration::RegistrationHealth::GuidanceOnly
-        )
+        registration.health == crate::hooks::registration::RegistrationHealth::Active
     });
     let (mut diagnostics, mut code) = run_doctor(
         || {

@@ -327,3 +327,67 @@ fn temporal_help_documents_fixed_units_and_storage_semantics() {
         }
     }
 }
+
+#[test]
+fn verify_and_derive_reject_expression_for_temporal_operations() {
+    let directory = fixture();
+
+    // 1. verify with DATE_DIFF and --expression is rejected with exit code 2
+    let verify_date_diff = run(
+        &directory,
+        &[
+            "verify",
+            "--parents",
+            "date-a,date-b",
+            "--operation",
+            "DATE_DIFF",
+            "--expression",
+            "b - a",
+            "--result",
+            "45",
+            "--result-unit",
+            "days",
+        ],
+    );
+    assert_eq!(verify_date_diff.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&verify_date_diff.stderr);
+    assert!(stderr.contains("--expression is only valid for EXPRESSION operation"));
+
+    // 2. derive with DATE_DIFF and --expression is rejected with exit code 2
+    let derive_date_diff = run(
+        &directory,
+        &[
+            "derive",
+            "--parents",
+            "date-a,date-b",
+            "--operation",
+            "DATE_DIFF",
+            "--expression",
+            "b - a",
+            "--result",
+            "45",
+            "--result-unit",
+            "days",
+        ],
+    );
+    assert_eq!(derive_date_diff.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&derive_date_diff.stderr);
+    assert!(stderr.contains("--expression is only valid for EXPRESSION operation"));
+
+    // 3. derive with DURATION_SUM and --expression is rejected with exit code 2
+    let derive_duration = run(
+        &directory,
+        &[
+            "derive",
+            "--parents",
+            "duration-a,duration-b",
+            "--operation",
+            "DURATION_SUM",
+            "--expression",
+            "a + b",
+        ],
+    );
+    assert_eq!(derive_duration.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&derive_duration.stderr);
+    assert!(stderr.contains("--expression is only valid for EXPRESSION operation"));
+}

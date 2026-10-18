@@ -4,7 +4,8 @@ const MAX_TOKEN_BYTES: usize = 128;
 const MAX_EXPONENT: i32 = 128;
 const DISPLAY_DIGITS: u32 = 12;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DurationUnit {
     Seconds,
     Minutes,
@@ -98,7 +99,7 @@ impl DurationUnit {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DurationDisplay {
     pub unit: DurationUnit,
     pub decimal: String,

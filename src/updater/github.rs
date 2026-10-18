@@ -39,8 +39,17 @@ pub fn fetch_latest_release(token: Option<&str>) -> Result<GitHubRelease, String
     fetch_release_from_url(GITHUB_API_RELEASES_LATEST, token)
 }
 
+use std::io::Read;
+
+const MAX_JSON_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Fetches a GitHub release by exact tag name (e.g., `v0.2.0`).
 pub fn fetch_release_by_tag(tag: &str, token: Option<&str>) -> Result<GitHubRelease, String> {
+    let clean = tag.trim_start_matches('v');
+    if crate::updater::version::parse_version(clean).is_err() {
+        return Err(format!("Release not found at invalid tag {}", tag));
+    }
     let url = format!("{}/{}", GITHUB_API_RELEASES_TAG, tag);
     fetch_release_from_url(&url, token)
 }
@@ -67,9 +76,14 @@ fn fetch_release_from_url(url: &str, token: Option<&str>) -> Result<GitHubReleas
         }
     })?;
 
-    let body = response
-        .into_string()
+    let mut reader = response.into_reader().take(MAX_JSON_BYTES + 1);
+    let mut body = String::new();
+    reader
+        .read_to_string(&mut body)
         .map_err(|e| format!("Read error: {}", e))?;
+    if body.len() > MAX_JSON_BYTES as usize {
+        return Err("release response exceeded 16 MiB limit".to_string());
+    }
 
     serde_json::from_str::<GitHubRelease>(&body)
         .map_err(|e| format!("Failed to parse release JSON: {}", e))
@@ -112,18 +126,21 @@ pub fn download_asset(
             .set("Accept", "application/octet-stream")
             .set("Authorization", &format!("Bearer {}", t))
     } else {
-        let mut r = agent.get(url).set("User-Agent", "rgt-updater/1.0");
-        if let Some(t) = token {
-            r = r.set("Authorization", &format!("Bearer {}", t));
-        }
-        r
+        // FR-014: Omit Authorization header for browser_download_url
+        // to avoid credential leakage on cross-origin redirects and AWS S3 rejections
+        agent.get(url).set("User-Agent", "rgt-updater/1.0")
     };
 
     let response = req.call().map_err(|e| format!("Download failed: {}", e))?;
 
-    let mut reader = response.into_reader();
+    let mut reader = response.into_reader().take(MAX_ASSET_BYTES + 1);
     let mut file = std::fs::File::create(dest).map_err(|e| format!("Cannot create file: {}", e))?;
-    std::io::copy(&mut reader, &mut file).map_err(|e| format!("Write error: {}", e))?;
+    let copied =
+        std::io::copy(&mut reader, &mut file).map_err(|e| format!("Write error: {}", e))?;
+    if copied > MAX_ASSET_BYTES {
+        let _ = std::fs::remove_file(dest);
+        return Err("download exceeded maximum asset size (64 MiB)".to_string());
+    }
 
     Ok(())
 }
@@ -148,20 +165,22 @@ pub fn verify_asset_checksum(
             .set("Accept", "application/octet-stream")
             .set("Authorization", &format!("Bearer {}", t))
     } else {
-        let mut r = agent.get(checksum_url).set("User-Agent", "rgt-updater/1.0");
-        if let Some(t) = token {
-            r = r.set("Authorization", &format!("Bearer {}", t));
-        }
-        r
+        // FR-014: Omit Authorization header for browser_download_url
+        agent.get(checksum_url).set("User-Agent", "rgt-updater/1.0")
     };
 
     let response = req
         .call()
         .map_err(|e| format!("Checksum fetch failed: {}", e))?;
 
-    let body = response
-        .into_string()
+    let mut reader = response.into_reader().take(MAX_JSON_BYTES + 1);
+    let mut body = String::new();
+    reader
+        .read_to_string(&mut body)
         .map_err(|e| format!("Read error: {}", e))?;
+    if body.len() > MAX_JSON_BYTES as usize {
+        return Err("checksum response exceeded 16 MiB limit".to_string());
+    }
 
     let entries = checksum::parse_checksums(&body);
     let entry = checksum::find_checksum(&entries, asset_name)

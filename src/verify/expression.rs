@@ -51,6 +51,30 @@ pub fn validate_expression(expression: &str) -> Result<(), String> {
             expression.len()
         ));
     }
+    if expression.contains(';') {
+        return Err("expression contains invalid statement separator ';'".to_string());
+    }
+    if expression.contains('"') || expression.contains('\'') {
+        return Err("expression contains invalid string literal".to_string());
+    }
+    if expression
+        .chars()
+        .any(|c| matches!(c, '=' | '<' | '>' | '&' | '|' | '!'))
+    {
+        return Err("expression contains unsupported comparison or boolean operator".to_string());
+    }
+
+    let operator_count = expression
+        .chars()
+        .filter(|c| matches!(c, '+' | '-' | '*' | '/' | '%' | '^'))
+        .count();
+    if operator_count > 256 {
+        return Err(format!(
+            "expression exceeds the maximum operator count of 256 (got {})",
+            operator_count
+        ));
+    }
+
     let mut depth: usize = 0;
     for ch in expression.chars() {
         match ch {
@@ -179,7 +203,7 @@ pub fn verify_expression(
 
     // FR-003: coerce integer-typed results to float (`as_number`), so pure
     // literal expressions like `2*50` verify against `100`.
-    let computed_val: f64 = computed
+    let mut computed_val: f64 = computed
         .as_number()
         .map_err(|_| "Expression did not evaluate to a number".to_string())?;
 
@@ -190,7 +214,16 @@ pub fn verify_expression(
         ));
     }
 
-    if approx_eq(computed_val, result) {
+    if computed_val == 0.0 && computed_val.is_sign_negative() {
+        computed_val = 0.0;
+    }
+
+    let mut expected_result = result;
+    if expected_result == 0.0 && expected_result.is_sign_negative() {
+        expected_result = 0.0;
+    }
+
+    if approx_eq(computed_val, expected_result) {
         Ok(computed_val)
     } else {
         Err(format!(
@@ -414,5 +447,36 @@ mod tests {
 
         // Sub-epsilon exact equality near zero
         assert!(approx_eq(0.0, 0.0));
+    }
+
+    #[test]
+    fn test_expression_rejects_semicolons_and_string_literals() {
+        let parents = vec![ValueData::Number(10.0), ValueData::Number(20.0)];
+        let err1 = verify_expression(&parents, "\"b\"; a", 10.0).unwrap_err();
+        assert!(
+            err1.contains("invalid statement separator") || err1.contains("invalid string literal"),
+            "{err1}"
+        );
+
+        let err2 = verify_expression(&parents, "b; a", 10.0).unwrap_err();
+        assert!(err2.contains("invalid statement separator"), "{err2}");
+
+        let err3 = verify_expression(&parents, "a == b", 0.0).unwrap_err();
+        assert!(
+            err3.contains("unsupported comparison or boolean operator"),
+            "{err3}"
+        );
+
+        let long_ops = format!("a{}", "+1".repeat(257));
+        let err4 = verify_expression(&parents[..1], &long_ops, 258.0).unwrap_err();
+        assert!(err4.contains("maximum operator count"), "{err4}");
+    }
+
+    #[test]
+    fn test_expression_canonicalizes_negative_zero() {
+        let parents = vec![ValueData::Number(-1.0), ValueData::Number(0.0)];
+        let val = verify_expression(&parents, "a * b", 0.0).unwrap();
+        assert_eq!(val, 0.0);
+        assert!(!val.is_sign_negative(), "canonicalized value must be +0.0");
     }
 }

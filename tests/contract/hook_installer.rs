@@ -1013,7 +1013,8 @@ fn aliases_resolve_to_canonical_names() {
         resolve_agent_name("claude-code").as_deref(),
         Some("claude-code")
     );
-    assert_eq!(resolve_agent_name("roo-code").as_deref(), Some("cline"));
+    assert_eq!(resolve_agent_name("roo-code").as_deref(), Some("roo-code"));
+    assert_eq!(resolve_agent_name("roo").as_deref(), Some("roo-code"));
     assert_eq!(resolve_agent_name("cline").as_deref(), Some("cline"));
     assert_eq!(resolve_agent_name("kilo").as_deref(), Some("kilocode"));
     assert_eq!(resolve_agent_name("kilocode").as_deref(), Some("kilocode"));
@@ -1557,7 +1558,7 @@ fn instruction_only_installers_create_complete_guidance_at_local_load_paths() {
     let _guard = set_cwd(dir.path());
     let home = dir.path().join("home");
     let config_dir = dir.path().join("config");
-    for agent in ["cline", "antigravity", "kilocode"] {
+    for agent in ["cline", "roo-code", "antigravity", "kilocode"] {
         assert!(failed(&run(&home, &config_dir, false, true, agent)).is_empty());
     }
     let inspected = inspect_local_guidance(&home, &config_dir);

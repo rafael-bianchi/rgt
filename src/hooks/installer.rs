@@ -103,7 +103,12 @@ pub const AGENTS: &[AgentDef] = &[
     },
     AgentDef {
         canonical: "cline",
-        aliases: &["roo-code"],
+        aliases: &[],
+        tier: Tier::Rules,
+    },
+    AgentDef {
+        canonical: "roo-code",
+        aliases: &["roo"],
         tier: Tier::Rules,
     },
     AgentDef {
@@ -371,7 +376,7 @@ pub fn direct_hook_command_for_platform(
 /// own event deadline; this outer bound covers a stalled child process.
 fn posix_direct_hook_command(rgt_path: &Path, event: &str, agent: &str) -> String {
     format!(
-        "( _rgt_tmp=$(mktemp -d \"${{TMPDIR:-/tmp}}/rgt-hook.XXXXXX\") || exit 0; trap 'rm -rf \"$_rgt_tmp\"' 0; {} hook {} --agent {} --rgt-managed >\"$_rgt_tmp/stdout\" 2>/dev/null <&0 & _rgt_pid=$!; ( trap 'kill \"$_rgt_timer\" 2>/dev/null || true' 0; sleep 0.8 & _rgt_timer=$!; wait \"$_rgt_timer\"; if kill -0 \"$_rgt_pid\" 2>/dev/null; then : >\"$_rgt_tmp/timed-out\"; kill -KILL \"$_rgt_pid\" 2>/dev/null || true; fi ) </dev/null >/dev/null 2>&1 & _rgt_watchdog=$!; wait \"$_rgt_pid\" 2>/dev/null || true; kill \"$_rgt_watchdog\" 2>/dev/null || true; wait \"$_rgt_watchdog\" 2>/dev/null || true; if [ ! -f \"$_rgt_tmp/timed-out\" ]; then cat \"$_rgt_tmp/stdout\"; fi ) 2>/dev/null || true",
+        "( _rgt_tmp=$(mktemp -d \"${{TMPDIR:-/tmp}}/rgt-hook.XXXXXX\") || exit 0; trap 'rm -rf \"$_rgt_tmp\"' 0; {} hook {} --agent {} --rgt-managed >\"$_rgt_tmp/stdout\" 2>/dev/null <&0 & _rgt_pid=$!; ( trap 'kill \"$_rgt_timer\" 2>/dev/null || true; exit 0' 0 2 15; sleep 0.8 & _rgt_timer=$!; wait \"$_rgt_timer\"; if kill -0 \"$_rgt_pid\" 2>/dev/null; then : >\"$_rgt_tmp/timed-out\"; kill -KILL \"$_rgt_pid\" 2>/dev/null || true; fi ) </dev/null >/dev/null 2>&1 & _rgt_watchdog=$!; wait \"$_rgt_pid\" 2>/dev/null || true; kill \"$_rgt_watchdog\" 2>/dev/null || true; wait \"$_rgt_watchdog\" 2>/dev/null || true; if [ ! -f \"$_rgt_tmp/timed-out\" ]; then cat \"$_rgt_tmp/stdout\"; fi ) 2>/dev/null || true",
         posix_shell_quote(rgt_path),
         event,
         agent
@@ -493,6 +498,7 @@ fn configure(
     configure_agent!("pi", write_pi(home, global, force, rgt_path));
     configure_agent!("hermes", write_hermes(home, global, force, rgt_path));
     configure_agent!("cline", write_cline(home, global, force));
+    configure_agent!("roo-code", write_roo(home, global, force));
     configure_agent!("antigravity", write_antigravity(home, global, force));
     configure_agent!("kilocode", write_kilocode(home, global, force));
 
@@ -534,8 +540,8 @@ fn ensure_json_hooks(
         .map_err(|error| with_path(path, error))?
         .iter()
         .any(|command| editor::is_rgt_command(command));
-    let (edited, changed) =
-        editor::jsonc_merge_hook_entries(&text, desired).map_err(|e| with_path(path, e))?;
+    let (edited, changed) = editor::jsonc_merge_hook_entries_with_force(&text, desired, force)
+        .map_err(|e| with_path(path, e))?;
     if !changed && !force {
         return Ok(WriteOutcome::already_current(path));
     }
@@ -946,23 +952,46 @@ fn write_copilot(
     }
 }
 
-/// Gemini CLI: hooks.toml PostToolUse entry.
+/// Gemini CLI: hooks.toml PostToolUse entry or settings.json AfterTool entry.
 fn write_gemini(
     home: &Path,
     global: bool,
     force: bool,
     rgt_path: &Path,
 ) -> Result<WriteOutcome, ConfigEditError> {
+    let settings_file = if global {
+        home.join(".gemini/settings.json")
+    } else {
+        PathBuf::from(".gemini/settings.json")
+    };
     let hooks_file = crate::hooks::paths::gemini_hooks_toml(home, global);
-    let hooks = ensure_toml(&hooks_file, force, |t| {
-        editor::toml_ensure_table_entry(
-            t,
-            &["PostToolUse"],
-            "command",
-            &direct_hook_command(rgt_path, "post", "gemini"),
-            "gemini",
+
+    let (target_file, hooks) = if settings_file.exists() {
+        let desired = json!({
+            "hooks": {
+                "AfterTool": [{
+                    "command": direct_hook_command(rgt_path, "post", "gemini")
+                }]
+            }
+        });
+        (
+            settings_file.clone(),
+            ensure_json_hooks(&settings_file, &desired, force)?,
         )
-    })?;
+    } else {
+        (
+            hooks_file.clone(),
+            ensure_toml(&hooks_file, force, |t| {
+                editor::toml_ensure_table_entry(
+                    t,
+                    &["PostToolUse"],
+                    "command",
+                    &direct_hook_command(rgt_path, "post", "gemini"),
+                    "gemini",
+                )
+            })?,
+        )
+    };
     let guidance_file = if global {
         home.join(".gemini/GEMINI.md")
     } else {
@@ -975,18 +1004,28 @@ fn write_gemini(
         &glue::with_instruction(&codex_section()),
         force,
     )?;
-    Ok(WriteOutcome::combine(&hooks_file, [hooks, guidance]))
+    Ok(WriteOutcome::combine(&target_file, [hooks, guidance]))
 }
 
-/// Mistral Vibe: a pre-tool entry plus loaded AGENTS.md guidance.
+/// Mistral Vibe: a pre-tool/post-tool entry in config.toml or hooks.toml plus loaded AGENTS.md guidance.
 fn write_vibe(
     home: &Path,
     global: bool,
     force: bool,
     rgt_path: &Path,
 ) -> Result<WriteOutcome, ConfigEditError> {
+    let config_file = if global {
+        home.join(".vibe/config.toml")
+    } else {
+        PathBuf::from(".vibe/config.toml")
+    };
     let hooks_file = crate::hooks::paths::vibe_hooks_toml(home, global);
-    let hooks = ensure_toml(&hooks_file, force, |t| {
+    let target_file = if config_file.exists() {
+        config_file
+    } else {
+        hooks_file
+    };
+    let hooks = ensure_toml(&target_file, force, |t| {
         editor::toml_ensure_vibe_pre_tool(t, &direct_hook_command(rgt_path, "pre", "vibe"))
     })?;
 
@@ -999,7 +1038,7 @@ fn write_vibe(
         force,
     )?;
 
-    Ok(WriteOutcome::combine(&hooks_file, [hooks, guidance]))
+    Ok(WriteOutcome::combine(&target_file, [hooks, guidance]))
 }
 
 // ---------------------------------------------------------------------------
@@ -1127,7 +1166,7 @@ fn write_pi(
     Ok(WriteOutcome::combine(&ext_file, [plugin, guidance]))
 }
 
-/// Hermes: embedded `plugin.py` + `plugins.enabled` in the Hermes config.
+/// Hermes: embedded `plugin.py` + `plugin.yaml` + `plugins.enabled` in the Hermes config.
 fn write_hermes(
     home: &Path,
     global: bool,
@@ -1143,6 +1182,9 @@ fn write_hermes(
     let content = glue::hermes_plugin(&rgt_path.display().to_string());
     let written_plugin = write_plugin_file(&plugin_file, &content, "hermes", force)?;
 
+    let yaml_file = plugin_dir.join("plugin.yaml");
+    let written_yaml = write_plugin_file(&yaml_file, &glue::hermes_plugin_yaml(), "hermes", force)?;
+
     let config_file = if global {
         home.join(".hermes").join("config.toml")
     } else {
@@ -1152,7 +1194,7 @@ fn write_hermes(
         editor::toml_ensure_array_value(t, &["plugins", "enabled"], "rgt")
     })?;
 
-    let guidance_file = crate::hooks::paths::hermes_guidance_path();
+    let guidance_file = crate::hooks::paths::hermes_guidance_path(home, global);
     let guidance = ensure_text_block(
         &guidance_file,
         glue::RGT_MARKER,
@@ -1163,7 +1205,7 @@ fn write_hermes(
 
     Ok(WriteOutcome::combine(
         &plugin_file,
-        [written_plugin, config, guidance],
+        [written_plugin, written_yaml, config, guidance],
     ))
 }
 
@@ -1171,7 +1213,7 @@ fn write_hermes(
 // New integrations (US1): rules-tier agents
 // ---------------------------------------------------------------------------
 
-/// Cline / Roo Code: append RGT section to `.clinerules`.
+/// Cline: append RGT section to `.clinerules`.
 fn write_cline(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, ConfigEditError> {
     let rules_file = crate::hooks::paths::cline_guidance_path(home, global);
     ensure_text_block(
@@ -1179,6 +1221,18 @@ fn write_cline(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, C
         glue::RGT_MARKER,
         glue::RGT_END_MARKER,
         &glue::with_instruction(glue::CLINE_RULES),
+        force,
+    )
+}
+
+/// Roo Code: append RGT section to `.roo/rules/` guidance file.
+fn write_roo(home: &Path, global: bool, force: bool) -> Result<WriteOutcome, ConfigEditError> {
+    let rules_file = crate::hooks::paths::roo_guidance_path(home, global);
+    ensure_text_block(
+        &rules_file,
+        glue::RGT_MARKER,
+        glue::RGT_END_MARKER,
+        &glue::with_instruction(glue::ROO_RULES),
         force,
     )
 }
@@ -1239,6 +1293,7 @@ pub fn detect_installed_agents(home: &Path, config_dir: &Path) -> Vec<String> {
             "pi" => home_dir(".pi").exists(),
             "hermes" => home_dir(".hermes").exists(),
             "cline" => home_dir(".cline").exists(),
+            "roo-code" => home_dir(".roo").exists(),
             "antigravity" => {
                 home_dir(".agents").join("rules").exists()
                     || home.join(".gemini").join("antigravity-cli").exists()
@@ -1258,6 +1313,7 @@ pub fn detect_installed_agents(home: &Path, config_dir: &Path) -> Vec<String> {
             "pi" => project(".pi").exists(),
             "hermes" => project(".hermes").exists(),
             "cline" => project(".clinerules").exists(),
+            "roo-code" => project(".roo").exists() || project(".roorules").exists(),
             "antigravity" => project(".agents").join("rules").exists(),
             "kilocode" => project(".kilocode").exists(),
             _ => false,

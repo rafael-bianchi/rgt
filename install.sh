@@ -248,7 +248,7 @@ download_and_verify() {
 
     if [ -f "${RGT_CHECKSUMS_PATH}" ]; then
         info "Verifying SHA-256 checksum..."
-        expected_hash=$(grep "${RGT_ARCHIVE_NAME}" "${RGT_CHECKSUMS_PATH}" | awk '{print $1}')
+        expected_hash=$(grep -E "^[0-9a-f]{64}[[:space:]]+[*]?(\./)?${RGT_ARCHIVE_NAME}$" "${RGT_CHECKSUMS_PATH}" | head -n 1 | awk '{print $1}')
 
         if [ -z "${expected_hash}" ]; then
             err "No checksum entry for ${RGT_ARCHIVE_NAME} in checksums.txt. Aborting."

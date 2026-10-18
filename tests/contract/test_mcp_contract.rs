@@ -585,4 +585,237 @@ mod tests {
         assert_eq!(status["total_nodes"], 1);
         assert_eq!(status["stale_nodes"], 1);
     }
+
+    #[test]
+    fn derive_date_diff_without_result_and_export_graph_via_mcp() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        assert!(std::process::Command::new(rgt())
+            .args(["init", "--agent", "codex"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap()
+            .status
+            .success());
+
+        let file = dir.path().join("dates.csv");
+        std::fs::write(&file, "start,2026-01-01\nend,2026-01-11\n").unwrap();
+
+        let mut client = McpClient::spawn(dir.path());
+        client.initialize();
+
+        let rec = client.call_tool(
+            3,
+            "record_values",
+            serde_json::json!({
+                "file": file.to_string_lossy(),
+                "content": "start,2026-01-01\nend,2026-01-11\n",
+            }),
+        );
+        assert_eq!(rec["result"]["isError"], serde_json::Value::Bool(false));
+
+        let db = rgt::store::DbStore::open_in_project(dir.path()).unwrap();
+        let nodes = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
+        assert_eq!(nodes.len(), 2);
+        let id1 = &nodes[0].id;
+        let id2 = &nodes[1].id;
+
+        // Derive DATE_DIFF without result, specifying unit: "days"
+        let derive_resp = client.call_tool(
+            4,
+            "derive_and_verify",
+            serde_json::json!({
+                "parents": format!("{id1},{id2}"),
+                "operation": "DATE_DIFF",
+                "unit": "days",
+            }),
+        );
+        assert_eq!(
+            derive_resp["result"]["isError"],
+            serde_json::Value::Bool(false),
+            "{derive_resp}"
+        );
+        let derive_data: serde_json::Value =
+            serde_json::from_str(&client.text_content(&derive_resp)).expect("derive JSON");
+        assert!(derive_data["node_id"].is_string());
+        assert_eq!(derive_data["display"], "10 days");
+
+        // Export graph via MCP
+        let graph_resp = client.call_tool(
+            5,
+            "export_graph",
+            serde_json::json!({
+                "format": "mermaid",
+            }),
+        );
+        assert_eq!(
+            graph_resp["result"]["isError"],
+            serde_json::Value::Bool(false),
+            "{graph_resp}"
+        );
+        let graph_data: serde_json::Value =
+            serde_json::from_str(&client.text_content(&graph_resp)).expect("graph JSON");
+        assert_eq!(graph_data["format"], "mermaid");
+        assert!(graph_data["graph"].as_str().unwrap().contains("graph TD"));
+    }
+
+    #[test]
+    fn get_status_in_uninitialized_directory_does_not_create_store() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+
+        let mut client = McpClient::spawn(dir.path());
+        client.initialize();
+
+        let resp = client.call_tool(3, "get_status", serde_json::json!({}));
+        let status: serde_json::Value =
+            serde_json::from_str(&client.text_content(&resp)).expect("status JSON");
+        assert_eq!(status["total_nodes"], 0);
+        assert_eq!(status["active_nodes"], 0);
+        assert_eq!(status["stale_nodes"], 0);
+
+        assert!(
+            !dir.path().join(".rgt").exists(),
+            ".rgt directory must NOT be created by read-only MCP get_status"
+        );
+    }
+
+    #[test]
+    fn verify_only_supports_optional_result_for_temporal_and_rejects_invalid_result() {
+        let dir = tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        assert!(std::process::Command::new(rgt())
+            .args(["init", "--agent", "codex"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap()
+            .status
+            .success());
+
+        let file = dir.path().join("dates.csv");
+        std::fs::write(&file, "start,2026-01-01\nend,2026-01-11\n").unwrap();
+
+        let mut client = McpClient::spawn(dir.path());
+        client.initialize();
+
+        let rec = client.call_tool(
+            3,
+            "record_values",
+            serde_json::json!({
+                "file": file.to_string_lossy(),
+                "content": "start,2026-01-01\nend,2026-01-11\n",
+            }),
+        );
+        assert_eq!(rec["result"]["isError"], serde_json::Value::Bool(false));
+
+        let db = rgt::store::DbStore::open_in_project(dir.path()).unwrap();
+        let nodes = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
+        assert_eq!(nodes.len(), 2);
+        let id1 = &nodes[0].id;
+        let id2 = &nodes[1].id;
+
+        // 1. verify_only on DATE_DIFF without result and with unit: "days" succeeds and returns display
+        let resp = client.call_tool(
+            4,
+            "verify_only",
+            serde_json::json!({
+                "parents": format!("{id1},{id2}"),
+                "operation": "DATE_DIFF",
+                "unit": "days",
+            }),
+        );
+        assert_eq!(
+            resp["result"]["isError"],
+            serde_json::Value::Bool(false),
+            "{resp}"
+        );
+        let body: serde_json::Value =
+            serde_json::from_str(&client.text_content(&resp)).expect("verify JSON");
+        assert_eq!(body["verified"], true);
+        assert_eq!(body["display"], "10 days");
+        assert_eq!(body["display_details"]["decimal"], "10");
+
+        // 2. verify_only on DATE_DIFF with correct result claim
+        let ok_claim = client.call_tool(
+            5,
+            "verify_only",
+            serde_json::json!({
+                "parents": format!("{id1},{id2}"),
+                "operation": "DATE_DIFF",
+                "result": "10",
+                "result_unit": "days",
+            }),
+        );
+        assert_eq!(
+            ok_claim["result"]["isError"],
+            serde_json::Value::Bool(false)
+        );
+
+        // 3. verify_only on DATE_DIFF with incorrect result claim fails
+        let bad_claim = client.call_tool(
+            6,
+            "verify_only",
+            serde_json::json!({
+                "parents": format!("{id1},{id2}"),
+                "operation": "DATE_DIFF",
+                "result": "5",
+                "result_unit": "days",
+            }),
+        );
+        assert_eq!(
+            bad_claim["result"]["isError"],
+            serde_json::Value::Bool(true)
+        );
+
+        // 4. verify_only on EXPRESSION without result fails with "result is required"
+        let no_res_expr = client.call_tool(
+            7,
+            "verify_only",
+            serde_json::json!({
+                "parents": id1,
+                "operation": "EXPRESSION",
+                "expression": "a * 2",
+            }),
+        );
+        assert_eq!(
+            no_res_expr["result"]["isError"],
+            serde_json::Value::Bool(true)
+        );
+        assert!(
+            client
+                .text_content(&no_res_expr)
+                .contains("result is required"),
+            "expected 'result is required' in: {no_res_expr}"
+        );
+
+        // 5. verify_only with null or boolean or object result fails as invalid input
+        for invalid_res in [
+            serde_json::Value::Null,
+            serde_json::json!(false),
+            serde_json::json!({"unexpected": "object"}),
+        ] {
+            let bad_type = client.call_tool(
+                8,
+                "verify_only",
+                serde_json::json!({
+                    "parents": format!("{id1},{id2}"),
+                    "operation": "DATE_DIFF",
+                    "result": invalid_res,
+                }),
+            );
+            assert_eq!(bad_type["result"]["isError"], serde_json::Value::Bool(true));
+            assert!(
+                client.text_content(&bad_type).contains("invalid result"),
+                "expected 'invalid result' in: {bad_type}"
+            );
+        }
+
+        // Verify that verify_only never writes to the graph
+        let nodes_after = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
+        assert_eq!(
+            nodes_after.len(),
+            2,
+            "verify_only must never record derived nodes"
+        );
+    }
 }

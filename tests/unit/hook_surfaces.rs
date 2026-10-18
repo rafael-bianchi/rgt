@@ -9,7 +9,7 @@ fn exposes_all_thirteen_canonical_agents() {
         .iter()
         .map(|agent| agent.canonical)
         .collect();
-    assert_eq!(names.len(), 13);
+    assert_eq!(names.len(), 14);
     for expected in [
         "claude-code",
         "cursor",
@@ -22,6 +22,7 @@ fn exposes_all_thirteen_canonical_agents() {
         "codex",
         "windsurf",
         "cline",
+        "roo-code",
         "antigravity",
         "kilocode",
     ] {

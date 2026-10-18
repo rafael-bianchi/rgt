@@ -370,7 +370,7 @@ mod detection_tests {
     #[test]
     fn tier2_match_updates_mtime_and_does_not_rehash_repeatedly() {
         let dir = tempfile::tempdir().unwrap();
-        let db = DbStore::open_in_project(dir.path()).unwrap();
+        let mut db = DbStore::open_in_project(dir.path()).unwrap();
         let p = dir.path().join("values.txt");
         std::fs::write(&p, "total,100\n").unwrap();
         let m1 = get_metadata_snapshot(&p).unwrap();
@@ -429,7 +429,7 @@ mod detection_tests {
         let mut cascade =
             rgt::graph::invalidation::InvalidationCascade::build_from_db(&db).unwrap();
         let count = cascade
-            .evaluate_and_invalidate_all(&db, dir.path())
+            .evaluate_and_invalidate_all(&mut db, dir.path())
             .unwrap();
         assert_eq!(
             count, 0,

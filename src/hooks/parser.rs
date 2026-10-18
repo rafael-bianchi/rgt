@@ -106,6 +106,7 @@ pub struct NormalizedCapture {
     /// Base64 PDF envelope bytes (spec 033). When present, the hook decodes and
     /// locally extracts the PDF instead of falling back to a disk read.
     pub pdf_base64: Option<String>,
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -164,9 +165,18 @@ pub fn parse_hook_payload(json_str: &str) -> Result<HookPayload, serde_json::Err
 pub fn extract_values_from_content(content: &str, format: NumberFormat) -> ExtractionResult {
     let mut result = ExtractionResult::default();
     let iso_date_regex = Regex::new(
-        r"\b(\d{4}-\d{2}-\d{2}(?:[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})?)?)\b",
+        r"\b(\d{4}-\d{2}-\d{2}(?:[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:?\d{2})?)?)\b",
     )
     .unwrap();
+    let compact_offset_regex = Regex::new(r"([+-]\d{2})(\d{2})$").unwrap();
+    let url_regex = Regex::new(r"https?://\S+").unwrap();
+    let time_regex = Regex::new(r"\b\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?\b").unwrap();
+    let slash_date_regex = Regex::new(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b").unwrap();
+    let uuid_hex_regex = Regex::new(r"\b[0-9a-fA-F]{3,}(?:-[0-9a-fA-F]{3,}){3,}\b").unwrap();
+    let hex_literal_regex = Regex::new(r"\b0x[0-9a-fA-F]+\b").unwrap();
+    let v_version_regex = Regex::new(r"\bv\d+(?:\.\d+)+\b").unwrap();
+    let ipv4_regex = Regex::new(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b").unwrap();
+
     // FR-004: resolve `Auto` once per file, then reuse the concrete format.
     let format = match format {
         NumberFormat::Auto => resolve_auto_format(content),
@@ -176,20 +186,30 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
 
     for (idx, line) in content.lines().enumerate() {
         let line_num = (idx + 1) as u32;
-        let mut occurrence: u32 = 0;
+        let mut line_occurrences: std::collections::HashMap<
+            (crate::types::value::ValueKind, String),
+            u32,
+        > = std::collections::HashMap::new();
 
-        // Recognize dates first and record their byte spans, so the number scan
-        // can skip (mask) everything inside a recognized date.
-        let mut date_spans: Vec<(usize, usize)> = Vec::new();
+        // Recognize dates and mask spans so the number scan skips URLs, timestamps,
+        // slash dates, UUIDs, version strings, IPv4 addresses, and date components.
+        let mut mask_spans: Vec<(usize, usize)> = Vec::new();
         for cap in iso_date_regex.captures_iter(line) {
             if let Some(m) = cap.get(1) {
                 let s = m.as_str();
-                date_spans.push((m.start(), m.end()));
+                mask_spans.push((m.start(), m.end()));
                 let dt = if s.contains(['T', 't']) {
-                    DateTime::parse_from_rfc3339(s)
+                    let s_norm = if let Some(cap_offset) = compact_offset_regex.captures(s) {
+                        let full = cap_offset.get(0).unwrap().as_str();
+                        let prefix = &s[..s.len() - full.len()];
+                        format!("{}{}:{}", prefix, &cap_offset[1], &cap_offset[2])
+                    } else {
+                        s.to_string()
+                    };
+                    DateTime::parse_from_rfc3339(&s_norm)
                         .map(|d| d.with_timezone(&Utc))
                         .or_else(|_| {
-                            DateTime::parse_from_rfc3339(&format!("{}Z", s))
+                            DateTime::parse_from_rfc3339(&format!("{}Z", s_norm))
                                 .map(|d| d.with_timezone(&Utc))
                         })
                         .ok()
@@ -200,19 +220,60 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
                 };
 
                 if let Some(valid_dt) = dt {
+                    let val = ValueData::Date(valid_dt);
+                    let key = (val.kind(), val.to_string_repr());
+                    let occurrence = *line_occurrences.get(&key).unwrap_or(&0);
+                    line_occurrences.insert(key, occurrence + 1);
                     result.values.push(ExtractedValue {
-                        value: ValueData::Date(valid_dt),
+                        value: val,
                         line_number: Some(line_num),
                         occurrence,
                     });
-                    occurrence += 1;
                 } else {
                     result.skipped_malformed += 1;
                 }
             }
         }
 
-        for cap in number_regex.captures_iter(line) {
+        for m in url_regex.find_iter(line) {
+            mask_spans.push((m.start(), m.end()));
+        }
+        for m in time_regex.find_iter(line) {
+            mask_spans.push((m.start(), m.end()));
+        }
+        for m in slash_date_regex.find_iter(line) {
+            mask_spans.push((m.start(), m.end()));
+        }
+        for m in uuid_hex_regex.find_iter(line) {
+            let s = m.as_str();
+            if s.contains(|c: char| c.is_ascii_alphabetic()) {
+                mask_spans.push((m.start(), m.end()));
+            }
+        }
+        for m in hex_literal_regex.find_iter(line) {
+            mask_spans.push((m.start(), m.end()));
+        }
+        for m in v_version_regex.find_iter(line) {
+            mask_spans.push((m.start(), m.end()));
+        }
+        for m in ipv4_regex.find_iter(line) {
+            let parts: Vec<&str> = m.as_str().split('.').collect();
+            if parts.len() == 4 && parts.iter().all(|p| p.parse::<u8>().is_ok()) {
+                mask_spans.push((m.start(), m.end()));
+            }
+        }
+
+        let mut masked_line = line.as_bytes().to_vec();
+        for (start, end) in &mask_spans {
+            if *start < masked_line.len() && *end <= masked_line.len() {
+                for b in &mut masked_line[*start..*end] {
+                    *b = b' ';
+                }
+            }
+        }
+        let masked_line_str = std::str::from_utf8(&masked_line).unwrap_or(line);
+
+        for cap in number_regex.captures_iter(masked_line_str) {
             if let Some(m) = cap.get(1) {
                 // Must not be preceded by a word character (e.g. `foo123`), unless it's a sign/context handled later
                 if m.start() > 0
@@ -225,10 +286,10 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
                     continue;
                 }
 
-                // Skip any number match that lies inside a recognized date span.
-                if date_spans
+                // Skip any number match that overlaps with a masked span.
+                if mask_spans
                     .iter()
-                    .any(|(s, e)| m.start() >= *s && m.end() <= *e)
+                    .any(|(s, e)| m.start() < *e && m.end() > *s)
                 {
                     continue;
                 }
@@ -280,21 +341,27 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
                     has_line_whitespace,
                 ) {
                     ProcessedCandidate::Single(num) => {
+                        let val = ValueData::Number(num);
+                        let key = (val.kind(), val.to_string_repr());
+                        let occurrence = *line_occurrences.get(&key).unwrap_or(&0);
+                        line_occurrences.insert(key, occurrence + 1);
                         result.values.push(ExtractedValue {
-                            value: ValueData::Number(num),
+                            value: val,
                             line_number: Some(line_num),
                             occurrence,
                         });
-                        occurrence += 1;
                     }
                     ProcessedCandidate::Split(nums) => {
                         for num in nums {
+                            let val = ValueData::Number(num);
+                            let key = (val.kind(), val.to_string_repr());
+                            let occurrence = *line_occurrences.get(&key).unwrap_or(&0);
+                            line_occurrences.insert(key, occurrence + 1);
                             result.values.push(ExtractedValue {
-                                value: ValueData::Number(num),
+                                value: val,
                                 line_number: Some(line_num),
                                 occurrence,
                             });
-                            occurrence += 1;
                         }
                     }
                     ProcessedCandidate::Malformed => {
@@ -385,6 +452,15 @@ enum ProcessedCandidate {
     Malformed,
 }
 
+fn is_ipv4(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() == 4 {
+        parts.iter().all(|p| p.parse::<u8>().is_ok())
+    } else {
+        false
+    }
+}
+
 fn process_candidate(
     prefix: &str,
     raw: &str,
@@ -394,6 +470,10 @@ fn process_candidate(
     preceded_by_comma: bool,
     has_line_whitespace: bool,
 ) -> ProcessedCandidate {
+    if is_ipv4(raw) {
+        return ProcessedCandidate::Malformed;
+    }
+
     let (decimal, thousands) = match format {
         NumberFormat::Us => ('.', ','),
         NumberFormat::Eu => (',', '.'),
@@ -483,6 +563,15 @@ fn process_candidate(
                 return ProcessedCandidate::Malformed;
             }
 
+            // In prose or currency context, non-thousands single comma tokens (e.g. 12,34 in Price: 12,34 EUR)
+            // must be rejected as Malformed rather than split into CSV items.
+            if (has_line_whitespace || has_currency) && !raw.contains('.') {
+                let pieces: Vec<&str> = raw.split(',').collect();
+                if pieces.len() == 2 && pieces[1].len() != 3 {
+                    return ProcessedCandidate::Malformed;
+                }
+            }
+
             // Not a valid single formatted number: check if unspaced CSV row
             let pieces: Vec<&str> = raw.split(',').collect();
             let mut parsed_pieces = Vec::new();
@@ -534,13 +623,23 @@ fn process_candidate(
                 }
             } else {
                 let groups: Vec<&str> = raw.split('.').collect();
-                groups.len() >= 2
+                let valid_thousands_shape = groups.len() >= 2
                     && (1..=3).contains(&groups[0].len())
                     && !groups[0].starts_with('0')
                     && groups[0].chars().all(|c| c.is_ascii_digit())
                     && groups[1..]
                         .iter()
-                        .all(|g| g.len() == 3 && g.chars().all(|c| c.is_ascii_digit()))
+                        .all(|g| g.len() == 3 && g.chars().all(|c| c.is_ascii_digit()));
+                if !valid_thousands_shape {
+                    false
+                } else if groups.len() == 2 {
+                    true
+                } else {
+                    // For 3+ groups without a decimal comma (e.g. `1.000.000` vs `1.100.200`),
+                    // treat as a single number only when in currency context or when any
+                    // thousands group is `"000"`; reject version strings like `1.100.200`.
+                    has_currency || groups[1..].contains(&"000")
+                }
             };
 
             if is_valid_single {
@@ -600,8 +699,13 @@ fn candidate_context_ext(line: &str, start: usize, end: usize) -> (String, Strin
         .last()
         .map(|c| c.is_alphanumeric() || c == '_')
         .unwrap_or(false);
+    let preceded_by_expr_closer = rem
+        .chars()
+        .last()
+        .map(|c| matches!(c, ')' | ']'))
+        .unwrap_or(false);
 
-    let prefix = if preceded_by_word {
+    let prefix = if preceded_by_word || preceded_by_expr_closer {
         String::new()
     } else if sign_chars.iter().filter(|&&c| c == '-').count() >= 2 {
         // Multi-hyphen CLI flags (e.g. --100 or ---50) are not unary minus
@@ -709,7 +813,178 @@ fn resolve_auto_format(content: &str) -> NumberFormat {
             }
         }
     }
+
+    // Secondary scan: detect unambiguous European decimal tokens in prose (e.g. `Price: 12,34 EUR`)
+    let eu_decimal_regex = Regex::new(r"\b\d+,\d{1,2}\b").unwrap();
+    for line in content.lines() {
+        if line.contains([' ', '\t']) && eu_decimal_regex.is_match(line) {
+            return NumberFormat::Eu;
+        }
+    }
+
     NumberFormat::Us
+}
+
+/// Unwraps line-numbered tool output (such as Claude Code's cat -n style
+/// `^\s*\d+[→\t]` and OpenCode's `<file>\n00001| ...` or `1: ...`) to raw
+/// source text, returning the unwrapped text and a mapping of 1-based line numbers.
+pub fn unwrap_line_numbered_content(raw: &str) -> (String, Vec<u32>) {
+    let raw_trimmed = raw.trim();
+    if raw_trimmed.is_empty() {
+        return (raw.to_string(), Vec::new());
+    }
+
+    let mut lines_to_process: Vec<&str> = raw.lines().collect();
+    if lines_to_process.first().is_some_and(|l| {
+        let t = l.trim();
+        (t.starts_with("<file") || t == "<content>") && t.ends_with('>')
+    }) {
+        lines_to_process.remove(0);
+    }
+    if lines_to_process.last().is_some_and(|l| {
+        let t = l.trim();
+        t == "</file>" || t == "</content>"
+    }) {
+        lines_to_process.pop();
+    }
+
+    let claude_re = Regex::new(r"^\s*(\d+)[\u{2192}\t](.*)$").unwrap();
+    let pipe_re = Regex::new(r"^\s*(\d+)\|(?: (.*)|(.*))$").unwrap();
+    let colon_re = Regex::new(r"^\s*(\d+):\s?(.*)$").unwrap();
+
+    let mut is_claude = true;
+    let mut is_pipe = true;
+    let mut is_colon = true;
+    let mut non_empty_count = 0;
+
+    for line in &lines_to_process {
+        if line.trim().is_empty() {
+            continue;
+        }
+        non_empty_count += 1;
+        if !claude_re.is_match(line) {
+            is_claude = false;
+        }
+        if !pipe_re.is_match(line) {
+            is_pipe = false;
+        }
+        if !colon_re.is_match(line) {
+            is_colon = false;
+        }
+    }
+
+    let active_re = if non_empty_count > 0 && is_claude {
+        Some(&claude_re)
+    } else if non_empty_count > 0 && is_pipe {
+        Some(&pipe_re)
+    } else if non_empty_count > 0 && is_colon {
+        Some(&colon_re)
+    } else {
+        None
+    };
+
+    if let Some(re) = active_re {
+        let mut unwrapped_lines = Vec::new();
+        let mut line_mapping = Vec::new();
+        for line in lines_to_process {
+            if let Some(caps) = re.captures(line) {
+                let line_num: u32 = caps
+                    .get(1)
+                    .and_then(|m| m.as_str().parse().ok())
+                    .unwrap_or(1);
+                let body = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                unwrapped_lines.push(body.to_string());
+                line_mapping.push(line_num);
+            } else if line.trim().is_empty() {
+                unwrapped_lines.push(String::new());
+                let next_num = line_mapping.last().copied().unwrap_or(0) + 1;
+                line_mapping.push(next_num);
+            } else {
+                unwrapped_lines.push(line.to_string());
+                let next_num = line_mapping.last().copied().unwrap_or(0) + 1;
+                line_mapping.push(next_num);
+            }
+        }
+        let mut unwrapped = unwrapped_lines.join("\n");
+        if raw.ends_with('\n') {
+            unwrapped.push('\n');
+        }
+        (unwrapped, line_mapping)
+    } else {
+        let total_lines = raw.lines().count().max(1) as u32;
+        (raw.to_string(), (1..=total_lines).collect())
+    }
+}
+
+/// Normalizes relative and absolute paths for comparison (FR-001).
+pub fn paths_match(p1: &str, p2: &str) -> bool {
+    fn clean(s: &str) -> &str {
+        s.strip_prefix("./")
+            .or_else(|| s.strip_prefix(".\\"))
+            .unwrap_or(s)
+    }
+    let c1 = clean(p1);
+    let c2 = clean(p2);
+    if c1 == c2 {
+        return true;
+    }
+    if c1.ends_with(&format!("/{c2}")) || c1.ends_with(&format!("\\{c2}")) {
+        return true;
+    }
+    if c2.ends_with(&format!("/{c1}")) || c2.ends_with(&format!("\\{c1}")) {
+        return true;
+    }
+    std::path::Path::new(c1) == std::path::Path::new(c2)
+}
+
+fn extract_command_str(value: &serde_json::Value) -> Option<String> {
+    let candidates = [
+        value.pointer("/tool_input/command"),
+        value.pointer("/tool_input/cmd"),
+        value.pointer("/args/command"),
+        value.pointer("/args/cmd"),
+        value.get("command"),
+        value.get("cmd"),
+    ];
+    for cand in candidates.into_iter().flatten() {
+        if let Some(s) = cand.as_str() {
+            return Some(s.to_string());
+        }
+        if let Some(arr) = cand.as_array() {
+            let str_tokens: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
+            if str_tokens.len() >= 3
+                && (str_tokens[0] == "bash" || str_tokens[0] == "sh")
+                && str_tokens[1].starts_with('-')
+                && str_tokens[1].contains('c')
+            {
+                return Some(str_tokens[2].to_string());
+            }
+            let joined = str_tokens
+                .iter()
+                .map(|t| {
+                    if t.contains(' ') {
+                        format!("\"{}\"", t)
+                    } else {
+                        t.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !joined.is_empty() {
+                return Some(joined);
+            }
+        }
+    }
+    None
+}
+
+fn extract_cwd(value: &serde_json::Value) -> Option<String> {
+    value
+        .pointer("/tool_input/cwd")
+        .or_else(|| value.pointer("/args/cwd"))
+        .or_else(|| value.get("cwd"))
+        .and_then(|c| c.as_str())
+        .map(str::to_string)
 }
 
 /// Normalizes an agent's native stdin event JSON into the internal
@@ -719,11 +994,19 @@ fn resolve_auto_format(content: &str) -> NumberFormat {
 /// `agent` selects the stdin dialect; `None`/`claude-code`/`cursor` use the
 /// default Claude Code compatible shape (existing behavior).
 pub fn normalize_agent_event(agent: Option<&str>, stdin: &str) -> Option<NormalizedCapture> {
+    normalize_agent_event_with_phase(agent, stdin, None)
+}
+
+/// Normalizes an agent's native stdin event JSON with optional fallback
+/// `CapturePhase` from the CLI `event_type` argument.
+pub fn normalize_agent_event_with_phase(
+    agent: Option<&str>,
+    stdin: &str,
+    default_phase: Option<CapturePhase>,
+) -> Option<NormalizedCapture> {
     let stdin = stdin.strip_prefix('\u{feff}').unwrap_or(stdin);
     let value: serde_json::Value = serde_json::from_str(stdin).ok()?;
     let mut capture = match agent {
-        // FR-001: try the Read-shaped dialect first; a Bash tool call has no
-        // `path`/`content`, so fall back to command-based extraction.
         None | Some("claude-code") | Some("cursor") | Some("codex") => {
             match default_dialect(&value) {
                 Some(c) if c.path.is_some() => Some(c),
@@ -739,19 +1022,12 @@ pub fn normalize_agent_event(agent: Option<&str>, stdin: &str) -> Option<Normali
         Some(_) => None,
     }?;
 
-    // Until a documented or native event contract is recorded, these parsed
-    // compatibility shapes are diagnostic candidates only. They cannot
-    // authorize graph writes even if a synthetic payload happens to contain
-    // fields resembling a complete result.
-    if !matches!(
-        agent,
-        None | Some("claude-code") | Some("codex") | Some("opencode")
-    ) {
-        capture.content_complete = false;
+    if capture.phase == CapturePhase::Unknown {
+        if let Some(phase) = default_phase {
+            capture.phase = phase;
+        }
     }
-    if agent == Some("opencode") && opencode_native_read_dialect(&value).is_none() {
-        capture.content_complete = false;
-    }
+
     if matches!(agent, None | Some("claude-code") | Some("codex"))
         && !is_qualifying_read_event(agent, &value, &capture)
     {
@@ -761,7 +1037,7 @@ pub fn normalize_agent_event(agent: Option<&str>, stdin: &str) -> Option<Normali
 }
 
 /// OpenCode's observed `read` result exposes the complete decoded file text
-/// in `metadata.display.text`. Only a full-file, untruncated after-result is
+/// in `metadata.display.text` or `result.output`. Only a full-file, untruncated after-result is
 /// eligible; the caller still verifies those bytes against the disk snapshot.
 fn opencode_native_read_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
     if !is_opencode_native_read(value) {
@@ -771,44 +1047,49 @@ fn opencode_native_read_dialect(value: &serde_json::Value) -> Option<NormalizedC
     let result = value.get("result")?;
     let metadata = result.get("metadata")?;
     let display = metadata.get("display")?;
-    let text = display.get("text")?.as_str()?;
-    let line_count = u32::try_from(text.lines().count()).ok()?;
-    let split_line_count = u64::try_from(text.split('\n').count()).ok()?;
+    let text = display.get("text").and_then(|t| t.as_str());
+    let output = result.get("output").and_then(|o| o.as_str());
+    let raw_text = text.or(output)?;
+
     let line_start = display.get("lineStart")?.as_u64()?;
     let line_end = display.get("lineEnd")?.as_u64()?;
     let total_lines = display.get("totalLines")?.as_u64()?;
+    let (unwrapped_content, line_mapping) = unwrap_line_numbered_content(raw_text);
+    let line_count = u32::try_from(unwrapped_content.lines().count()).ok()?;
+    let split_line_count = u64::try_from(unwrapped_content.split('\n').count()).ok()?;
     let line_count_u64 = u64::from(line_count);
     let lines_match = line_count_u64 == total_lines
         || line_count_u64 + 1 == total_lines
         || split_line_count == total_lines
         || split_line_count + 1 == total_lines;
+
+    let display_path = display.get("path")?.as_str()?;
     if path.is_empty()
-        || result.get("output")?.as_str().is_none()
         || [value, result]
             .into_iter()
             .any(opencode_outcome_is_negative)
         || metadata.get("truncated")?.as_bool()?
         || display.get("truncated")?.as_bool()?
         || display.get("type")?.as_str()? != "file"
-        || display.get("path")?.as_str()? != path
+        || !paths_match(display_path, path)
         || line_start != 1
         || line_end != total_lines
         || !lines_match
     {
         return None;
     }
-    let mapped_lines = u32::try_from(total_lines.max(1)).unwrap_or(line_count.max(1));
-    let content = text.to_string();
+    let cwd = extract_cwd(value);
     Some(NormalizedCapture {
         path: Some(path.to_string()),
         read_target: Some(path.to_string()),
         phase: CapturePhase::After,
         outcome_evidence: OutcomeEvidence::CompletedResult,
-        completed_content: Some(content.clone()),
-        source_line_mapping: Some((1..=mapped_lines).collect()),
+        completed_content: Some(unwrapped_content.clone()),
+        source_line_mapping: Some(line_mapping),
         content_complete: true,
-        content: Some(content),
+        content: Some(unwrapped_content),
         pdf_base64: None,
+        cwd,
     })
 }
 
@@ -839,26 +1120,25 @@ fn is_qualifying_read_event(
     let tool = value
         .get("tool_name")
         .or_else(|| value.get("toolName"))
+        .or_else(|| value.get("tool"))
         .and_then(serde_json::Value::as_str);
     match (agent, tool) {
         (None | Some("claude-code"), Some("Read")) => capture.read_target.is_some(),
         (None | Some("claude-code"), Some("Bash")) => {
-            let command = value
-                .get("tool_input")
-                .and_then(|input| input.get("command"))
-                .and_then(serde_json::Value::as_str)
-                .or_else(|| value.get("command").and_then(serde_json::Value::as_str));
-            command.is_some_and(|command| extract_path_from_command(command).is_some())
+            let command = extract_command_str(value);
+            command.is_some_and(|command| extract_path_from_command(&command).is_some())
                 && capture.read_target.is_some()
         }
         (Some("codex"), Some("read_file" | "ReadFile" | "Read")) => capture.read_target.is_some(),
-        (Some("codex"), Some("Bash" | "bash" | "execute_command" | "ExecuteCommand" | "exec")) => {
-            let command = value
-                .get("tool_input")
-                .and_then(|input| input.get("command"))
-                .and_then(serde_json::Value::as_str)
-                .or_else(|| value.get("command").and_then(serde_json::Value::as_str));
-            command.is_some_and(|command| extract_path_from_command(command).is_some())
+        (
+            Some("codex"),
+            Some(
+                "Bash" | "bash" | "execute_command" | "ExecuteCommand" | "exec" | "shell"
+                | "local_shell" | "exec_command" | "container.exec",
+            ),
+        ) => {
+            let command = extract_command_str(value);
+            command.is_some_and(|command| extract_path_from_command(&command).is_some())
                 && capture.read_target.is_some()
         }
         _ => false,
@@ -894,24 +1174,55 @@ fn default_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
     let path = payload
         .tool_input
         .as_ref()
-        .and_then(|t| t.path.clone().or_else(|| t.file_path.clone()));
+        .and_then(|t| {
+            t.path.clone().or_else(|| t.file_path.clone()).or_else(|| {
+                value
+                    .pointer("/tool_input/filePath")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
+        })
+        .or_else(|| {
+            value
+                .pointer("/tool_input/filePath")
+                .or_else(|| value.pointer("/args/filePath"))
+                .or_else(|| value.pointer("/args/path"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
     let content = payload
         .tool_response
         .as_ref()
         .and_then(|r| r.content.clone())
         .or_else(|| value.get("tool_response").and_then(extract_text_content));
-    // Inspect the raw JSON, not the round-tripped struct: HookToolResponse only
-    // carries `content`, so the envelope's `type`/`file` fields survive only on
-    // the original value.
     let pdf_base64 = value.get("tool_response").and_then(pdf_envelope_base64);
-    Some(normalized_capture(value, path, content, pdf_base64))
+    let cwd = extract_cwd(value);
+
+    let (unwrapped_content, line_mapping) = match content {
+        Some(ref text) => {
+            let (unwrapped, mapping) = unwrap_line_numbered_content(text);
+            (Some(unwrapped), Some(mapping))
+        }
+        None => (None, None),
+    };
+
+    Some(normalized_capture(
+        value,
+        path,
+        unwrapped_content,
+        line_mapping,
+        pdf_base64,
+        cwd,
+    ))
 }
 
 fn normalized_capture(
     value: &serde_json::Value,
     path: Option<String>,
     content: Option<String>,
+    source_line_mapping: Option<Vec<u32>>,
     pdf_base64: Option<String>,
+    cwd: Option<String>,
 ) -> NormalizedCapture {
     let event = value
         .get("event")
@@ -979,19 +1290,22 @@ fn normalized_capture(
     } else {
         OutcomeEvidence::Unknown
     };
-    let source_line_mapping = content
-        .as_ref()
-        .map(|text| (1..=text.lines().count().max(1) as u32).collect::<Vec<_>>());
+    let line_mapping = source_line_mapping.or_else(|| {
+        content
+            .as_ref()
+            .map(|text| (1..=text.lines().count().max(1) as u32).collect::<Vec<_>>())
+    });
     NormalizedCapture {
         read_target: path.clone(),
         path,
         phase,
         outcome_evidence,
         completed_content: content.clone(),
-        source_line_mapping,
+        source_line_mapping: line_mapping,
         content_complete,
         content,
         pdf_base64,
+        cwd,
     }
 }
 
@@ -1003,8 +1317,9 @@ fn windsurf_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
         .or_else(|| value.get("event"))
         .or_else(|| value.get("hook_event_name"))
         .and_then(serde_json::Value::as_str)?;
+    let cwd = extract_cwd(value);
     if event != "post_read_code" {
-        return Some(normalized_capture(value, None, None, None));
+        return Some(normalized_capture(value, None, None, None, None, cwd));
     }
     let path = value
         .get("tool_info")
@@ -1012,7 +1327,7 @@ fn windsurf_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
         .or_else(|| value.get("file_path"))
         .and_then(serde_json::Value::as_str)
         .map(str::to_string);
-    Some(normalized_capture(value, path, None, None))
+    Some(normalized_capture(value, path, None, None, None, cwd))
 }
 
 /// Returns the base64 string of a PDF envelope inside a `tool_response` value
@@ -1026,6 +1341,7 @@ fn pdf_envelope_base64(tool_response: &serde_json::Value) -> Option<String> {
     tool_response
         .get("file")
         .and_then(|f| f.get("base64"))
+        .or_else(|| tool_response.get("base64"))
         .and_then(|b| b.as_str())
         .map(|s| s.to_string())
 }
@@ -1036,6 +1352,7 @@ fn copilot_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
     if value.get("tool_input").is_some() || value.get("tool_response").is_some() {
         return default_dialect(value);
     }
+    let cwd = extract_cwd(value);
 
     if let Some(args_str) = value.get("toolArgs").and_then(|t| t.as_str()) {
         if let Ok(args) = serde_json::from_str::<serde_json::Value>(args_str) {
@@ -1049,6 +1366,8 @@ fn copilot_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
                     Some(path.to_string()),
                     None,
                     None,
+                    None,
+                    cwd,
                 ));
             }
             if let Some(cmd) = args.get("command").and_then(|c| c.as_str()) {
@@ -1057,6 +1376,8 @@ fn copilot_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
                     extract_path_from_command(cmd),
                     None,
                     None,
+                    None,
+                    cwd,
                 ));
             }
         }
@@ -1068,76 +1389,231 @@ fn copilot_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
 /// Command-based dialect (gemini, vibe, opencode, pi, hermes, and the Bash
 /// fallback for claude-code/cursor): the path is the first argument of a
 /// read-style command in `tool_input.command` (or a top-level
-/// `command`/`args.command`), and the content is `tool_response.stdout` when
+/// `command`/`args.command`), and the content is `tool_response.stdout`/`output` when
 /// non-empty. Non-read commands, empty commands, and malformed JSON yield a
 /// no-op (`None` path).
 fn command_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
-    let command = value
-        .get("tool_input")
-        .and_then(|t| t.get("command"))
-        .or_else(|| value.get("command"))
-        .or_else(|| value.get("args").and_then(|a| a.get("command")))
-        .and_then(|c| c.as_str());
-    let path = command.and_then(extract_path_from_command);
-    // FR-003: capture the Bash tool's stdout as content when non-empty;
-    // otherwise leave it None so the disk-read fallback applies.
+    let command = extract_command_str(value);
+    let path = command.as_deref().and_then(extract_path_from_command);
+    let cwd = extract_cwd(value);
     let content = value
-        .get("tool_response")
-        .and_then(|t| t.get("stdout"))
+        .pointer("/tool_response/stdout")
+        .or_else(|| value.pointer("/tool_response/output"))
+        .or_else(|| value.pointer("/tool_response/content"))
+        .or_else(|| value.get("stdout"))
+        .or_else(|| value.get("output"))
         .and_then(|s| s.as_str())
         .filter(|s| !s.trim().is_empty())
         .map(|s| s.to_string());
-    Some(normalized_capture(value, path, content, None))
+
+    let (unwrapped_content, line_mapping) = match content {
+        Some(ref text) => {
+            let (unwrapped, mapping) = unwrap_line_numbered_content(text);
+            (Some(unwrapped), Some(mapping))
+        }
+        None => (None, None),
+    };
+
+    Some(normalized_capture(
+        value,
+        path,
+        unwrapped_content,
+        line_mapping,
+        None,
+        cwd,
+    ))
+}
+
+fn is_env_assignment(tok: &str) -> bool {
+    let mut parts = tok.splitn(2, '=');
+    let Some(var) = parts.next() else {
+        return false;
+    };
+    parts.next().is_some()
+        && !var.is_empty()
+        && var.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !var.starts_with(|c: char| c.is_ascii_digit())
+}
+
+fn split_shell_segments(cmd: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let chars: Vec<char> = cmd.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\'' && !in_double {
+            in_single = !in_single;
+            current.push(c);
+            i += 1;
+        } else if c == '"' && !in_single {
+            in_double = !in_double;
+            current.push(c);
+            i += 1;
+        } else if !in_single && !in_double {
+            if c == ';' || c == '|' {
+                if i + 1 < chars.len() && chars[i + 1] == '|' {
+                    segments.push(std::mem::take(&mut current));
+                    i += 2;
+                    continue;
+                }
+                segments.push(std::mem::take(&mut current));
+                i += 1;
+            } else if c == '&' && i + 1 < chars.len() && chars[i + 1] == '&' {
+                segments.push(std::mem::take(&mut current));
+                i += 2;
+            } else {
+                current.push(c);
+                i += 1;
+            }
+        } else {
+            current.push(c);
+            i += 1;
+        }
+    }
+    if !current.trim().is_empty() {
+        segments.push(current);
+    }
+    segments
+}
+
+fn resolve_path_with_cd(tok: &str, cd_dir: Option<&str>) -> Option<String> {
+    let cleaned = tok.trim_matches('"').trim_matches('\'').to_string();
+    if cleaned.is_empty() {
+        return None;
+    }
+    if let Some(dir) = cd_dir {
+        if !std::path::Path::new(&cleaned).is_absolute() {
+            return Some(
+                std::path::Path::new(dir)
+                    .join(cleaned)
+                    .to_string_lossy()
+                    .to_string(),
+            );
+        }
+    }
+    Some(cleaned)
 }
 
 /// Extracts a path argument of a read-style command (`cat`, `read`, `less`,
-/// `head`, `tail`, `more`, `grep`, `python`, `python3`), skipping leading flags
+/// `head`, `tail`, `more`, `grep`, `bat`, `sed`, `python`, `python3`), skipping leading flags
 /// and their numeric values. For `grep` the file is the LAST non-flag token (the
 /// first is the search pattern). Non-read commands return `None`. When the
 /// command is wrapped by `rtk` (RTK's auto-rewrite of `cat`/`read`), the
 /// subcommand must be `read` (RTK's read subcommand) for a capture (FR-002).
 pub fn extract_path_from_command(command: &str) -> Option<String> {
     const READ_STYLE: &[&str] = &[
-        "cat", "read", "less", "head", "tail", "more", "grep", "python", "python3",
+        "cat", "read", "less", "head", "tail", "more", "grep", "bat", "sed", "python", "python3",
     ];
-    let mut tokens = command.split_whitespace();
-    let first = tokens.next()?;
-    let verb = if first == "rtk" {
-        // RTK maps `cat`/`read` invocations to the `rtk read` subcommand; other
-        // `rtk` subcommands are not reads.
-        if tokens.next() != Some("read") {
-            return None;
-        }
-        "read"
-    } else {
-        first
-    };
-    if !READ_STYLE.contains(&verb) {
-        return None;
-    }
 
-    let mut last_non_flag: Option<String> = None;
-    while let Some(tok) = tokens.next() {
-        if let Some(rest) = tok.strip_prefix('-') {
-            // A numeric-value flag (e.g. `head -n 3`) may consume the next
-            // token when it is numeric; combined flags (`-3`, `-n3`) are
-            // skipped outright.
-            if matches!(rest, "n" | "c" | "m" | "l")
-                && tokens
-                    .clone()
-                    .next()
-                    .and_then(|v| v.parse::<u32>().ok())
-                    .is_some()
-            {
-                tokens.next();
+    let segments = split_shell_segments(command);
+    let mut cd_dir: Option<String> = None;
+
+    for segment in segments {
+        let tokens = crate::hooks::editor::shell_tokens(&segment)
+            .unwrap_or_else(|| segment.split_whitespace().map(String::from).collect());
+        if tokens.is_empty() {
+            continue;
+        }
+
+        if tokens[0] == "cd" && tokens.len() > 1 {
+            cd_dir = Some(tokens[1].trim_matches('"').trim_matches('\'').to_string());
+            continue;
+        }
+
+        let mut idx = 0;
+        while idx < tokens.len() && is_env_assignment(&tokens[idx]) {
+            idx += 1;
+        }
+        if idx >= tokens.len() {
+            continue;
+        }
+
+        let first = &tokens[idx];
+        let verb = std::path::Path::new(first)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or(first.as_str());
+
+        let (verb, advance) = if verb == "rtk" {
+            if tokens.get(idx + 1).map(|s| s.as_str()) != Some("read") {
+                continue;
+            }
+            ("read", 2)
+        } else {
+            (verb, 1)
+        };
+
+        if !READ_STYLE.contains(&verb) {
+            continue;
+        }
+
+        let remaining = &tokens[idx + advance..];
+
+        if verb == "python" || verb == "python3" {
+            if remaining.iter().any(|t| t == "-c" || t == "-m") {
+                return None;
+            }
+            for tok in remaining {
+                if !tok.starts_with('-') {
+                    return resolve_path_with_cd(tok, cd_dir.as_deref());
+                }
             }
             continue;
         }
-        let cleaned = tok.trim_matches('"').trim_matches('\'').to_string();
-        if verb != "grep" {
-            return Some(cleaned);
+
+        if verb == "sed" {
+            let mut target = None;
+            let mut skip_next = false;
+            for tok in remaining {
+                if skip_next {
+                    skip_next = false;
+                    continue;
+                }
+                if tok == "-e" || tok == "-f" {
+                    skip_next = true;
+                    continue;
+                }
+                if tok.starts_with('-') {
+                    continue;
+                }
+                target = Some(tok);
+            }
+            if let Some(tok) = target {
+                return resolve_path_with_cd(tok, cd_dir.as_deref());
+            }
+            continue;
         }
-        last_non_flag = Some(cleaned);
+
+        if verb == "grep" {
+            let mut last_non_flag = None;
+            for tok in remaining {
+                if !tok.starts_with('-') {
+                    last_non_flag = Some(tok);
+                }
+            }
+            if let Some(tok) = last_non_flag {
+                return resolve_path_with_cd(tok, cd_dir.as_deref());
+            }
+            continue;
+        }
+
+        let mut iter = remaining.iter().peekable();
+        while let Some(tok) = iter.next() {
+            if let Some(rest) = tok.strip_prefix('-') {
+                if (matches!(rest, "n" | "c" | "m" | "l" | "C" | "B" | "A")
+                    || tok == "--lines"
+                    || tok == "--bytes")
+                    && iter.peek().and_then(|v| v.parse::<u32>().ok()).is_some()
+                {
+                    iter.next();
+                }
+                continue;
+            }
+            return resolve_path_with_cd(tok, cd_dir.as_deref());
+        }
     }
-    last_non_flag
+    None
 }

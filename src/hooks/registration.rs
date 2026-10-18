@@ -258,8 +258,8 @@ const SURFACES: &[ClientSurface] = &[
     },
     ClientSurface {
         surface_id: "roo-code",
-        canonical_agent: "cline",
-        accepted_names: &["roo-code"],
+        canonical_agent: "roo-code",
+        accepted_names: &["roo-code", "roo"],
         registration_kind: RegistrationKind::Instruction,
         capture_tier: CaptureTier::InstructionOnly,
         read_paths: &[],
@@ -471,15 +471,25 @@ fn guidance_candidates(
             project(".pi/APPEND_SYSTEM.md"),
             user(crate::hooks::paths::pi_guidance_path(home, true)),
         ],
-        "hermes" => vec![(crate::hooks::paths::hermes_guidance_path(), Project)],
+        "hermes" => vec![
+            (
+                crate::hooks::paths::hermes_guidance_path(home, false),
+                Project,
+            ),
+            user(crate::hooks::paths::hermes_guidance_path(home, true)),
+        ],
         "codex" => vec![project("AGENTS.md"), user(home.join(".codex/AGENTS.md"))],
         "windsurf" => vec![
             project(".windsurfrules"),
             user(home.join(".codeium/windsurf/memories/global_rules.md")),
         ],
-        "cline" | "roo-code" => vec![
+        "cline" => vec![
             project(".clinerules"),
             user(home.join(".cline/rules/rgt.md")),
+        ],
+        "roo-code" => vec![
+            (crate::hooks::paths::roo_guidance_path(home, false), Project),
+            user(crate::hooks::paths::roo_guidance_path(home, true)),
         ],
         "antigravity" => vec![
             project(".agents/rules/antigravity-rgt-rules.md"),
@@ -670,7 +680,7 @@ fn inspect_native_hook(
     {
         let expected_hook_path = match surface.surface_id {
             "copilot-chat" => "github.copilot.chat.hooks",
-            "claude-code" | "cursor" | "codex" | "windsurf" => "hooks",
+            "claude-code" | "cursor" | "codex" | "windsurf" | "gemini" => "hooks",
             _ => "",
         };
         crate::hooks::editor::jsonc_hook_callbacks(text)
@@ -682,7 +692,7 @@ fn inspect_native_hook(
                         callback.nested_callback_group
                             && callback.callback_type.as_deref() == Some("command")
                     }
-                    "cursor" | "windsurf" => !callback.nested_callback_group,
+                    "cursor" | "windsurf" | "gemini" => !callback.nested_callback_group,
                     _ => false,
                 };
                 NativeHookCallback {
@@ -715,30 +725,44 @@ fn inspect_native_hook(
                 .unwrap_or_default(),
             "vibe" => {
                 let mut callbacks = Vec::new();
-                if let Some(entries) = doc.get("pre_tool") {
-                    if let Some(tables) = entries.as_array_of_tables() {
-                        callbacks.extend(tables.iter().filter_map(|table| {
-                            table
-                                .get("command")
-                                .and_then(toml_edit::Item::as_str)
-                                .map(|command| NativeHookCallback {
-                                    event: "pre_tool".to_string(),
-                                    command: command.to_string(),
-                                    group_valid: true,
-                                })
-                        }));
-                    } else if let Some(array) = entries.as_array() {
-                        callbacks.extend(array.iter().filter_map(|value| {
-                            value
-                                .as_inline_table()
-                                .and_then(|table| table.get("command"))
-                                .and_then(toml_edit::Value::as_str)
-                                .map(|command| NativeHookCallback {
-                                    event: "pre_tool".to_string(),
-                                    command: command.to_string(),
-                                    group_valid: true,
-                                })
-                        }));
+                for event_name in ["pre_tool", "post_tool"] {
+                    if let Some(entries) = doc.get(event_name) {
+                        if let Some(tables) = entries.as_array_of_tables() {
+                            callbacks.extend(tables.iter().filter_map(|table| {
+                                table.get("command").and_then(toml_edit::Item::as_str).map(
+                                    |command| NativeHookCallback {
+                                        event: event_name.to_string(),
+                                        command: command.to_string(),
+                                        group_valid: true,
+                                    },
+                                )
+                            }));
+                        } else if let Some(array) = entries.as_array() {
+                            callbacks.extend(array.iter().filter_map(|value| {
+                                value
+                                    .as_inline_table()
+                                    .and_then(|table| table.get("command"))
+                                    .and_then(toml_edit::Value::as_str)
+                                    .map(|command| NativeHookCallback {
+                                        event: event_name.to_string(),
+                                        command: command.to_string(),
+                                        group_valid: true,
+                                    })
+                            }));
+                        }
+                    } else if let Some(hooks_table) =
+                        doc.get("hooks").and_then(toml_edit::Item::as_table)
+                    {
+                        if let Some(cmd) = hooks_table
+                            .get(event_name)
+                            .and_then(toml_edit::Item::as_str)
+                        {
+                            callbacks.push(NativeHookCallback {
+                                event: event_name.to_string(),
+                                command: cmd.to_string(),
+                                group_valid: true,
+                            });
+                        }
                     }
                 }
                 callbacks
@@ -837,12 +861,13 @@ fn expected_host_phase(surface: &str, event: &str) -> Option<(EventPhase, &'stat
         ("claude-code", "PostToolUse")
         | ("copilot-chat", "PostToolUse")
         | ("codex", "PostToolUse")
-        | ("gemini", "PostToolUse") => Some((EventPhase::After, "post")),
+        | ("gemini", "PostToolUse" | "AfterTool") => Some((EventPhase::After, "post")),
         ("claude-code", "PreToolUse") => Some((EventPhase::Before, "pre")),
         ("cursor", "postToolUse") => Some((EventPhase::After, "post")),
         ("cursor", "preToolUse") => Some((EventPhase::Before, "pre")),
         ("windsurf", "post_read_code") => Some((EventPhase::After, "post")),
         ("vibe", "pre_tool") => Some((EventPhase::Before, "pre")),
+        ("vibe", "post_tool") => Some((EventPhase::After, "post")),
         _ => None,
     }
 }
@@ -993,11 +1018,15 @@ fn artifact_candidates(
             crate::hooks::paths::copilot_cli_config_dir(home, config_dir).join("AGENTS.md"),
         )],
         "gemini" => vec![
+            project(".gemini/settings.json"),
             project(".gemini/hooks.toml"),
+            user(home.join(".gemini/settings.json")),
             user(home.join(".gemini/hooks.toml")),
         ],
         "vibe" => vec![
+            project(".vibe/config.toml"),
             project(".vibe/hooks.toml"),
+            user(home.join(".vibe/config.toml")),
             user(home.join(".vibe/hooks.toml")),
         ],
         "opencode" => vec![
@@ -1011,16 +1040,22 @@ fn artifact_candidates(
         ],
         "hermes" => vec![
             project(".hermes/plugins/rgt/plugin.py"),
+            project(".hermes/plugins/rgt/plugin.yaml"),
             user(home.join(".hermes/plugins/rgt/plugin.py")),
+            user(home.join(".hermes/plugins/rgt/plugin.yaml")),
         ],
         "codex" => vec![
             (crate::hooks::paths::codex_hooks_json(home, false), Project),
             user(crate::hooks::paths::codex_hooks_json(home, true)),
         ],
         "windsurf" => windsurf_candidates(home),
-        "cline" | "roo-code" => vec![
+        "cline" => vec![
             project(".clinerules"),
             user(home.join(".cline/rules/rgt.md")),
+        ],
+        "roo-code" => vec![
+            (crate::hooks::paths::roo_guidance_path(home, false), Project),
+            user(crate::hooks::paths::roo_guidance_path(home, true)),
         ],
         "antigravity" => vec![
             project(".agents/rules/antigravity-rgt-rules.md"),

@@ -65,22 +65,25 @@ pub fn pi_guidance_path(home: &Path, global: bool) -> PathBuf {
     }
 }
 
-/// Hermes loads one project context file. Select its first existing file in
-/// documented precedence order so guidance is not hidden by a higher-priority
-/// context file. AGENTS.md is the default when none exists.
-pub fn hermes_guidance_path() -> PathBuf {
-    [
-        ".hermes.md",
-        "HERMES.md",
-        "AGENTS.override.md",
-        "AGENTS.md",
-        "CLAUDE.md",
-        ".cursorrules",
-    ]
-    .into_iter()
-    .map(PathBuf::from)
-    .find(|path| path.exists())
-    .unwrap_or_else(|| PathBuf::from("AGENTS.md"))
+/// Hermes loads one context file. In global mode it targets ~/.hermes/AGENTS.md.
+/// In project mode it selects the first existing file in documented precedence order.
+pub fn hermes_guidance_path(home: &Path, global: bool) -> PathBuf {
+    if global {
+        home.join(".hermes").join("AGENTS.md")
+    } else {
+        [
+            ".hermes.md",
+            "HERMES.md",
+            "AGENTS.override.md",
+            "AGENTS.md",
+            "CLAUDE.md",
+            ".cursorrules",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|path| path.exists())
+        .unwrap_or_else(|| PathBuf::from("AGENTS.md"))
+    }
 }
 
 /// Vibe reads project and user AGENTS.md files as context. Files under
@@ -99,14 +102,25 @@ pub fn windsurf_user_hooks_json(home: &Path) -> PathBuf {
     home.join(".codeium").join("windsurf").join("hooks.json")
 }
 
-/// Preferred workspace hook file. `.windsurf/hooks.json` is a legacy fallback
-/// and is selected only when the preferred file does not already define hooks.
+/// Preferred workspace hook file for Windsurf Cascade.
 pub fn windsurf_workspace_hooks_json() -> PathBuf {
+    PathBuf::from(".windsurf").join("hooks.json")
+}
+
+/// Fallback workspace hook file.
+pub fn windsurf_legacy_workspace_hooks_json() -> PathBuf {
     PathBuf::from(".devin").join("hooks.json")
 }
 
-pub fn windsurf_legacy_workspace_hooks_json() -> PathBuf {
-    PathBuf::from(".windsurf").join("hooks.json")
+/// Roo Code guidance path for the selected scope.
+pub fn roo_guidance_path(home: &Path, global: bool) -> PathBuf {
+    if global {
+        home.join(".roo").join("rules").join("rgt.md")
+    } else if PathBuf::from(".roorules").exists() {
+        PathBuf::from(".roorules")
+    } else {
+        PathBuf::from(".roo").join("rules").join("rgt.md")
+    }
 }
 
 /// Project-level VS Code settings file.

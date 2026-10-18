@@ -31,6 +31,8 @@ jobs:
 
       - name: Compute version from commits
         id: tag
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
         run: |
           LATEST_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | grep -v '-' | head -1)
           if [ -z "$LATEST_TAG" ]; then
@@ -62,7 +64,7 @@ jobs:
             fi
           fi
           VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          TAG="dev-${VERSION}-rc.${{ github.run_number }}"
+          TAG="dev-${VERSION}-rc.${GITHUB_RUN_NUMBER}"
 
           if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
             echo "::error::Tag ${TAG} already exists"
@@ -129,10 +131,12 @@ jobs:
           fetch-depth: 0
 
       - name: Update latest tag
+        env:
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -fa latest -m "Latest stable release (${{ needs.release-please.outputs.tag_name }})"
+          git tag -fa latest -m "Latest stable release (${TAG_NAME})"
           git push origin latest --force
 
   promote-to-main:
@@ -149,6 +153,7 @@ jobs:
       - name: Promote develop to main
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
         run: |
           git fetch origin develop main
 
@@ -161,5 +166,5 @@ jobs:
               --base main \
               --head develop \
               --title "chore: promote develop to main" \
-              --body "Automatic promotion of released develop changes to main. Created by the CD workflow after release ${{ needs.release-please.outputs.tag_name }}."
+              --body "Automatic promotion of released develop changes to main. Created by the CD workflow after release ${TAG_NAME}."
           fi

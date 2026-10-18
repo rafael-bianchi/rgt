@@ -21,7 +21,9 @@ pub fn upsert_source_document(
 
     // FR-005: dedupe on on-disk identity (dev/ino) when both are present, so the
     // same file reached via different casings is one row. Fall back to the path.
-    let inserted = if let (Some(d), Some(i)) = (dev, ino) {
+    let dev_i64 = dev.map(|v| v as i64);
+    let ino_i64 = ino.map(|v| v as i64);
+    let inserted = if let (Some(d), Some(i)) = (dev_i64, ino_i64) {
         conn.execute(
             "INSERT INTO source_documents (file_path, mtime_nsec, file_size, blake3_hash, last_checked_at, dev, ino)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -49,7 +51,7 @@ pub fn upsert_source_document(
     inserted?;
 
     // Re-key any duplicate casing or alias row that now resolves to the same identity.
-    if let (Some(d), Some(i)) = (dev, ino) {
+    if let (Some(d), Some(i)) = (dev_i64, ino_i64) {
         let surviving = get_source_document_by_path(conn, file_path)?
             .ok_or_else(|| rusqlite::Error::QueryReturnedNoRows)?;
         // Update all tracked_nodes referencing any duplicate row to the surviving id BEFORE deleting duplicate rows!
@@ -106,8 +108,8 @@ pub fn get_source_document_by_path(
             file_size: row.get(3)?,
             blake3_hash: row.get(4)?,
             last_checked_at,
-            dev: row.get(6)?,
-            ino: row.get(7)?,
+            dev: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+            ino: row.get::<_, Option<i64>>(7)?.map(|v| v as u64),
         }))
     } else {
         Ok(None)
@@ -204,6 +206,22 @@ pub fn insert_or_reuse_duration(
     let tx = conn
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|error| format!("failed to begin Duration transaction: {error}"))?;
+
+    let mut tx_any_parent_stale = node.is_stale;
+    for parent_id in parent_ids {
+        if let Ok(Some(pnode)) = get_tracked_node(&tx, parent_id) {
+            if pnode.is_stale {
+                tx_any_parent_stale = true;
+                break;
+            }
+        }
+    }
+    let mut node_to_insert = node.clone();
+    node_to_insert.is_stale = tx_any_parent_stale;
+    if tx_any_parent_stale && node_to_insert.stale_reason.is_none() {
+        node_to_insert.stale_reason = Some("PARENT_NODE_STALE".to_string());
+    }
+    let node = &node_to_insert;
 
     for candidate in legacy_candidates {
         if candidate == &canonical_id {
@@ -330,114 +348,115 @@ pub fn list_capture_associations(conn: &Connection) -> Result<Vec<(String, Strin
     rows.collect()
 }
 
+const SELECT_TRACKED_NODES_SQL: &str =
+    "SELECT id, node_type, value_kind, number_val, date_val, duration_secs,
+            source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at
+     FROM tracked_nodes";
+
+pub fn row_to_tracked_node(row: &rusqlite::Row) -> Result<TrackedNode> {
+    let node_type_str: String = row.get(1)?;
+    let value_kind_str: String = row.get(2)?;
+    let num_val: Option<f64> = row.get(3)?;
+    let date_val: Option<String> = row.get(4)?;
+    let dur_secs: Option<i64> = row.get(5)?;
+    let is_stale_int: i32 = row.get(8)?;
+
+    let value_kind = value_kind_str.parse().map_err(|error: String| {
+        value_conversion_error(2, Type::Text, format!("invalid value_kind: {error}"))
+    })?;
+    let value = match value_kind {
+        ValueKind::Number => {
+            if date_val.is_some() || dur_secs.is_some() {
+                return Err(value_conversion_error(
+                    2,
+                    Type::Text,
+                    "number row has conflicting typed columns".into(),
+                ));
+            }
+            let number = num_val.ok_or_else(|| {
+                value_conversion_error(3, Type::Null, "number row is missing number_val".into())
+            })?;
+            if !number.is_finite() {
+                return Err(value_conversion_error(
+                    3,
+                    Type::Real,
+                    "number_val is not finite".into(),
+                ));
+            }
+            ValueData::Number(number)
+        }
+        ValueKind::Date => {
+            if num_val.is_some() || dur_secs.is_some() {
+                return Err(value_conversion_error(
+                    2,
+                    Type::Text,
+                    "date row has conflicting typed columns".into(),
+                ));
+            }
+            let dt_str = date_val.ok_or_else(|| {
+                value_conversion_error(4, Type::Null, "date row is missing date_val".into())
+            })?;
+            let dt = DateTime::parse_from_rfc3339(&dt_str)
+                .map_err(|error| {
+                    value_conversion_error(4, Type::Text, format!("date_val is invalid: {error}"))
+                })?
+                .with_timezone(&Utc);
+            ValueData::Date(dt)
+        }
+        ValueKind::Duration => {
+            if num_val.is_some() || date_val.is_some() {
+                return Err(value_conversion_error(
+                    2,
+                    Type::Text,
+                    "duration row has conflicting typed columns".into(),
+                ));
+            }
+            let seconds = dur_secs.ok_or_else(|| {
+                value_conversion_error(
+                    5,
+                    Type::Null,
+                    "duration row is missing duration_secs".into(),
+                )
+            })?;
+            let duration = Duration::try_seconds(seconds).ok_or_else(|| {
+                value_conversion_error(
+                    5,
+                    Type::Integer,
+                    format!("duration_secs '{seconds}' is out of range"),
+                )
+            })?;
+            ValueData::Duration(duration)
+        }
+    };
+
+    let created_at_str: String = row.get(10)?;
+    let updated_at_str: String = row.get(11)?;
+
+    Ok(TrackedNode {
+        id: row.get(0)?,
+        node_type: node_type_str.parse().unwrap_or(NodeType::Root),
+        value_kind,
+        value,
+        source_doc_id: row.get(6)?,
+        line_number: row.get(7)?,
+        is_stale: is_stale_int != 0,
+        stale_reason: row.get(9)?,
+        created_at: DateTime::parse_from_rfc3339(&created_at_str)
+            .map(|d| d.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+        updated_at: DateTime::parse_from_rfc3339(&updated_at_str)
+            .map(|d| d.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+    })
+}
+
 /// Fetches a tracked node by ID, if it exists.
 pub fn get_tracked_node(conn: &Connection, id: &str) -> Result<Option<TrackedNode>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, node_type, value_kind, number_val, date_val, duration_secs,
-                source_doc_id, line_number, is_stale, stale_reason, created_at, updated_at
-         FROM tracked_nodes WHERE id = ?1",
-    )?;
-
+    let sql = format!("{SELECT_TRACKED_NODES_SQL} WHERE id = ?1");
+    let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
-        let node_type_str: String = row.get(1)?;
-        let value_kind_str: String = row.get(2)?;
-        let num_val: Option<f64> = row.get(3)?;
-        let date_val: Option<String> = row.get(4)?;
-        let dur_secs: Option<i64> = row.get(5)?;
-        let is_stale_int: i32 = row.get(8)?;
-
-        let value_kind = value_kind_str.parse().map_err(|error: String| {
-            value_conversion_error(2, Type::Text, format!("invalid value_kind: {error}"))
-        })?;
-        let value = match value_kind {
-            ValueKind::Number => {
-                if date_val.is_some() || dur_secs.is_some() {
-                    return Err(value_conversion_error(
-                        2,
-                        Type::Text,
-                        "number row has conflicting typed columns".into(),
-                    ));
-                }
-                let number = num_val.ok_or_else(|| {
-                    value_conversion_error(3, Type::Null, "number row is missing number_val".into())
-                })?;
-                if !number.is_finite() {
-                    return Err(value_conversion_error(
-                        3,
-                        Type::Real,
-                        "number_val is not finite".into(),
-                    ));
-                }
-                ValueData::Number(number)
-            }
-            ValueKind::Date => {
-                if num_val.is_some() || dur_secs.is_some() {
-                    return Err(value_conversion_error(
-                        2,
-                        Type::Text,
-                        "date row has conflicting typed columns".into(),
-                    ));
-                }
-                let dt_str = date_val.ok_or_else(|| {
-                    value_conversion_error(4, Type::Null, "date row is missing date_val".into())
-                })?;
-                let dt = DateTime::parse_from_rfc3339(&dt_str)
-                    .map_err(|error| {
-                        value_conversion_error(
-                            4,
-                            Type::Text,
-                            format!("date_val is invalid: {error}"),
-                        )
-                    })?
-                    .with_timezone(&Utc);
-                ValueData::Date(dt)
-            }
-            ValueKind::Duration => {
-                if num_val.is_some() || date_val.is_some() {
-                    return Err(value_conversion_error(
-                        2,
-                        Type::Text,
-                        "duration row has conflicting typed columns".into(),
-                    ));
-                }
-                let seconds = dur_secs.ok_or_else(|| {
-                    value_conversion_error(
-                        5,
-                        Type::Null,
-                        "duration row is missing duration_secs".into(),
-                    )
-                })?;
-                let duration = Duration::try_seconds(seconds).ok_or_else(|| {
-                    value_conversion_error(
-                        5,
-                        Type::Integer,
-                        format!("duration_secs '{seconds}' is out of range"),
-                    )
-                })?;
-                ValueData::Duration(duration)
-            }
-        };
-
-        let created_at_str: String = row.get(10)?;
-        let updated_at_str: String = row.get(11)?;
-
-        Ok(Some(TrackedNode {
-            id: row.get(0)?,
-            node_type: node_type_str.parse().unwrap_or(NodeType::Root),
-            value_kind,
-            value,
-            source_doc_id: row.get(6)?,
-            line_number: row.get(7)?,
-            is_stale: is_stale_int != 0,
-            stale_reason: row.get(9)?,
-            created_at: DateTime::parse_from_rfc3339(&created_at_str)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: DateTime::parse_from_rfc3339(&updated_at_str)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-        }))
+        Ok(Some(row_to_tracked_node(row)?))
     } else {
         Ok(None)
     }
@@ -633,6 +652,20 @@ fn get_source_document_by_dev_ino(
     }
 }
 
+/// Updates the line number of an existing tracked node in place.
+pub fn update_node_line_number(
+    conn: &Connection,
+    id: &str,
+    line_number: Option<u32>,
+) -> Result<()> {
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE tracked_nodes SET line_number = ?1, updated_at = ?2 WHERE id = ?3",
+        params![line_number, now, id],
+    )?;
+    Ok(())
+}
+
 /// Atomically records a batch of extracted values for a file into the store,
 /// performing invalidation of removed/modified root nodes and their downstream
 /// derivations if the file content hash has changed.
@@ -644,43 +677,109 @@ pub fn record_file_batch(
     extracted: &[crate::hooks::parser::ExtractedValue],
     agent_association: Option<&str>,
 ) -> Result<SourceDocument> {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     // 1. Check if the file already exists (by path or by `(dev, ino)` alias) and whether the hash is changing.
     // Skip for `<stdin>` so consecutive `rgt record --stdin` calls accumulate without invalidating prior stdin values.
-    if file_path != "<stdin>" {
-        let existing_doc = match get_source_document_by_path(conn, file_path)? {
+    let existing_doc = if file_path != "<stdin>" {
+        match get_source_document_by_path(conn, file_path)? {
             Some(doc) => Some(doc),
             None => match (meta.dev, meta.ino) {
                 (Some(dev), Some(ino)) => get_source_document_by_dev_ino(conn, dev, ino)?,
                 _ => None,
             },
-        };
-        if let Some(existing_doc) = existing_doc {
+        }
+    } else {
+        None
+    };
+
+    let effective_file_path = if let Some(ref doc) = existing_doc {
+        doc.file_path.as_str()
+    } else {
+        file_path
+    };
+
+    let mut matched_ext_node_ids: HashMap<usize, String> = HashMap::new();
+
+    if file_path != "<stdin>" {
+        if let Some(ref existing_doc) = existing_doc {
             if existing_doc.blake3_hash != hash {
-                // Content modified! Find root nodes that are no longer present.
+                // Content modified! Reconcile line shifts and find root nodes that are no longer present.
                 let existing_roots = list_nodes_by_source_doc(conn, existing_doc.id)?;
-                let mut incoming_ids: HashSet<String> = HashSet::new();
-                for ext in extracted {
-                    incoming_ids.insert(TrackedNode::generate_root_id(
-                        file_path,
+                let mut active_roots: Vec<TrackedNode> =
+                    existing_roots.into_iter().filter(|r| !r.is_stale).collect();
+                active_roots.sort_by(|a, b| {
+                    a.line_number
+                        .unwrap_or(0)
+                        .cmp(&b.line_number.unwrap_or(0))
+                        .then_with(|| a.id.cmp(&b.id))
+                });
+
+                let mut matched_root_ids: HashSet<String> = HashSet::new();
+
+                // Pass 1: exact same-line matches.
+                for (ext_idx, ext) in extracted.iter().enumerate() {
+                    let expected_id = TrackedNode::generate_root_id(
+                        effective_file_path,
                         ext.line_number,
                         ext.occurrence,
                         &ext.value,
-                    ));
-                    if existing_doc.file_path != file_path {
-                        incoming_ids.insert(TrackedNode::generate_root_id(
-                            &existing_doc.file_path,
-                            ext.line_number,
-                            ext.occurrence,
-                            &ext.value,
-                        ));
+                    );
+                    if let Some(pos) = active_roots.iter().position(|r| {
+                        !matched_root_ids.contains(&r.id)
+                            && r.id == expected_id
+                            && r.line_number == ext.line_number
+                            && r.value == ext.value
+                    }) {
+                        matched_ext_node_ids.insert(ext_idx, active_roots[pos].id.clone());
+                        matched_root_ids.insert(active_roots[pos].id.clone());
                     }
                 }
 
+                // Pass 2: pure line shifts for identical values.
+                let mut remaining_roots_by_val: HashMap<
+                    (crate::types::ValueKind, String),
+                    Vec<TrackedNode>,
+                > = HashMap::new();
+                for r in &active_roots {
+                    if !matched_root_ids.contains(&r.id) {
+                        remaining_roots_by_val
+                            .entry((r.value_kind.clone(), r.value.to_string_repr()))
+                            .or_default()
+                            .push(r.clone());
+                    }
+                }
+
+                let mut remaining_ext_by_val: HashMap<
+                    (crate::types::ValueKind, String),
+                    Vec<(usize, &crate::hooks::parser::ExtractedValue)>,
+                > = HashMap::new();
+                for (ext_idx, ext) in extracted.iter().enumerate() {
+                    if !matched_ext_node_ids.contains_key(&ext_idx) {
+                        remaining_ext_by_val
+                            .entry((ext.value.kind(), ext.value.to_string_repr()))
+                            .or_default()
+                            .push((ext_idx, ext));
+                    }
+                }
+
+                for (key, roots) in remaining_roots_by_val {
+                    if let Some(exts) = remaining_ext_by_val.get(&key) {
+                        let count = roots.len().min(exts.len());
+                        for i in 0..count {
+                            let root = &roots[i];
+                            let (ext_idx, ext) = exts[i];
+                            update_node_line_number(conn, &root.id, ext.line_number)?;
+                            matched_ext_node_ids.insert(ext_idx, root.id.clone());
+                            matched_root_ids.insert(root.id.clone());
+                        }
+                    }
+                }
+
+                // Stale invalidation: only active roots that could not be matched are marked stale.
                 let mut stale_root_ids = Vec::new();
-                for root in existing_roots {
-                    if !root.is_stale && !incoming_ids.contains(&root.id) {
+                for root in active_roots {
+                    if !matched_root_ids.contains(&root.id) {
                         mark_node_stale(conn, &root.id, "SOURCE_FILE_MODIFIED")?;
                         stale_root_ids.push(root.id);
                     }
@@ -688,6 +787,16 @@ pub fn record_file_batch(
 
                 if !stale_root_ids.is_empty() {
                     cascade_invalidation_downstream(conn, &stale_root_ids, "PARENT_NODE_STALE")?;
+                }
+            } else {
+                for (i, ext) in extracted.iter().enumerate() {
+                    let node_id = TrackedNode::generate_root_id(
+                        effective_file_path,
+                        ext.line_number,
+                        ext.occurrence,
+                        &ext.value,
+                    );
+                    matched_ext_node_ids.insert(i, node_id);
                 }
             }
         }
@@ -706,9 +815,20 @@ pub fn record_file_batch(
 
     // 3. Insert newly extracted root nodes
     let now = Utc::now();
-    for ext in extracted {
-        let node_id =
-            TrackedNode::generate_root_id(file_path, ext.line_number, ext.occurrence, &ext.value);
+    for (ext_idx, ext) in extracted.iter().enumerate() {
+        if let Some(retained_id) = matched_ext_node_ids.get(&ext_idx) {
+            if let Some(agent) = agent_association {
+                insert_capture_association(conn, retained_id, agent)?;
+            }
+            continue;
+        }
+
+        let node_id = TrackedNode::generate_root_id(
+            effective_file_path,
+            ext.line_number,
+            ext.occurrence,
+            &ext.value,
+        );
         let node = TrackedNode {
             id: node_id.clone(),
             node_type: NodeType::Root,
@@ -732,56 +852,25 @@ pub fn record_file_batch(
 
 /// Lists all nodes currently marked stale.
 pub fn list_stale_nodes(conn: &Connection) -> Result<Vec<TrackedNode>> {
-    let mut stmt = conn.prepare("SELECT id FROM tracked_nodes WHERE is_stale = 1")?;
-    let rows = stmt.query_map([], |row| {
-        let id: String = row.get(0)?;
-        Ok(id)
-    })?;
-
-    let mut nodes = Vec::new();
-    for id_res in rows {
-        let id = id_res?;
-        if let Some(node) = get_tracked_node(conn, &id)? {
-            nodes.push(node);
-        }
-    }
-    Ok(nodes)
+    let sql = format!("{SELECT_TRACKED_NODES_SQL} WHERE is_stale = 1");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], row_to_tracked_node)?;
+    rows.collect()
 }
 
 /// Lists all tracked nodes in the graph.
 pub fn list_all_nodes(conn: &Connection) -> Result<Vec<TrackedNode>> {
-    let mut stmt = conn.prepare("SELECT id FROM tracked_nodes")?;
-    let rows = stmt.query_map([], |row| {
-        let id: String = row.get(0)?;
-        Ok(id)
-    })?;
-
-    let mut nodes = Vec::new();
-    for id_res in rows {
-        let id = id_res?;
-        if let Some(node) = get_tracked_node(conn, &id)? {
-            nodes.push(node);
-        }
-    }
-    Ok(nodes)
+    let mut stmt = conn.prepare(SELECT_TRACKED_NODES_SQL)?;
+    let rows = stmt.query_map([], row_to_tracked_node)?;
+    rows.collect()
 }
 
 /// Lists all nodes that were read from a given source document.
 pub fn list_nodes_by_source_doc(conn: &Connection, source_doc_id: i64) -> Result<Vec<TrackedNode>> {
-    let mut stmt = conn.prepare("SELECT id FROM tracked_nodes WHERE source_doc_id = ?1")?;
-    let rows = stmt.query_map(params![source_doc_id], |row| {
-        let id: String = row.get(0)?;
-        Ok(id)
-    })?;
-
-    let mut nodes = Vec::new();
-    for id_res in rows {
-        let id = id_res?;
-        if let Some(node) = get_tracked_node(conn, &id)? {
-            nodes.push(node);
-        }
-    }
-    Ok(nodes)
+    let sql = format!("{SELECT_TRACKED_NODES_SQL} WHERE source_doc_id = ?1");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![source_doc_id], row_to_tracked_node)?;
+    rows.collect()
 }
 
 /// Reads a per-project setting (key/value), e.g. `number_format` (FR-003).

@@ -797,11 +797,24 @@ fn classify_derivation_group(
             }
         }
         ValueData::Number(_) if operation_type == "EXPRESSION" => {
-            let historical =
+            let canonical = TrackedNode::generate_derived_id_with_expr(
+                &parent_ids,
+                &operation_type,
+                &child.value,
+                expression.as_deref(),
+            );
+            let fallback_no_expr =
                 TrackedNode::generate_derived_id(&parent_ids, &operation_type, &child.value);
-            child.id == historical
-                || (child.id.len() == "node_drv_".len() + 12
-                    && child.id == historical[.."node_drv_".len() + 12])
+            let legacy =
+                TrackedNode::generate_legacy_derived_id(&parent_ids, &operation_type, &child.value);
+            let short_len = "node_drv_".len() + 12;
+            child.id == canonical
+                || child.id == fallback_no_expr
+                || child.id == legacy
+                || (child.id.len() == short_len
+                    && (canonical.starts_with(&child.id)
+                        || fallback_no_expr.starts_with(&child.id)
+                        || legacy.starts_with(&child.id)))
         }
         _ => false,
     };

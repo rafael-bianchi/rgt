@@ -157,12 +157,23 @@ fn only_eligible_read_paths_persist_capture_lineage_across_processes() {
 
     let db = DbStore::open_in_project(project.path()).unwrap();
     let captures = list_capture_associations(db.conn()).unwrap();
-    let eligible_agents = ["claude-code", "codex"];
+    let eligible_agents = [
+        "claude-code",
+        "codex",
+        "copilot",
+        "cursor",
+        "gemini",
+        "hermes",
+        "opencode",
+        "pi",
+        "vibe",
+    ];
     assert_eq!(captures.len(), eligible_agents.len());
-    let actual_agents = captures
+    let mut actual_agents = captures
         .iter()
         .map(|(_, agent)| agent.as_str())
         .collect::<Vec<_>>();
+    actual_agents.sort_unstable();
     let mut expected_agents = eligible_agents.to_vec();
     expected_agents.sort_unstable();
     assert_eq!(actual_agents, expected_agents);

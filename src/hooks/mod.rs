@@ -7,7 +7,7 @@ pub mod registration;
 
 use crate::detection::{compute_blake3_hash_from_bytes, get_metadata_snapshot};
 use crate::extract::pdf::{decode_pdf_base64, extract_pdf_text, render_additional_context};
-use crate::hooks::parser::{extract_values_from_content, normalize_agent_event, NumberFormat};
+use crate::hooks::parser::{extract_values_from_content, NumberFormat};
 use crate::store::queries::get_setting;
 use crate::store::DbStore;
 use std::fs;
@@ -49,7 +49,19 @@ pub fn handle_passive_hook_event(event_type: &str, agent: Option<&str>) -> io::R
         return Ok(());
     };
 
-    let capture = match normalize_agent_event(Some(&canonical_agent), &stdin_str) {
+    let default_phase = if event_type.eq_ignore_ascii_case("post") {
+        Some(crate::hooks::parser::CapturePhase::After)
+    } else if event_type.eq_ignore_ascii_case("pre") {
+        Some(crate::hooks::parser::CapturePhase::Before)
+    } else {
+        None
+    };
+
+    let capture = match crate::hooks::parser::normalize_agent_event_with_phase(
+        Some(&canonical_agent),
+        &stdin_str,
+        default_phase,
+    ) {
         Some(c) => c,
         None => return Ok(()), // Fail-open non-blocking
     };
@@ -64,14 +76,24 @@ pub fn handle_passive_hook_event(event_type: &str, agent: Option<&str>) -> io::R
         return handle_pdf_capture(event_type, Some(&canonical_agent), &capture, base64_str);
     }
 
-    let (Some(path), Some(content)) = (
+    let (Some(raw_path), Some(content)) = (
         capture.read_target.as_deref(),
         capture.completed_content.as_deref(),
     ) else {
         return Ok(()); // Nothing capturable
     };
 
-    let path_obj = Path::new(path);
+    let path_buf = if !Path::new(raw_path).is_absolute() {
+        if let Some(ref cwd) = capture.cwd {
+            Path::new(cwd).join(raw_path)
+        } else {
+            std::path::PathBuf::from(raw_path)
+        }
+    } else {
+        std::path::PathBuf::from(raw_path)
+    };
+    let path = path_buf.to_string_lossy().to_string();
+    let path_obj = Path::new(&path);
     let Some((meta, hash)) = matching_file_snapshot(path_obj, content.as_bytes()) else {
         return Ok(()); // Path-only, partial, or changed snapshots never create roots.
     };
@@ -80,7 +102,7 @@ pub fn handle_passive_hook_event(event_type: &str, agent: Option<&str>) -> io::R
         return Ok(());
     };
 
-    let db = match DbStore::open_in_project(&root) {
+    let mut db = match DbStore::open_in_project(&root) {
         Ok(d) => d,
         Err(_) => return Ok(()),
     };
@@ -112,12 +134,15 @@ pub fn handle_passive_hook_event(event_type: &str, agent: Option<&str>) -> io::R
     // FR-007: record the batch in a single transaction (all-or-nothing). On any
     // error, the transaction is dropped (rolled back) and the hook still fails
     // open — never blocks or partially records.
-    let tx = match db.conn().unchecked_transaction() {
+    let tx = match db
+        .conn_mut()
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+    {
         Ok(tx) => tx,
         Err(_) => return Ok(()),
     };
 
-    let stored_path = DbStore::normalize_path_for_project(path, &root);
+    let stored_path = DbStore::normalize_path_for_project(&path, &root);
     if crate::store::queries::record_file_batch(
         &tx,
         &stored_path,
@@ -263,7 +288,7 @@ fn record_pdf_values(
         return Ok(false);
     };
 
-    let db = match DbStore::open_in_project(&root) {
+    let mut db = match DbStore::open_in_project(&root) {
         Ok(d) => d,
         Err(_) => return Ok(false),
     };
@@ -275,7 +300,10 @@ fn record_pdf_values(
     if extraction.values.len() > VALUE_LIMIT {
         extraction.values.truncate(VALUE_LIMIT);
     }
-    let tx = match db.conn().unchecked_transaction() {
+    let tx = match db
+        .conn_mut()
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+    {
         Ok(tx) => tx,
         Err(_) => return Ok(false),
     };

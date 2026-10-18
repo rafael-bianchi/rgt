@@ -54,7 +54,11 @@ import {{ spawnSync }} from "node:child_process";
 
 export const extension = {{
   name: "rgt",
-  async setup() {{}},
+  async setup(pi) {{
+    if (pi && typeof pi.on === "function") {{
+      pi.on("tool_result", (event) => onToolCall(event));
+    }}
+  }},
 }};
 
 export async function onToolCall(input) {{
@@ -106,6 +110,12 @@ def _capture(args):
     )
 }
 
+/// Hermes plugin descriptor (`plugin.yaml`).
+pub fn hermes_plugin_yaml() -> String {
+    "name: rgt\nversion: 0.1.0\ndescription: Provenance tracking for numeric and date values\nentrypoint: plugin.py\n"
+        .to_string()
+}
+
 /// Escapes `s` for embedding inside a double-quoted JavaScript string literal.
 fn js_string_literal(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
@@ -116,7 +126,10 @@ fn py_string_literal(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// Cline / Roo Code rules-file section, appended to `.clinerules`.
+/// Roo Code rules-file section, appended to `.roo/rules/rgt.md`.
+pub const ROO_RULES: &str = CLINE_RULES;
+
+/// Cline rules-file section, appended to `.clinerules`.
 pub const CLINE_RULES: &str = "\n## RGT Integration\n\
     RGT tracks numeric and date provenance for AI coding agents.\n\
     \n\

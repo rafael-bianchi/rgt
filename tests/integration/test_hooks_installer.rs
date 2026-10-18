@@ -864,7 +864,7 @@ mod tests {
         detect_and_configure_hooks_with_config_and_exe(
             &home,
             &config,
-            true,
+            false,
             false,
             Some("hermes"),
             &executable,

@@ -166,7 +166,7 @@ ALL_13_AGENTS=(
     "claude-code:.claude/settings.json:CLAUDE.md"
     "cursor:.cursor/hooks.json:.cursor/rules/rgt.mdc"
     "codex:.codex/hooks.json:AGENTS.md"
-    "windsurf:.devin/hooks.json:.windsurfrules"
+    "windsurf:.windsurf/hooks.json:.windsurfrules"
     "copilot:.github/copilot-instructions.md"
     "gemini:GEMINI.md"
     "vibe:AGENTS.md"
@@ -211,7 +211,7 @@ done
 # 3.2 Test Aliases: claude -> claude-code, roo-code -> cline, kilo -> kilocode
 ALIAS_TESTS=(
     "claude:.claude/settings.json"
-    "roo-code:.clinerules"
+    "roo-code:.roo/rules/rgt.md"
     "kilo:.kilocode/rules/rgt-rules.md"
 )
 for spec in "${ALIAS_TESTS[@]}"; do
@@ -392,7 +392,30 @@ mkdir -p "$HOOK_DIR"
 
     # 5.4 Test PDF base64 envelope capture (spec 033)
     pdf_file="$HOOK_DIR/invoice.pdf"
-    printf '%%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n4 0 obj\n<< /Length 38 >>\nstream\nBT /F1 12 Tf 72 720 Td (Total 7777) Tj ET\nendstream\nendobj\n5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\nxref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000240 00000 n \n0000000329 00000 n \ntrailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n406\n%%%%EOF\n' > "$pdf_file"
+    python3 -c '
+body = "Total 7777"
+content_stream = f"BT /F1 12 Tf 72 720 Td ({body}) Tj ET"
+objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    f"<< /Length {len(content_stream)} >>\nstream\n{content_stream}\nendstream",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+]
+out = b"%PDF-1.4\n"
+offsets = []
+for i, obj in enumerate(objects):
+    offsets.append(len(out))
+    out += f"{i + 1} 0 obj\n{obj}\nendobj\n".encode("latin1")
+xref_pos = len(out)
+out += f"xref\n0 {len(objects) + 1}\n".encode("latin1")
+out += b"0000000000 65535 f \n"
+for off in offsets:
+    out += f"{off:010d} 00000 n \n".encode("latin1")
+out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n".encode("latin1")
+import sys
+sys.stdout.buffer.write(out)
+' > "$pdf_file"
     
     pdf_b64=$(base64 < "$pdf_file" | tr -d '\r\n')
     pdf_payload=$(jq -n \
@@ -400,16 +423,14 @@ mkdir -p "$HOOK_DIR"
         --arg b64 "$pdf_b64" \
         '{"event": "PostToolUse", "tool_name": "Read", "tool_input": {"file_path": $file}, "tool_response": {"type": "pdf", "file": {"filePath": $file, "base64": $b64, "originalSize": 500}}}')
 
-    pdf_hook_out=$(echo "$pdf_payload" | "$RGT_BIN" hook post --agent claude-code)
-    if [ $? -eq 0 ]; then
+    if echo "$pdf_payload" | "$RGT_BIN" hook post --agent claude-code; then
         if "$RGT_BIN" graph | grep -q "7777"; then
             success "PDF binary envelope decoded and captured value (7777)"
         else
-            info "PDF hook accepted envelope; text layer extraction verified"
-            success "PDF binary envelope handled cleanly"
+            fail "PDF hook failed to capture value (7777) from envelope"
         fi
     else
-        fail "PDF hook failed"
+        fail "PDF hook command failed with non-zero exit code"
     fi
 
     # 5.5 Fail-Open & Boundary Guarantees
@@ -425,8 +446,7 @@ mkdir -p "$HOOK_DIR"
     fi
 
     # Malformed JSON must exit 0 and never crash
-    echo "MALFORMED_NOT_JSON{{{" | "$RGT_BIN" hook post --agent claude-code
-    if [ $? -eq 0 ]; then
+    if echo "MALFORMED_NOT_JSON{{{" | "$RGT_BIN" hook post --agent claude-code; then
         success "Fail-open guarantee: malformed JSON event safely exits 0"
     else
         fail "Fail-open guarantee violated on malformed JSON"

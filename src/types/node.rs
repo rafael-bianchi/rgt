@@ -84,6 +84,35 @@ impl TrackedNode {
     }
 
     pub fn generate_derived_id(parents: &[String], op: &str, val: &ValueData) -> String {
+        Self::generate_derived_id_with_expr(parents, op, val, None)
+    }
+
+    pub fn generate_derived_id_with_expr(
+        parents: &[String],
+        op: &str,
+        val: &ValueData,
+        expression: Option<&str>,
+    ) -> String {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&(parents.len() as u64).to_le_bytes());
+        for p in parents {
+            hasher.update(&(p.len() as u64).to_le_bytes());
+            hasher.update(p.as_bytes());
+        }
+        hasher.update(&(op.len() as u64).to_le_bytes());
+        hasher.update(op.as_bytes());
+        if let Some(expr) = expression {
+            hasher.update(&(expr.len() as u64).to_le_bytes());
+            hasher.update(expr.as_bytes());
+        }
+        let val_repr = val.to_string_repr();
+        hasher.update(&(val_repr.len() as u64).to_le_bytes());
+        hasher.update(val_repr.as_bytes());
+        let hash_hex = hasher.finalize().to_hex();
+        format!("node_drv_{}", &hash_hex[..32])
+    }
+
+    pub fn generate_legacy_derived_id(parents: &[String], op: &str, val: &ValueData) -> String {
         let mut hasher = blake3::Hasher::new();
         for p in parents {
             hasher.update(p.as_bytes());

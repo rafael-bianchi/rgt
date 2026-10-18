@@ -258,7 +258,15 @@ fn main() {
             format,
             include_absolute_paths,
         } => {
-            if include_absolute_paths && !format.eq_ignore_ascii_case("ttl") {
+            let fmt_lower = format.to_lowercase();
+            if !matches!(fmt_lower.as_str(), "text" | "mermaid" | "dot" | "ttl") {
+                eprintln!(
+                    "error: unsupported graph format '{}' (supported: text, mermaid, dot, ttl)",
+                    format
+                );
+                std::process::exit(2);
+            }
+            if include_absolute_paths && fmt_lower != "ttl" {
                 eprintln!("error: --include-absolute-paths is only valid with --format ttl");
                 std::process::exit(2);
             }

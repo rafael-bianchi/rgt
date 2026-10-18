@@ -480,9 +480,11 @@ fn graph_cli_exports_turtle_and_preserves_existing_graph_formats() {
     assert!(String::from_utf8_lossy(&mermaid.stdout).starts_with("graph TD\n"));
     assert!(String::from_utf8_lossy(&dot.stdout).starts_with("digraph RGT {\n"));
     assert_eq!(
-        text.stdout, unknown.stdout,
-        "unknown format keeps the text fallback"
+        unknown.status.code(),
+        Some(2),
+        "unknown format must be rejected with exit code 2"
     );
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unsupported graph format"));
 }
 
 #[test]
