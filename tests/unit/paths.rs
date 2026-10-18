@@ -91,10 +91,10 @@ fn windsurf_paths_match_documented_active_locations() {
     );
     assert_eq!(
         windsurf_workspace_hooks_json(),
-        PathBuf::from(".devin/hooks.json")
+        PathBuf::from(".windsurf/hooks.json")
     );
     assert_eq!(
         windsurf_legacy_workspace_hooks_json(),
-        PathBuf::from(".windsurf/hooks.json")
+        PathBuf::from(".devin/hooks.json")
     );
 }

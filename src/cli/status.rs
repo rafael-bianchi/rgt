@@ -6,14 +6,39 @@ use serde_json::json;
 /// Executes `rgt status`: evaluates file changes, builds the invalidation cascade,
 /// and prints a summary of total/active/stale nodes (text or JSON).
 pub fn execute_status(stale_only: bool, json_output: bool) -> Result<(), String> {
-    let db = DbStore::open_in_project(".").map_err(|e| format!("Failed to open DB: {}", e))?;
+    let mut db = match DbStore::open_existing_in_project(".")
+        .map_err(|e| format!("Failed to open DB: {}", e))?
+    {
+        Some(db) => db,
+        None => {
+            let empty_nodes: Vec<crate::types::TrackedNode> = Vec::new();
+            let summary = build_status_summary(&empty_nodes, &empty_nodes);
+            if json_output {
+                let output = if stale_only {
+                    json!({
+                        "stale_nodes": summary["stale_nodes"],
+                        "stale_details": summary["stale_details"],
+                    })
+                } else {
+                    summary
+                };
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&output).unwrap_or_default()
+                );
+            } else {
+                print!("{}", format_status_text(&summary, &empty_nodes, stale_only));
+            }
+            return Ok(());
+        }
+    };
 
     let mut cascade = InvalidationCascade::build_from_db(&db)
         .map_err(|e| format!("Failed to build invalidation cascade: {}", e))?;
 
     let root = DbStore::find_project_root(".").unwrap_or_else(|| std::path::PathBuf::from("."));
     execute_status_with(
-        &db,
+        &mut db,
         &mut cascade,
         |c, d| c.evaluate_and_invalidate_all(d, root),
         stale_only,
@@ -25,9 +50,9 @@ pub fn execute_status(stale_only: bool, json_output: bool) -> Result<(), String>
 /// FR-004 propagation can be tested deterministically: a failing staleness check
 /// MUST surface as an error (never print "all fresh" after a discarded failure).
 fn execute_status_with(
-    db: &DbStore,
+    db: &mut DbStore,
     cascade: &mut InvalidationCascade,
-    invalidate: impl FnOnce(&mut InvalidationCascade, &DbStore) -> rusqlite::Result<usize>,
+    invalidate: impl FnOnce(&mut InvalidationCascade, &mut DbStore) -> rusqlite::Result<usize>,
     stale_only: bool,
     json_output: bool,
 ) -> Result<(), String> {
@@ -141,11 +166,11 @@ mod tests {
     /// print "all fresh" after a discarded failure.
     #[test]
     fn failing_invalidation_step_is_propagated_not_discarded() {
-        let db = DbStore::open_in_memory().unwrap();
+        let mut db = DbStore::open_in_memory().unwrap();
         let mut cascade = InvalidationCascade::build_from_db(&db).unwrap();
 
         let err = execute_status_with(
-            &db,
+            &mut db,
             &mut cascade,
             |_, _| {
                 Err(rusqlite::Error::SqliteFailure(
@@ -164,10 +189,10 @@ mod tests {
     /// FR-004: a succeeding step produces the normal report (no error).
     #[test]
     fn succeeding_invalidation_step_produces_report() {
-        let db = DbStore::open_in_memory().unwrap();
+        let mut db = DbStore::open_in_memory().unwrap();
         let mut cascade = InvalidationCascade::build_from_db(&db).unwrap();
         let result = execute_status_with(
-            &db,
+            &mut db,
             &mut cascade,
             |c, d| c.evaluate_and_invalidate_all(d, "."),
             false,

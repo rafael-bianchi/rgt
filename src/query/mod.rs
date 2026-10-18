@@ -34,8 +34,13 @@ pub fn query_provenance_with_unit(
     node_id: &str,
     unit: Option<DurationUnit>,
 ) -> Result<serde_json::Value, QueryError> {
-    let db = DbStore::open_in_project(".").map_err(|e| QueryError::Error(e.to_string()))?;
-    crate::graph::invalidation::sync_staleness(&db)
+    let mut db = match DbStore::open_existing_in_project(".")
+        .map_err(|e| QueryError::Error(e.to_string()))?
+    {
+        Some(db) => db,
+        None => return Err(QueryError::Error(format!("Node not found: {}", node_id))),
+    };
+    crate::graph::invalidation::sync_staleness(&mut db)
         .map_err(|e| QueryError::Error(format!("staleness check failed: {e}")))?;
     let conn = db.conn();
 
@@ -70,11 +75,10 @@ pub fn query_provenance_with_unit(
 
         let parent_edges =
             get_parent_edges(conn, &current_id).map_err(|e| QueryError::Error(e.to_string()))?;
-        let mut parent_ids: Vec<String> = parent_edges
+        let parent_ids: Vec<String> = parent_edges
             .iter()
             .map(|e| e.parent_node_id.clone())
             .collect();
-        parent_ids.sort();
 
         lineage_steps.push(json!({
             "node_id": current_node.id,

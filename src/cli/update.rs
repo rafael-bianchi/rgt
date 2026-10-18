@@ -132,6 +132,15 @@ pub fn execute_update_with_io(
 ) -> Result<(), UpdateError> {
     let current_version = env!("CARGO_PKG_VERSION");
 
+    if let Some(ref tag) = version {
+        let tag_clean = tag.trim_start_matches('v');
+        if version::parse_version(tag_clean).is_err() {
+            return Err(invalid_input(format!(
+                "invalid semantic version tag '{tag}'; expected version like 'v0.7.0' or '0.7.0'"
+            )));
+        }
+    }
+
     let release = match io.fetch_release(version.as_deref()) {
         Ok(r) => r,
         Err(e) => {

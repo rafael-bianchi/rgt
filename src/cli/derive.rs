@@ -85,6 +85,11 @@ pub fn execute_derive_core(
         }
         Some(parsed)
     } else {
+        if expression.is_some() {
+            return Err(VerifyDeriveError::InvalidInput(
+                "--expression is only valid for EXPRESSION operation".into(),
+            ));
+        }
         None
     };
 
@@ -111,6 +116,16 @@ pub fn execute_derive_core(
             parent_ids.len()
         )));
     }
+    if operation == "EXPRESSION" {
+        let mut seen = std::collections::HashSet::new();
+        for id in &parent_ids {
+            if !seen.insert(id) {
+                return Err(VerifyDeriveError::InvalidInput(format!(
+                    "duplicate parent ID '{id}' is not allowed in EXPRESSION derivations"
+                )));
+            }
+        }
+    }
     if matches!(operation, "DURATION_SUM" | "DURATION_AVG") {
         validate_duration_parent_ids(operation, &parent_ids)
             .map_err(VerifyDeriveError::InvalidInput)?;
@@ -119,7 +134,7 @@ pub fn execute_derive_core(
     let mut db = DbStore::open_in_project(".").map_err(|error| {
         VerifyDeriveError::Internal(format!("failed to open database: {error}"))
     })?;
-    crate::graph::invalidation::sync_staleness(&db)
+    crate::graph::invalidation::sync_staleness(&mut db)
         .map_err(|error| VerifyDeriveError::Internal(format!("staleness check failed: {error}")))?;
     let conn = db.conn_mut();
     let mut parent_values = Vec::with_capacity(parent_ids.len());
@@ -214,7 +229,8 @@ pub fn execute_derive_core(
         insert_or_reuse_duration(conn, &node, &parent_ids, operation, &legacy_candidates)
             .map_err(VerifyDeriveError::Internal)?
     } else {
-        let node_id = TrackedNode::generate_derived_id(&parent_ids, operation, &value);
+        let node_id =
+            TrackedNode::generate_derived_id_with_expr(&parent_ids, operation, &value, expression);
         let node = TrackedNode {
             id: node_id.clone(),
             node_type: NodeType::Derived,
@@ -227,10 +243,28 @@ pub fn execute_derive_core(
             created_at: now,
             updated_at: now,
         };
-        let tx = conn.unchecked_transaction().map_err(|error| {
-            VerifyDeriveError::Internal(format!("failed to begin derivation transaction: {error}"))
-        })?;
-        insert_tracked_node(&tx, &node).map_err(|error| {
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|error| {
+                VerifyDeriveError::Internal(format!(
+                    "failed to begin derivation transaction: {error}"
+                ))
+            })?;
+        let mut tx_parent_stale = false;
+        for parent_id in &parent_ids {
+            if let Ok(Some(p_node)) = get_tracked_node(&tx, parent_id) {
+                if p_node.is_stale {
+                    tx_parent_stale = true;
+                }
+            }
+        }
+        let final_stale = any_parent_stale || tx_parent_stale;
+        let final_stale_reason = final_stale.then(|| "PARENT_NODE_STALE".to_string());
+        let mut final_node = node;
+        final_node.is_stale = final_stale;
+        final_node.stale_reason = final_stale_reason;
+
+        insert_tracked_node(&tx, &final_node).map_err(|error| {
             VerifyDeriveError::Internal(format!("failed to insert derived node: {error}"))
         })?;
         for parent_id in &parent_ids {

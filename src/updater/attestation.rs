@@ -64,6 +64,9 @@ pub fn rgt_policy() -> Result<GithubPolicy, String> {
         .map_err(|e| format!("failed to build attestation policy: {e}"))
 }
 
+const MAX_JSON_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_BUNDLE_BYTES: u64 = 16 * 1024 * 1024;
+
 /// Fetches the snappy-compressed Sigstore bundle for an artifact digest.
 ///
 /// `subject_digest` is the `sha256:<hex>` form used by the GitHub API. Returns
@@ -87,31 +90,84 @@ pub fn fetch_bundle(subject_digest: &str, token: Option<&str>) -> Result<Vec<u8>
     let response = req
         .call()
         .map_err(|e| format!("failed to fetch attestation list: {e}"))?;
-    let body = response
-        .into_string()
+
+    let mut list_reader = response.into_reader().take(MAX_JSON_BYTES + 1);
+    let mut body = String::new();
+    use std::io::Read;
+    list_reader
+        .read_to_string(&mut body)
         .map_err(|e| format!("failed to read attestation list: {e}"))?;
+    if body.len() > MAX_JSON_BYTES as usize {
+        return Err("attestation list response exceeded 16 MiB limit".to_string());
+    }
+
     let parsed: AttestationsResponse = serde_json::from_str(&body)
         .map_err(|e| format!("failed to parse attestation list: {e}"))?;
-    let entry = parsed
-        .attestations
-        .into_iter()
-        .next()
-        .ok_or_else(|| "no attestation found for this release artifact".to_string())?;
 
-    let bundle_resp = agent
-        .get(&entry.bundle_url)
-        .set("User-Agent", "rgt-updater/1.0")
-        .call()
-        .map_err(|e| format!("failed to fetch attestation bundle: {e}"))?;
-    let mut reader = bundle_resp.into_reader();
-    let mut bytes = Vec::new();
-    std::io::Read::read_to_end(&mut reader, &mut bytes)
-        .map_err(|e| format!("failed to read attestation bundle: {e}"))?;
-    Ok(bytes)
+    if parsed.attestations.is_empty() {
+        return Err("no attestation found for this release artifact".to_string());
+    }
+
+    let digest_hex = subject_digest.trim_start_matches("sha256:");
+    let policy = rgt_policy().ok();
+    let mut last_err = String::new();
+
+    // FR-014: iterate across all .attestations entries until one matches rgt_policy()
+    for entry in &parsed.attestations {
+        let bundle_resp = match agent
+            .get(&entry.bundle_url)
+            .set("User-Agent", "rgt-updater/1.0")
+            .call()
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                last_err = format!("failed to fetch attestation bundle: {e}");
+                continue;
+            }
+        };
+
+        let mut reader = bundle_resp.into_reader().take(MAX_BUNDLE_BYTES + 1);
+        let mut bytes = Vec::new();
+        if let Err(e) = std::io::Read::read_to_end(&mut reader, &mut bytes) {
+            last_err = format!("failed to read attestation bundle: {e}");
+            continue;
+        }
+        if bytes.len() > MAX_BUNDLE_BYTES as usize {
+            last_err = "attestation bundle exceeded 16 MiB limit".to_string();
+            continue;
+        }
+
+        if let Some(ref pol) = policy {
+            if let Ok(decompressed) = decompress_bundle(&bytes) {
+                if verify_bundle(&decompressed, digest_hex, pol).is_ok() {
+                    return Ok(bytes);
+                } else {
+                    last_err = "attestation bundle verification failed against policy".to_string();
+                }
+            } else {
+                last_err = "attestation bundle decompression failed".to_string();
+            }
+        } else {
+            return Ok(bytes);
+        }
+    }
+
+    Err(if last_err.is_empty() {
+        "no attestation found for this release artifact".to_string()
+    } else {
+        last_err
+    })
 }
 
 /// Snappy-decompresses a `bundle_url` body into the Sigstore bundle JSON.
 pub fn decompress_bundle(compressed: &[u8]) -> Result<Vec<u8>, String> {
+    let uncompressed_len = snap::raw::decompress_len(compressed)
+        .map_err(|e| format!("failed to inspect attestation bundle length: {e}"))?;
+    if uncompressed_len > MAX_BUNDLE_BYTES as usize {
+        return Err(format!(
+            "decompressed attestation bundle size {uncompressed_len} exceeds 16 MiB limit"
+        ));
+    }
     let mut decoder = snap::raw::Decoder::new();
     decoder
         .decompress_vec(compressed)

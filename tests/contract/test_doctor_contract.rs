@@ -113,6 +113,12 @@ mod tests {
             rgt::hooks::glue::with_instruction("## RGT Integration\nUse `rgt record <file>`.\n"),
         )
         .unwrap();
+        std::fs::create_dir_all(".roo/rules").unwrap();
+        std::fs::write(
+            ".roo/rules/rgt.md",
+            rgt::hooks::glue::with_instruction("## RGT Integration\nUse `rgt record <file>`.\n"),
+        )
+        .unwrap();
         let registrations = rgt::hooks::registration::inspect_local_registrations(&home, &config);
         assert_eq!(registrations.len(), 15);
         let codex = registrations
@@ -647,6 +653,8 @@ mod tests {
         assert!(output.contains("antigravity: Unowned guidance"), "{output}");
 
         std::fs::write(".clinerules", "## RGT Integration\n").unwrap();
+        std::fs::create_dir_all(".roo/rules").unwrap();
+        std::fs::write(".roo/rules/rgt.md", "## RGT Integration\n").unwrap();
         let (code, output) = doctor();
         assert_eq!(code, 1);
         assert!(output.contains("cline: Incomplete guidance"), "{output}");
@@ -655,6 +663,11 @@ mod tests {
         std::fs::write(
             ".clinerules",
             "## RGT Integration\nUse `rgt record <file>`.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".roo/rules/rgt.md",
+            "## RGT Integration\nUse `rgt record <file>`.\n<!-- /RGT Integration -->\n",
         )
         .unwrap();
         let (code, output) = doctor();

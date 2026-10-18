@@ -3,6 +3,8 @@ name: CI
 on:
   pull_request:
     branches: [develop, main]
+  push:
+    branches: [develop, main]
 
 permissions:
   contents: read
@@ -188,3 +190,14 @@ jobs:
           echo "## Test Presence Check" >> $GITHUB_STEP_SUMMARY
           echo "Verifying new/changed Rust source files have corresponding tests." >> $GITHUB_STEP_SUMMARY
           scripts/check-test-presence.sh || { echo "::error::New or modified src/ files are missing test coverage — add tests before merging."; exit 1; }
+
+  repo-hygiene:
+    name: repo hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check README translations parity
+        run: scripts/check-readme-parity.sh
+      - name: Check version state consistency
+        run: scripts/check-version-state.sh

@@ -107,7 +107,9 @@ pub fn backup_before_write(path: &Path) -> io::Result<Option<PathBuf>> {
         return Ok(None);
     }
     let backup = PathBuf::from(format!("{}.rgt.bak", path.display()));
-    fs::copy(path, &backup)?;
+    if !backup.exists() {
+        fs::copy(path, &backup)?;
+    }
     Ok(Some(backup))
 }
 
@@ -126,6 +128,16 @@ pub fn backup_before_write(path: &Path) -> io::Result<Option<PathBuf>> {
 pub fn jsonc_merge_hook_entries(
     text: &str,
     desired: &serde_json::Value,
+) -> Result<(String, bool), ConfigEditError> {
+    jsonc_merge_hook_entries_with_force(text, desired, false)
+}
+
+/// Merges RGT hook entries into a JSONC document with an optional `force` flag
+/// that rewrites existing RGT hook entries even if their commands and shapes match.
+pub fn jsonc_merge_hook_entries_with_force(
+    text: &str,
+    desired: &serde_json::Value,
+    force: bool,
 ) -> Result<(String, bool), ConfigEditError> {
     let Some(desired_obj) = desired.as_object() else {
         return Err(ConfigEditError::msg(
@@ -156,7 +168,7 @@ pub fn jsonc_merge_hook_entries(
     };
 
     let mut edits = Vec::new();
-    merge_into(&root, desired_obj, source, &mut edits)?;
+    merge_into(&root, desired_obj, source, &mut edits, force)?;
 
     if edits.is_empty() {
         return Ok((text.to_string(), false));
@@ -312,6 +324,7 @@ fn merge_into(
     desired: &JsonMap<String, serde_json::Value>,
     text: &str,
     edits: &mut Vec<Edit>,
+    force: bool,
 ) -> Result<(), ConfigEditError> {
     let mut missing = Vec::new();
 
@@ -320,10 +333,10 @@ fn merge_into(
             None => missing.push((key.clone(), dv)),
             Some(prop) => match (&prop.value, dv) {
                 (Value::Object(child), serde_json::Value::Object(dc)) => {
-                    merge_into(child, dc, text, edits)?;
+                    merge_into(child, dc, text, edits, force)?;
                 }
                 (Value::Array(arr), serde_json::Value::Array(_)) => {
-                    merge_array(arr, dv, text, edits)?;
+                    merge_array(arr, dv, text, edits, force)?;
                 }
                 (Value::Object(_), _) | (Value::Array(_), _) => {
                     return Err(ConfigEditError::msg(format!(
@@ -342,17 +355,23 @@ fn merge_into(
     }
 
     if !missing.is_empty() {
-        // Reuse an existing trailing comma before `}`; otherwise separate with ", ".
-        let sep = if existing.properties.is_empty() {
-            ""
+        let (prefix, sep) = if existing.properties.is_empty() {
+            ("", "")
         } else {
             let last_prop_end = existing.properties.last().unwrap().end();
             let tail = &text[last_prop_end..existing.end() - 1];
-            if tail.trim_start().starts_with(',') {
+            let has_line_comment = tail
+                .lines()
+                .last()
+                .map(|l| l.contains("//"))
+                .unwrap_or(false);
+            let prefix = if has_line_comment { "\n" } else { "" };
+            let sep = if tail.trim_start().starts_with(',') {
                 ""
             } else {
                 ", "
-            }
+            };
+            (prefix, sep)
         };
         let body = missing
             .iter()
@@ -367,7 +386,7 @@ fn merge_into(
         edits.push(Edit {
             start: existing.end() - 1,
             end: existing.end() - 1,
-            replacement: format!("{sep}{body}"),
+            replacement: format!("{prefix}{sep}{body}"),
         });
     }
     Ok(())
@@ -380,6 +399,7 @@ fn merge_array(
     desired_arr: &serde_json::Value,
     text: &str,
     edits: &mut Vec<Edit>,
+    force: bool,
 ) -> Result<(), ConfigEditError> {
     let entries: Vec<serde_json::Value> = desired_arr.as_array().cloned().unwrap_or_default();
     if entries.is_empty() {
@@ -408,10 +428,16 @@ fn merge_array(
         } else {
             let last = existing.elements.last().unwrap();
             let tail = &text[last.end()..existing.end() - 1];
+            let has_line_comment = tail
+                .lines()
+                .last()
+                .map(|l| l.contains("//"))
+                .unwrap_or(false);
+            let prefix = if has_line_comment { "\n" } else { "" };
             let replacement = if tail.trim_start().starts_with(',') {
-                desired_serialized.clone()
+                format!("{prefix}{desired_serialized}")
             } else {
-                format!(", {desired_serialized}")
+                format!("{prefix}, {desired_serialized}")
             };
             edits.push(Edit {
                 start: existing.end() - 1,
@@ -430,9 +456,8 @@ fn merge_array(
         }
     }
 
-    // Idempotency: if the existing RGT entries already carry the same commands
-    // and matching object shape (nested hooks[].type=="command" vs flat command),
-    // leave the text untouched regardless of formatting/whitespace differences.
+    // Idempotency: if the existing RGT entries already carry the same commands,
+    // matching object shape, and matching matcher, leave the text untouched unless force is set.
     let mut existing_cmds: Vec<String> = rgt_idx
         .iter()
         .flat_map(|&i| element_commands(&existing.elements[i]))
@@ -462,7 +487,18 @@ fn merge_array(
                 false
             }
         });
-    if existing_cmds == desired_cmds && shapes_match {
+    let matchers_match = rgt_idx.len() == entries.len()
+        && rgt_idx.iter().zip(entries.iter()).all(|(&i, desired)| {
+            if let Value::Object(obj) = &existing.elements[i] {
+                let existing_matcher = obj.get_string("matcher").map(|m| m.value.as_ref());
+                let desired_matcher = desired.get("matcher").and_then(|m| m.as_str());
+                existing_matcher == desired_matcher
+            } else {
+                false
+            }
+        });
+
+    if !force && existing_cmds == desired_cmds && shapes_match && matchers_match {
         return Ok(());
     }
 

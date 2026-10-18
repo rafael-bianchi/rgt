@@ -6,16 +6,23 @@ use crate::store::DbStore;
 /// With `vacuum`, runs `VACUUM` after the delete commits to reclaim physical
 /// space (SQLite forbids `VACUUM` inside a transaction).
 pub fn execute_gc(vacuum: bool) -> Result<(), String> {
-    let mut db =
-        DbStore::open_in_project(".").map_err(|e| format!("failed to open database: {}", e))?;
+    let mut db = match DbStore::open_existing_in_project(".")
+        .map_err(|e| format!("failed to open database: {}", e))?
+    {
+        Some(db) => db,
+        None => {
+            println!("Removed 0 obsolete node(s)");
+            return Ok(());
+        }
+    };
 
     // Evaluate staleness across the project before GC so modified/deleted files are caught.
-    crate::graph::invalidation::sync_staleness(&db)
+    crate::graph::invalidation::sync_staleness(&mut db)
         .map_err(|e| format!("staleness check failed: {}", e))?;
 
     let tx = db
         .conn_mut()
-        .transaction()
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| format!("failed to begin transaction: {}", e))?;
 
     let mut total_removed = 0;
@@ -29,11 +36,12 @@ pub fn execute_gc(vacuum: bool) -> Result<(), String> {
     }
 
     // Clean up orphaned source_documents where no tracked_nodes reference them
-    let _ = tx.execute(
+    tx.execute(
         "DELETE FROM source_documents
          WHERE id NOT IN (SELECT DISTINCT source_doc_id FROM tracked_nodes WHERE source_doc_id IS NOT NULL)",
         [],
-    );
+    )
+    .map_err(|e| format!("failed to clean up orphaned source documents: {}", e))?;
 
     tx.commit()
         .map_err(|e| format!("failed to commit gc transaction: {}", e))?;

@@ -39,22 +39,27 @@ impl DbStore {
     /// checks in `evaluate_and_invalidate_all` locate the file on disk. When CWD equals
     /// `project_root` (or `file_path` is absolute or `<stdin>`), preserves `file_path` verbatim.
     pub fn normalize_path_for_project(file_path: &str, project_root: &Path) -> String {
-        if file_path == "<stdin>" || !Path::new(file_path).is_relative() {
+        if file_path == "<stdin>" {
             return file_path.to_string();
         }
-        let Ok(cwd_canon) = std::env::current_dir().and_then(std::fs::canonicalize) else {
-            return file_path.to_string();
+        let rebased = if !Path::new(file_path).is_relative() {
+            file_path.to_string()
+        } else {
+            let Ok(cwd_canon) = std::env::current_dir().and_then(std::fs::canonicalize) else {
+                return file_path.replace('\\', "/");
+            };
+            let Ok(root_canon) = std::fs::canonicalize(project_root) else {
+                return file_path.replace('\\', "/");
+            };
+            if cwd_canon == root_canon {
+                file_path.to_string()
+            } else if let Ok(sub_rel) = cwd_canon.strip_prefix(&root_canon) {
+                sub_rel.join(file_path).to_string_lossy().to_string()
+            } else {
+                file_path.to_string()
+            }
         };
-        let Ok(root_canon) = std::fs::canonicalize(project_root) else {
-            return file_path.to_string();
-        };
-        if cwd_canon == root_canon {
-            return file_path.to_string();
-        }
-        if let Ok(sub_rel) = cwd_canon.strip_prefix(&root_canon) {
-            return sub_rel.join(file_path).to_string_lossy().to_string();
-        }
-        file_path.to_string()
+        rebased.replace('\\', "/")
     }
 
     /// Initializes or opens `.rgt/store.db` directly in `project_root` without walking
@@ -71,6 +76,24 @@ impl DbStore {
         }
         let db_path = rgt_dir.join("store.db");
         Self::open_with_timeout(db_path, std::time::Duration::from_secs(5))
+    }
+
+    pub fn open_existing_in_project<P: AsRef<Path>>(project_root: P) -> Result<Option<Self>> {
+        Self::open_existing_in_project_with_timeout(project_root, std::time::Duration::from_secs(5))
+    }
+
+    pub fn open_existing_in_project_with_timeout<P: AsRef<Path>>(
+        project_root: P,
+        busy_timeout: std::time::Duration,
+    ) -> Result<Option<Self>> {
+        let Some(effective_root) = Self::find_project_root(&project_root) else {
+            return Ok(None);
+        };
+        let db_path = effective_root.join(".rgt").join("store.db");
+        if !db_path.is_file() {
+            return Ok(None);
+        }
+        Self::open_with_timeout(db_path, busy_timeout).map(Some)
     }
 
     pub fn open_in_project<P: AsRef<Path>>(project_root: P) -> Result<Self> {

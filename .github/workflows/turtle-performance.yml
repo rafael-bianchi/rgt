@@ -3,7 +3,8 @@ name: Turtle export performance
 on:
   push:
     branches:
-      - feat/prov-o-turtle-export-pr
+      - develop
+      - main
   workflow_dispatch:
 
 permissions:

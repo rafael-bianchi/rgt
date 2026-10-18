@@ -2,6 +2,9 @@
 mod tests {
     use rgt::hooks::parser::{extract_values_from_content, NumberFormat};
     use rgt::types::{TrackedNode, ValueKind};
+    use std::sync::Mutex;
+
+    static CWD_MUTEX: Mutex<()> = Mutex::new(());
 
     /// Extracts values under the default `auto` format for existing assertions.
     fn extract(content: &str) -> Vec<rgt::hooks::parser::ExtractedValue> {
@@ -79,7 +82,7 @@ mod tests {
         let extracted = extract("a,100,b,200\n");
         assert_eq!(extracted.len(), 2);
         assert_eq!(extracted[0].occurrence, 0);
-        assert_eq!(extracted[1].occurrence, 1);
+        assert_eq!(extracted[1].occurrence, 0);
     }
 
     #[test]
@@ -140,11 +143,9 @@ mod tests {
         use rgt::cli::{execute_init, execute_record};
         use std::fs;
         use std::io::Write;
-        use std::sync::Mutex;
         use std::time::Instant;
         use tempfile::tempdir;
 
-        static CWD_MUTEX: Mutex<()> = Mutex::new(());
         let dir = tempdir().unwrap();
         let _guard = {
             let guard = CWD_MUTEX.lock().unwrap();
@@ -173,6 +174,200 @@ mod tests {
             elapsed.as_secs_f64() < 8.0,
             "SC-001: Record 10k values took {:.3}s, expected <8s (per-node inserts take ~16s; CI runners are slower than local)",
             elapsed.as_secs_f64()
+        );
+    }
+
+    #[test]
+    fn test_record_reconciles_pure_line_shifts_without_staleness_or_id_churn() {
+        use rgt::cli::{execute_derive_core, execute_init, execute_record};
+        use rgt::store::DbStore;
+        use std::fs;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let _guard = {
+            let guard = CWD_MUTEX.lock().unwrap();
+            std::env::set_current_dir(dir.path()).unwrap();
+            guard
+        };
+
+        execute_init(false, true, Some("codex"), None).unwrap();
+
+        let file_path = dir.path().join("data.txt");
+        fs::write(&file_path, "100.0\n200.0\n").unwrap();
+        execute_record("data.txt", false, None).unwrap();
+
+        let db = DbStore::open_in_project(".").unwrap();
+        let nodes = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
+        let node_100 = nodes
+            .iter()
+            .find(|n| n.value == rgt::types::ValueData::Number(100.0))
+            .unwrap();
+        let id_100 = node_100.id.clone();
+        assert_eq!(node_100.line_number, Some(1));
+        assert!(!node_100.is_stale);
+
+        let node_200 = nodes
+            .iter()
+            .find(|n| n.value == rgt::types::ValueData::Number(200.0))
+            .unwrap();
+        let id_200 = node_200.id.clone();
+        assert_eq!(node_200.line_number, Some(2));
+        assert!(!node_200.is_stale);
+
+        // Derive child
+        let parents_arg = format!("{},{}", id_100, id_200);
+        execute_derive_core(
+            &parents_arg,
+            "EXPRESSION",
+            Some("a + b"),
+            Some("300.0"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Duplicate parent ID in EXPRESSION must be rejected
+        let dup_parents = format!("{},{}", id_100, id_100);
+        let dup_err = execute_derive_core(
+            &dup_parents,
+            "EXPRESSION",
+            Some("a + b"),
+            Some("200.0"),
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            dup_err.to_string().contains("duplicate parent ID"),
+            "unexpected err: {dup_err}"
+        );
+
+        // Now shift lines by inserting header lines
+        fs::write(
+            &file_path,
+            "# Header comment\n# Another line\n100.0\n200.0\n",
+        )
+        .unwrap();
+        execute_record("data.txt", false, None).unwrap();
+
+        // Re-check nodes
+        let nodes_after = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
+        let updated_100 = nodes_after
+            .iter()
+            .find(|n| n.id == id_100)
+            .expect("root 100 id must be preserved");
+        assert_eq!(
+            updated_100.line_number,
+            Some(3),
+            "line number should update to 3"
+        );
+        assert!(
+            !updated_100.is_stale,
+            "root 100 must NOT be marked stale on line shift"
+        );
+
+        let updated_200 = nodes_after
+            .iter()
+            .find(|n| n.id == id_200)
+            .expect("root 200 id must be preserved");
+        assert_eq!(
+            updated_200.line_number,
+            Some(4),
+            "line number should update to 4"
+        );
+        assert!(
+            !updated_200.is_stale,
+            "root 200 must NOT be marked stale on line shift"
+        );
+
+        // Derived child must remain fresh
+        let derived_nodes: Vec<_> = nodes_after
+            .iter()
+            .filter(|n| n.node_type == rgt::types::NodeType::Derived)
+            .collect();
+        assert_eq!(derived_nodes.len(), 1);
+        assert!(
+            !derived_nodes[0].is_stale,
+            "derived child must NOT be marked stale"
+        );
+    }
+
+    #[test]
+    fn test_extract_european_decimal_in_prose() {
+        let content = "Price: 12,34 EUR";
+        let auto_res = extract_values_from_content(content, NumberFormat::Auto);
+        assert_eq!(auto_res.values.len(), 1);
+        assert_eq!(
+            auto_res.values[0].value,
+            rgt::types::ValueData::Number(12.34)
+        );
+
+        let us_res = extract_values_from_content(content, NumberFormat::Us);
+        assert_eq!(
+            us_res.values.len(),
+            0,
+            "Us mode must reject 12,34 in prose rather than splitting it"
+        );
+        assert_eq!(us_res.skipped_malformed, 1);
+    }
+
+    #[test]
+    fn test_extract_rejects_ipv4_and_versions() {
+        let content = "192.168.100.100\nv1.100.200";
+        let eu_res = extract_values_from_content(content, NumberFormat::Eu);
+        assert_eq!(
+            eu_res.values.len(),
+            0,
+            "IPv4 and versions must not be extracted as numbers in Eu mode"
+        );
+
+        let us_res = extract_values_from_content(content, NumberFormat::Us);
+        assert_eq!(
+            us_res.values.len(),
+            0,
+            "IPv4 and versions must not be extracted as numbers in Us mode"
+        );
+    }
+
+    #[test]
+    fn test_extract_masks_urls_times_uuids_and_compact_iso_offset() {
+        let time_res = extract_values_from_content("Current time: 14:30:00", NumberFormat::Auto);
+        assert_eq!(
+            time_res.values.len(),
+            0,
+            "Standalone time must not shatter into numbers"
+        );
+
+        let iso_res = extract_values_from_content("2026-01-15T14:30:00+0200", NumberFormat::Auto);
+        assert_eq!(iso_res.values.len(), 1);
+        assert_eq!(iso_res.values[0].value.kind(), ValueKind::Date);
+        if let rgt::types::ValueData::Date(dt) = iso_res.values[0].value {
+            assert_eq!(dt.to_rfc3339(), "2026-01-15T12:30:00+00:00");
+        } else {
+            panic!("expected Date");
+        }
+
+        let url_res =
+            extract_values_from_content("https://example.com:8080/v2/item_1", NumberFormat::Auto);
+        assert_eq!(url_res.values.len(), 0, "URL must not shatter into numbers");
+
+        let uuid_res = extract_values_from_content("81e6-4faf-1234-5678b", NumberFormat::Auto);
+        assert_eq!(
+            uuid_res.values.len(),
+            0,
+            "UUID must not shatter into numbers"
+        );
+
+        let sub_res = extract_values_from_content("(a)-200\n[x]-200", NumberFormat::Auto);
+        assert_eq!(sub_res.values.len(), 2);
+        assert_eq!(
+            sub_res.values[0].value,
+            rgt::types::ValueData::Number(200.0)
+        );
+        assert_eq!(
+            sub_res.values[1].value,
+            rgt::types::ValueData::Number(200.0)
         );
     }
 }

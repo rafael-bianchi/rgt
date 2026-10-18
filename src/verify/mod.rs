@@ -6,7 +6,7 @@ pub use date_diff::compute_date_diff_seconds;
 pub use duration::{compute_duration_aggregate, validate_duration_parent_ids};
 pub use expression::{temporal_coercion_warning, validate_expression};
 
-use crate::types::{DurationClaim, DurationUnit, ValueData};
+use crate::types::{DurationClaim, DurationDisplay, DurationUnit, ValueData};
 use std::process;
 
 /// The only valid `--operation` values (case-sensitive).
@@ -85,6 +85,22 @@ pub fn verify_temporal_claim(
     }
 }
 
+/// Computes the duration in seconds for temporal operations without verifying against a claim.
+pub fn compute_temporal_seconds(parents: &[ValueData], operation: &str) -> Result<i64, String> {
+    if !valid_operation(operation) {
+        return Err(format!(
+            "unknown operation '{}' — valid operations: EXPRESSION, DATE_DIFF, DURATION_SUM, DURATION_AVG",
+            operation
+        ));
+    }
+    match operation {
+        "DATE_DIFF" => date_diff::compute_date_diff_seconds(parents),
+        "DURATION_SUM" | "DURATION_AVG" => duration::compute_duration_aggregate(operation, parents),
+        "EXPRESSION" => Err("compute_temporal_seconds does not support EXPRESSION".into()),
+        _ => unreachable!("valid_operation rejected above"),
+    }
+}
+
 pub mod error;
 pub use error::VerifyDeriveError;
 
@@ -95,9 +111,10 @@ pub fn run_verify_core(
     parents: &str,
     operation: &str,
     expression: Option<&str>,
-    result: &str,
+    result: Option<&str>,
     result_unit: Option<&str>,
-) -> Result<(), VerifyDeriveError> {
+    display_unit: Option<&str>,
+) -> Result<Option<DurationDisplay>, VerifyDeriveError> {
     if !valid_operation(operation) {
         return Err(VerifyDeriveError::InvalidInput(format!(
             "unknown operation '{}' — valid operations: EXPRESSION, DATE_DIFF, DURATION_SUM, DURATION_AVG",
@@ -108,6 +125,16 @@ pub fn run_verify_core(
         if result_unit.is_some() {
             return Err(VerifyDeriveError::InvalidInput(
                 "--result-unit is not valid for EXPRESSION".into(),
+            ));
+        }
+        if display_unit.is_some() {
+            return Err(VerifyDeriveError::InvalidInput(
+                "--unit is only valid for Duration operations".into(),
+            ));
+        }
+        if result.is_none() {
+            return Err(VerifyDeriveError::InvalidInput(
+                "result is required for EXPRESSION verification".into(),
             ));
         }
         if let Some(expr) = expression {
@@ -122,12 +149,20 @@ pub fn run_verify_core(
                 "Missing --expression for EXPRESSION operation".into(),
             ));
         }
+    } else if expression.is_some() {
+        return Err(VerifyDeriveError::InvalidInput(
+            "--expression is only valid for EXPRESSION operation".into(),
+        ));
     }
 
     let claim = if matches!(operation, "DATE_DIFF" | "DURATION_SUM" | "DURATION_AVG") {
-        let unit = DurationUnit::parse(result_unit.unwrap_or("seconds"))
-            .map_err(VerifyDeriveError::InvalidInput)?;
-        Some(DurationClaim::parse(result, unit).map_err(VerifyDeriveError::InvalidInput)?)
+        if let Some(token) = result {
+            let unit_name = result_unit.or(display_unit).unwrap_or("seconds");
+            let unit = DurationUnit::parse(unit_name).map_err(VerifyDeriveError::InvalidInput)?;
+            Some(DurationClaim::parse(token, unit).map_err(VerifyDeriveError::InvalidInput)?)
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -155,14 +190,33 @@ pub fn run_verify_core(
             parent_ids.len()
         )));
     }
+    if operation == "EXPRESSION" {
+        let mut seen = std::collections::HashSet::new();
+        for id in &parent_ids {
+            if !seen.insert(id) {
+                return Err(VerifyDeriveError::InvalidInput(format!(
+                    "duplicate parent ID '{id}' is not allowed in EXPRESSION derivations"
+                )));
+            }
+        }
+    }
     if matches!(operation, "DURATION_SUM" | "DURATION_AVG") {
         validate_duration_parent_ids(operation, &parent_ids)
             .map_err(VerifyDeriveError::InvalidInput)?;
     }
 
-    let db = crate::store::DbStore::open_in_project(".")
-        .map_err(|e| VerifyDeriveError::Internal(format!("failed to open database: {}", e)))?;
-    crate::graph::invalidation::sync_staleness(&db)
+    let mut db = match crate::store::DbStore::open_existing_in_project(".")
+        .map_err(|e| VerifyDeriveError::Internal(format!("failed to open database: {}", e)))?
+    {
+        Some(db) => db,
+        None => {
+            return Err(VerifyDeriveError::InvalidInput(format!(
+                "parent node '{}' not found in database",
+                parent_ids.first().unwrap_or(&"".to_string())
+            )));
+        }
+    };
+    crate::graph::invalidation::sync_staleness(&mut db)
         .map_err(|e| VerifyDeriveError::Internal(format!("staleness check failed: {}", e)))?;
     let conn = db.conn();
 
@@ -193,7 +247,12 @@ pub fn run_verify_core(
 
     match operation {
         "EXPRESSION" => {
-            let parsed = result.parse::<f64>().map_err(|_| {
+            let token = result.ok_or_else(|| {
+                VerifyDeriveError::InvalidInput(
+                    "result is required for EXPRESSION verification".into(),
+                )
+            })?;
+            let parsed = token.parse::<f64>().map_err(|_| {
                 VerifyDeriveError::InvalidInput("--result for EXPRESSION must be numeric".into())
             })?;
             if !parsed.is_finite() {
@@ -202,7 +261,7 @@ pub fn run_verify_core(
                 ));
             }
             verify(&parent_values, operation, expression, parsed)
-                .map(|_| ())
+                .map(|_| None)
                 .map_err(|err| {
                     if err.contains(": expected ") {
                         VerifyDeriveError::VerificationFailed(err)
@@ -211,12 +270,19 @@ pub fn run_verify_core(
                     }
                 })
         }
-        "DATE_DIFF" | "DURATION_SUM" | "DURATION_AVG" => verify_temporal_claim(
-            &parent_values,
-            operation,
-            claim.as_ref().expect("temporal claim parsed"),
-        )
-        .map_err(VerifyDeriveError::VerificationFailed),
+        "DATE_DIFF" | "DURATION_SUM" | "DURATION_AVG" => {
+            let seconds = compute_temporal_seconds(&parent_values, operation)
+                .map_err(VerifyDeriveError::VerificationFailed)?;
+            if let Some(claim) = &claim {
+                claim
+                    .verify(seconds)
+                    .map_err(VerifyDeriveError::VerificationFailed)?;
+            }
+            let display_unit_name = display_unit.or(result_unit).unwrap_or("seconds");
+            let unit =
+                DurationUnit::parse(display_unit_name).map_err(VerifyDeriveError::InvalidInput)?;
+            Ok(Some(unit.display(seconds)))
+        }
         _ => unreachable!("valid_operation rejected unsupported operation"),
     }
 }
@@ -228,7 +294,15 @@ pub fn run_verify(
     expression: Option<&str>,
     result: f64,
 ) -> Result<(), VerifyDeriveError> {
-    run_verify_core(parents, operation, expression, &result.to_string(), None)
+    run_verify_core(
+        parents,
+        operation,
+        expression,
+        Some(&result.to_string()),
+        None,
+        None,
+    )
+    .map(|_| ())
 }
 
 /// CLI entry point for `rgt verify`. Handles DB access, error formatting, and exit codes.
@@ -239,7 +313,14 @@ pub fn run_verify_cli(
     result: &str,
     result_unit: Option<&str>,
 ) {
-    if let Err(e) = run_verify_core(parents, operation, expression, result, result_unit) {
+    if let Err(e) = run_verify_core(
+        parents,
+        operation,
+        expression,
+        Some(result),
+        result_unit,
+        None,
+    ) {
         e.print_cli(operation, expression);
         process::exit(e.exit_code());
     }
@@ -304,5 +385,48 @@ mod tests {
         assert!(error.contains("verify_temporal_claim"), "{error}");
         let claim = DurationClaim::parse("10", DurationUnit::Days).unwrap();
         assert!(verify_temporal_claim(&parents, "DATE_DIFF", &claim).is_ok());
+    }
+
+    #[test]
+    fn compute_temporal_seconds_calculates_without_claim() {
+        let d1 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let d2 = Utc.with_ymd_and_hms(2026, 1, 11, 0, 0, 0).unwrap();
+        let parents = vec![ValueData::Date(d1), ValueData::Date(d2)];
+        let seconds = compute_temporal_seconds(&parents, "DATE_DIFF").unwrap();
+        assert_eq!(seconds, 864_000);
+    }
+
+    #[test]
+    fn run_verify_core_validation_errors() {
+        // Unknown operation
+        let err = run_verify_core("a,b", "BOGUS", None, None, None, None).unwrap_err();
+        assert!(matches!(err, VerifyDeriveError::InvalidInput(_)));
+
+        // EXPRESSION without result
+        let err =
+            run_verify_core("a,b", "EXPRESSION", Some("a + b"), None, None, None).unwrap_err();
+        assert!(
+            matches!(err, VerifyDeriveError::InvalidInput(msg) if msg.contains("result is required"))
+        );
+
+        // EXPRESSION with result_unit
+        let err = run_verify_core(
+            "a,b",
+            "EXPRESSION",
+            Some("a + b"),
+            Some("10"),
+            Some("seconds"),
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, VerifyDeriveError::InvalidInput(msg) if msg.contains("--result-unit is not valid"))
+        );
+
+        // DATE_DIFF with expression
+        let err = run_verify_core("a,b", "DATE_DIFF", Some("a + b"), None, None, None).unwrap_err();
+        assert!(
+            matches!(err, VerifyDeriveError::InvalidInput(msg) if msg.contains("--expression is only valid for EXPRESSION"))
+        );
     }
 }

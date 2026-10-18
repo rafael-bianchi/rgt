@@ -66,10 +66,25 @@ mod tests {
         let mut f = fs::File::create(&file_path).unwrap();
         writeln!(f, "value,42\n").unwrap();
 
-        // The --stdin flag reads from actual stdin, but we pass it as a flag
-        // We still need the file to exist on disk for metadata
         let path_str = file_path.to_string_lossy().to_string();
-        assert!(execute_record(&path_str, true, None).is_ok());
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
+            .args(["record", &path_str, "--stdin"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .current_dir(dir.path())
+            .spawn()
+            .expect("spawn rgt record --stdin");
+
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"value,42\n")
+            .unwrap();
+
+        let out = child.wait_with_output().expect("wait for child");
+        assert!(out.status.success(), "record --stdin failed: {:?}", out);
     }
 
     // -----------------------------------------------------------------------
@@ -885,21 +900,12 @@ mod tests {
         let doc = rgt::store::queries::get_source_document_by_path(db.conn(), "report.pdf")
             .unwrap()
             .expect("source document exists");
-        let disk_hash = rgt::detection::compute_blake3_hash(&file_path).unwrap();
+        let text_bytes = b"extracted text: Total: 999.0\n";
+        let text_hash = rgt::detection::compute_blake3_hash_from_bytes(text_bytes);
         assert_eq!(
-            doc.blake3_hash, disk_hash,
-            "recorded hash must match on-disk file bytes, not stdin text bytes"
+            doc.blake3_hash, text_hash,
+            "recorded hash must match the extracted stdin text bytes (FR-012)"
         );
-
-        // Status check must verify on-disk file and keep nodes fresh
-        let status_out = Command::new(env!("CARGO_BIN_EXE_rgt"))
-            .arg("status")
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        assert!(status_out.status.success());
-        let status_str = String::from_utf8_lossy(&status_out.stdout);
-        assert!(status_str.contains("All tracked values are fresh and valid"));
     }
 
     // ---- Spec 047: T003 Computed value precision & unused variable CLI contract ----

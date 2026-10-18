@@ -45,3 +45,4 @@ specs/*
 !specs/049-agent-installation-and-doctor-hardening/
 !specs/050-cli-export-updater-hardening/
 !specs/051-comprehensive-review-remediation/
+!specs/052-adversarial-review-remediation/

@@ -61,7 +61,7 @@ pub fn execute_record(
         );
     }
     if outcome.skipped_malformed > 0 {
-        println!(
+        eprintln!(
             "Warning: {} number(s) in {} could not be parsed as {} and were skipped (not split into bogus nodes)",
             outcome.skipped_malformed,
             file,
@@ -93,46 +93,83 @@ pub fn execute_record_with_content(
 ) -> Result<RecordOutcome, String> {
     let path_obj = Path::new(file);
     let (content, hash, meta) = if let Some(text) = explicit_content {
-        if file != "<stdin>" && path_obj.exists() {
-            let meta = get_metadata_snapshot(path_obj)
-                .map_err(|e| format!("failed to get metadata: {}", e))?;
-            let disk_bytes =
-                fs::read(path_obj).map_err(|e| format!("failed to read file: {}", e))?;
-            let hash = compute_blake3_hash_from_bytes(&disk_bytes);
-            (text, hash, meta)
+        let text_bytes = text.as_bytes();
+        let hash = compute_blake3_hash_from_bytes(text_bytes);
+        let meta = if file != "<stdin>" && path_obj.exists() {
+            if let Ok(disk_bytes) = fs::read(path_obj) {
+                if disk_bytes == text_bytes {
+                    get_metadata_snapshot(path_obj).unwrap_or(crate::detection::MetadataSnapshot {
+                        mtime_nsec: 0,
+                        file_size: text_bytes.len() as u64,
+                        dev: None,
+                        ino: None,
+                    })
+                } else {
+                    crate::detection::MetadataSnapshot {
+                        mtime_nsec: 0,
+                        file_size: text_bytes.len() as u64,
+                        dev: None,
+                        ino: None,
+                    }
+                }
+            } else {
+                crate::detection::MetadataSnapshot {
+                    mtime_nsec: 0,
+                    file_size: text_bytes.len() as u64,
+                    dev: None,
+                    ino: None,
+                }
+            }
         } else {
-            let hash = compute_blake3_hash_from_bytes(text.as_bytes());
-            let meta = crate::detection::MetadataSnapshot {
+            crate::detection::MetadataSnapshot {
                 mtime_nsec: 0,
-                file_size: text.len() as u64,
+                file_size: text_bytes.len() as u64,
                 dev: None,
                 ino: None,
-            };
-            (text, hash, meta)
-        }
+            }
+        };
+        (text, hash, meta)
     } else if stdin {
         let mut buf = Vec::new();
         io::stdin()
             .read_to_end(&mut buf)
             .map_err(|e| format!("failed to read stdin: {}", e))?;
         let content = read_utf8_content(file, buf.clone())?;
-        if file != "<stdin>" && path_obj.exists() {
-            let meta = get_metadata_snapshot(path_obj)
-                .map_err(|e| format!("failed to get metadata: {}", e))?;
-            let disk_bytes =
-                fs::read(path_obj).map_err(|e| format!("failed to read file: {}", e))?;
-            let hash = compute_blake3_hash_from_bytes(&disk_bytes);
-            (content, hash, meta)
+        let hash = compute_blake3_hash_from_bytes(&buf);
+        let meta = if file != "<stdin>" && path_obj.exists() {
+            if let Ok(disk_bytes) = fs::read(path_obj) {
+                if disk_bytes == buf {
+                    get_metadata_snapshot(path_obj).unwrap_or(crate::detection::MetadataSnapshot {
+                        mtime_nsec: 0,
+                        file_size: buf.len() as u64,
+                        dev: None,
+                        ino: None,
+                    })
+                } else {
+                    crate::detection::MetadataSnapshot {
+                        mtime_nsec: 0,
+                        file_size: buf.len() as u64,
+                        dev: None,
+                        ino: None,
+                    }
+                }
+            } else {
+                crate::detection::MetadataSnapshot {
+                    mtime_nsec: 0,
+                    file_size: buf.len() as u64,
+                    dev: None,
+                    ino: None,
+                }
+            }
         } else {
-            let hash = compute_blake3_hash_from_bytes(&buf);
-            let meta = crate::detection::MetadataSnapshot {
+            crate::detection::MetadataSnapshot {
                 mtime_nsec: 0,
-                file_size: content.len() as u64,
+                file_size: buf.len() as u64,
                 dev: None,
                 ino: None,
-            };
-            (content, hash, meta)
-        }
+            }
+        };
+        (content, hash, meta)
     } else {
         if !path_obj.exists() {
             return Err(format!("file not found: {}", file));
@@ -168,7 +205,7 @@ pub fn execute_record_with_content(
     let count = extracted.len();
 
     let tx = conn
-        .transaction()
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| format!("failed to begin transaction: {}", e))?;
 
     crate::store::queries::record_file_batch(&tx, &stored_path, &meta, &hash, &extracted, None)
