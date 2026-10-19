@@ -390,4 +390,26 @@ fn verify_and_derive_reject_expression_for_temporal_operations() {
     assert_eq!(derive_duration.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&derive_duration.stderr);
     assert!(stderr.contains("--expression is only valid for EXPRESSION operation"));
+
+    // 4. division by zero in EXPRESSION evaluates to non-finite and exits 1 (VerificationFailed, not 2)
+    let div_zero = run(
+        &directory,
+        &[
+            "verify",
+            "--parents",
+            "number-a,number-b",
+            "--operation",
+            "EXPRESSION",
+            "--expression",
+            "a / (b - b)",
+            "--result",
+            "0",
+        ],
+    );
+    assert_eq!(
+        div_zero.status.code(),
+        Some(1),
+        "division by zero is a verification failure (exit 1), stderr: {}",
+        String::from_utf8_lossy(&div_zero.stderr)
+    );
 }

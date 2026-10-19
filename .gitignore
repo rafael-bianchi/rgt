@@ -46,3 +46,4 @@ specs/*
 !specs/050-cli-export-updater-hardening/
 !specs/051-comprehensive-review-remediation/
 !specs/052-adversarial-review-remediation/
+!specs/053-critical-review-remediation/

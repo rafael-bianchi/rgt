@@ -938,4 +938,75 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    #[test]
+    fn incomplete_project_guidance_is_not_masked_by_user_guidance_and_gemini_migration_removes_duplicate_hooks_toml(
+    ) {
+        use rgt::hooks::registration::{GuidanceHealth, RegistrationHealth, RegistrationScope};
+
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        let home = dir.path().join("home");
+        let config_dir = dir.path().join("config");
+        let executable = std::env::current_exe().unwrap();
+        DbStore::open_in_project(dir.path()).unwrap();
+
+        // 1. Install gemini in project scope (creates .gemini/hooks.toml)
+        rgt::hooks::installer::detect_and_configure_hooks_with_config_and_exe(
+            &home,
+            &config_dir,
+            false,
+            false,
+            Some("gemini"),
+            &executable,
+        )
+        .unwrap();
+        assert!(dir.path().join(".gemini/hooks.toml").exists());
+
+        // 2. Gemini CLI creates .gemini/settings.json, and user re-runs rgt init --agent gemini
+        std::fs::write(".gemini/settings.json", "{}\n").unwrap();
+        rgt::hooks::installer::detect_and_configure_hooks_with_config_and_exe(
+            &home,
+            &config_dir,
+            false,
+            true,
+            Some("gemini"),
+            &executable,
+        )
+        .unwrap();
+
+        let gemini_reg = rgt::hooks::registration::inspect_local_registrations(&home, &config_dir)
+            .into_iter()
+            .find(|r| r.surface_id == "gemini")
+            .unwrap();
+        assert_eq!(
+            gemini_reg.health,
+            RegistrationHealth::Active,
+            "gemini must be Active (not Ambiguous) after migrating from hooks.toml to settings.json"
+        );
+
+        // 3. Install user-level cursor guidance (Usable), then corrupt project-level cursor guidance (Incomplete)
+        rgt::hooks::installer::detect_and_configure_hooks_with_config_and_exe(
+            &home,
+            &config_dir,
+            true,
+            true,
+            Some("cursor"),
+            &executable,
+        )
+        .unwrap();
+        std::fs::create_dir_all(".cursor/rules").unwrap();
+        std::fs::write(".cursor/rules/rgt.mdc", "## RGT Integration\n").unwrap();
+
+        let cursor_guidance = rgt::hooks::registration::inspect_local_guidance(&home, &config_dir)
+            .into_iter()
+            .find(|g| g.surface_id == "cursor")
+            .unwrap();
+        assert_eq!(cursor_guidance.scope, RegistrationScope::Project);
+        assert_eq!(
+            cursor_guidance.health,
+            GuidanceHealth::Incomplete,
+            "broken project guidance must not be masked by usable user guidance"
+        );
+    }
 }

@@ -123,8 +123,8 @@ impl InvalidationCascade {
                 let mtime_nsec: i64 = row.get(2)?;
                 let file_size: u64 = row.get(3)?;
                 let hash: String = row.get(4)?;
-                let dev: Option<u64> = row.get(5)?;
-                let ino: Option<u64> = row.get(6)?;
+                let dev: Option<u64> = row.get::<_, Option<i64>>(5)?.map(|v| v as u64);
+                let ino: Option<u64> = row.get::<_, Option<i64>>(6)?.map(|v| v as u64);
                 let last_checked: String = row.get(7)?;
                 Ok((
                     id,
@@ -229,27 +229,24 @@ impl InvalidationCascade {
                     )?;
                 }
                 crate::detection::DetectionResult::Changed {
-                    new_mtime_nsec,
-                    new_file_size,
-                    new_blake3_hash,
-                    new_dev,
-                    new_ino,
+                    new_mtime_nsec: _,
+                    new_file_size: _,
+                    new_blake3_hash: _,
+                    new_dev: _,
+                    new_ino: _,
                 } => {
-                    upsert_source_document(
-                        &tx,
-                        &rel_path,
-                        new_mtime_nsec,
-                        new_file_size,
-                        &new_blake3_hash,
-                        new_dev,
-                        new_ino,
-                    )?;
-                    self.invalidate_file_conn(
-                        &tx,
-                        &rel_path,
-                        "SOURCE_FILE_MODIFIED",
-                        &mut invalidated,
-                    )?;
+                    // Verify inside the IMMEDIATE transaction that no concurrent `record_file_batch`
+                    // has already updated `source_documents.blake3_hash` since our pre-lock snapshot.
+                    if let Some(current_doc) = get_source_document_by_path(&tx, &rel_path)? {
+                        if current_doc.blake3_hash == stored_hash {
+                            self.invalidate_file_conn(
+                                &tx,
+                                &rel_path,
+                                "SOURCE_FILE_MODIFIED",
+                                &mut invalidated,
+                            )?;
+                        }
+                    }
                 }
                 crate::detection::DetectionResult::FileNotFound => {
                     self.invalidate_file_conn(&tx, &rel_path, "FILE_DELETED", &mut invalidated)?;

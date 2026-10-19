@@ -174,7 +174,7 @@ fn print_client_notice(agent: &str) {
             "    Review and approve the project hook in Codex `/hooks`; an on-disk file does not prove it is trusted or loaded."
         ),
         "windsurf" => println!(
-            "    Windsurf hooks are disabled in Restricted Mode. RGT uses active `.devin/hooks.json` when it defines hooks; `.windsurf/hooks.json` is the legacy fallback."
+            "    Windsurf hooks are disabled in Restricted Mode. RGT uses `.windsurf/hooks.json` by default; `.devin/hooks.json` is supported as a legacy fallback."
         ),
         _ => {}
     }

@@ -69,7 +69,7 @@ jobs:
       - name: Measure coverage
         run: |
           cargo llvm-cov --all --lcov --output-path coverage.lcov
-          cargo llvm-cov --all --summary-only 2>&1 | tee coverage-summary.txt
+          cargo llvm-cov report --summary-only 2>&1 | tee coverage-summary.txt
           RATE=$(grep -oE '[0-9.]+%' coverage-summary.txt | head -1)
           echo "## Coverage" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

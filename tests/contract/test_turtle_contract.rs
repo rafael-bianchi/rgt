@@ -582,3 +582,24 @@ fn over_limit_cli_export_fails_before_writing_any_stdout() {
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("at most 10000 recorded values"));
 }
+
+#[test]
+fn graph_cli_turtle_in_uninitialized_directory_succeeds_without_creating_store() {
+    let project = tempdir().unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
+        .args(["graph", "--format", "ttl"])
+        .current_dir(project.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "rgt graph --format ttl must succeed in uninitialized dir: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !project.path().join(".rgt").exists(),
+        ".rgt directory must not be created"
+    );
+    let triples = parse(std::str::from_utf8(&output.stdout).unwrap());
+    assert!(triples.is_empty());
+}

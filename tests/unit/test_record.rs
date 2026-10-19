@@ -370,4 +370,230 @@ mod tests {
             rgt::types::ValueData::Number(200.0)
         );
     }
+
+    #[test]
+    fn test_record_after_sync_staleness_unstales_and_inserts_new_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("data.csv");
+        let content_v1 = "a,100\n";
+        std::fs::write(&file_path, content_v1).unwrap();
+
+        let mut db = rgt::store::DbStore::open_in_project(dir.path()).unwrap();
+        let meta_v1 = rgt::detection::get_metadata_snapshot(&file_path).unwrap();
+        let hash_v1 = rgt::detection::compute_blake3_hash_from_bytes(content_v1.as_bytes());
+        let ext_v1 = extract_values_from_content(content_v1, NumberFormat::Auto).values;
+        rgt::store::queries::record_file_batch(
+            db.conn(),
+            "data.csv",
+            &meta_v1,
+            &hash_v1,
+            &ext_v1,
+            None,
+        )
+        .unwrap();
+
+        let nodes_v1 = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
+        assert_eq!(nodes_v1.len(), 1);
+        let orig_id = nodes_v1[0].id.clone();
+
+        // Modify file on disk and trigger staleness check (as `rgt status` does)
+        let content_v2 = "a,100\nb,200\n";
+        std::fs::write(&file_path, content_v2).unwrap();
+        let mut cascade =
+            rgt::graph::invalidation::InvalidationCascade::build_from_db(&db).unwrap();
+        cascade
+            .evaluate_and_invalidate_all(&mut db, dir.path())
+            .unwrap();
+
+        let stale_after_sync = rgt::store::queries::list_stale_nodes(db.conn()).unwrap();
+        assert_eq!(stale_after_sync.len(), 1);
+
+        // Re-record modified file (including capture_association to verify FK safety)
+        let meta_v2 = rgt::detection::get_metadata_snapshot(&file_path).unwrap();
+        let hash_v2 = rgt::detection::compute_blake3_hash_from_bytes(content_v2.as_bytes());
+        let ext_v2 = extract_values_from_content(content_v2, NumberFormat::Auto).values;
+        rgt::store::queries::record_file_batch(
+            db.conn(),
+            "data.csv",
+            &meta_v2,
+            &hash_v2,
+            &ext_v2,
+            Some("claude-code"),
+        )
+        .expect("re-recording after sync_staleness must not fail FK constraint");
+
+        let nodes_v2 = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
+        assert_eq!(
+            nodes_v2.len(),
+            2,
+            "new value 200 must be inserted after sync_staleness"
+        );
+        for n in &nodes_v2 {
+            assert!(
+                !n.is_stale,
+                "node {} must be un-staled after re-recording",
+                n.id
+            );
+        }
+        assert!(nodes_v2.iter().any(|n| n.id == orig_id));
+    }
+
+    #[test]
+    fn test_record_shifted_node_not_clobbered_when_same_value_inserted_at_old_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = rgt::store::DbStore::open_in_project(dir.path()).unwrap();
+        let meta = rgt::detection::MetadataSnapshot {
+            mtime_nsec: 1,
+            file_size: 10,
+            dev: None,
+            ino: None,
+        };
+
+        // Step 1: 100 at line 1
+        let c1 = "val,100\n";
+        let ext1 = extract_values_from_content(c1, NumberFormat::Auto).values;
+        rgt::store::queries::record_file_batch(db.conn(), "shift.csv", &meta, "h1", &ext1, None)
+            .unwrap();
+        let n1 = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
+        assert_eq!(n1.len(), 1);
+        let shifted_id = n1[0].id.clone();
+
+        // Step 2: 100 shifts to line 5
+        let c2 = "#a\n#b\n#c\n#d\nval,100\n";
+        let ext2 = extract_values_from_content(c2, NumberFormat::Auto).values;
+        rgt::store::queries::record_file_batch(db.conn(), "shift.csv", &meta, "h2", &ext2, None)
+            .unwrap();
+        let n2 = rgt::store::queries::list_all_nodes(db.conn()).unwrap();
+        assert_eq!(n2.len(), 1);
+        assert_eq!(n2[0].id, shifted_id);
+        assert_eq!(n2[0].line_number, Some(5));
+
+        // Step 3: A new 100 is added at line 1 while the existing 100 stays at line 5
+        let c3 = "val,100\n#b\n#c\n#d\nval,100\n";
+        let ext3 = extract_values_from_content(c3, NumberFormat::Auto).values;
+        rgt::store::queries::record_file_batch(db.conn(), "shift.csv", &meta, "h3", &ext3, None)
+            .unwrap();
+        let n3: Vec<_> = rgt::store::queries::list_all_nodes(db.conn())
+            .unwrap()
+            .into_iter()
+            .filter(|n| !n.is_stale)
+            .collect();
+        assert_eq!(
+            n3.len(),
+            2,
+            "both line 1 and line 5 nodes must exist distinctly without ON CONFLICT clobbering"
+        );
+        let line5_node = n3.iter().find(|n| n.line_number == Some(5)).unwrap();
+        assert_eq!(
+            line5_node.id, shifted_id,
+            "shifted node at line 5 must retain its identity"
+        );
+        let mut lines: Vec<_> = n3.iter().map(|n| n.line_number).collect();
+        lines.sort();
+        assert_eq!(lines, vec![Some(1), Some(5)]);
+    }
+
+    #[test]
+    fn test_dev_ino_high_bit_u64_conversion_does_not_fail() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("high_ino.csv");
+        let content = "x,42\n";
+        std::fs::write(&file_path, content).unwrap();
+
+        let mut db = rgt::store::DbStore::open_in_project(dir.path()).unwrap();
+        let meta = rgt::detection::MetadataSnapshot {
+            mtime_nsec: 123,
+            file_size: content.len() as u64,
+            dev: Some(u64::MAX),
+            ino: Some(u64::MAX - 7),
+        };
+        let hash = rgt::detection::compute_blake3_hash_from_bytes(content.as_bytes());
+        let ext = extract_values_from_content(content, NumberFormat::Auto).values;
+        rgt::store::queries::record_file_batch(db.conn(), "high_ino.csv", &meta, &hash, &ext, None)
+            .unwrap();
+
+        // Re-recording under an alias path with the same high-bit (dev, ino) exercises get_source_document_by_dev_ino
+        rgt::store::queries::record_file_batch(
+            db.conn(),
+            "alias_high_ino.csv",
+            &meta,
+            &hash,
+            &ext,
+            None,
+        )
+        .expect("record_file_batch with high-bit dev/ino must handle u64 > i64::MAX");
+
+        let mut cascade =
+            rgt::graph::invalidation::InvalidationCascade::build_from_db(&db).unwrap();
+        cascade
+            .evaluate_and_invalidate_all(&mut db, dir.path())
+            .expect("evaluate_and_invalidate_all must handle u64 > i64::MAX");
+    }
+
+    #[test]
+    fn test_auto_format_not_poisoned_by_csv_or_arrays_with_spaces() {
+        let content = "Alice Smith,10,20\nItems: [1,2]\nPrice,12.50\nRatio,1.234\n";
+        let res = extract_values_from_content(content, NumberFormat::Auto);
+        let nums: Vec<f64> = res
+            .values
+            .into_iter()
+            .filter_map(|v| match v.value {
+                rgt::types::ValueData::Number(n) => Some(n),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            nums,
+            vec![10.0, 20.0, 1.0, 2.0, 12.5, 1.234],
+            "US file with spaced CSV/array must not switch to Eu and corrupt 12.50 or 1.234"
+        );
+    }
+
+    #[test]
+    fn test_csv_rows_with_spaces_or_two_columns_split_cleanly_in_us_mode() {
+        let content = "a,b\n10,200\n10,200,300,John Doe\nJohn Doe,12,34\n";
+        let res = extract_values_from_content(content, NumberFormat::Us);
+        let nums: Vec<f64> = res
+            .values
+            .into_iter()
+            .filter_map(|v| match v.value {
+                rgt::types::ValueData::Number(n) => Some(n),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            nums,
+            vec![10.0, 200.0, 10.0, 200.0, 300.0, 12.0, 34.0],
+            "CSV cells must split cleanly rather than merging into 10200/10200300 or failing as Malformed"
+        );
+    }
+
+    #[test]
+    fn test_unwrap_colon_does_not_corrupt_yaml_keys_and_handles_accounting_percent() {
+        let yaml = "2024: 100\n2025: 200\n";
+        let (unwrapped, mapping) = rgt::hooks::parser::unwrap_line_numbered_content(yaml);
+        assert_eq!(
+            unwrapped, yaml,
+            "YAML keys starting with year: must not be stripped as line numbers"
+        );
+        assert_eq!(mapping, vec![1, 2]);
+
+        let res = extract_values_from_content(
+            "Margin: (12.5%) and step (1) had (500)\n",
+            NumberFormat::Us,
+        );
+        let nums: Vec<f64> = res
+            .values
+            .into_iter()
+            .filter_map(|v| match v.value {
+                rgt::types::ValueData::Number(n) => Some(n),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            nums,
+            vec![-12.5, 1.0, -500.0],
+            "(12.5%) and (500) are negative, while prose 'step (1)' stays positive"
+        );
+    }
 }

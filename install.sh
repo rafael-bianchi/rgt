@@ -184,6 +184,10 @@ fetch_release() {
     if [ "${VERSION}" = "latest" ]; then
         api_url="https://api.github.com/repos/${RGT_GITHUB_REPO}/releases/latest"
     else
+        case "${VERSION}" in
+            v*) ;;
+            *) VERSION="v${VERSION}" ;;
+        esac
         api_url="https://api.github.com/repos/${RGT_GITHUB_REPO}/releases/tags/${VERSION}"
     fi
 

@@ -368,7 +368,13 @@ pub fn inspect_local_guidance(home: &Path, config_dir: &Path) -> Vec<GuidanceIns
                     artifact_path: path,
                     health,
                 };
-                if health == GuidanceHealth::Usable {
+                if health == GuidanceHealth::Usable
+                    || (scope == RegistrationScope::Project
+                        && matches!(
+                            health,
+                            GuidanceHealth::Incomplete | GuidanceHealth::UsableUnmanaged
+                        ))
+                {
                     return Some(inspection);
                 }
                 if fallback.as_ref().is_none_or(|prior: &GuidanceInspection| {

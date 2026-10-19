@@ -148,17 +148,12 @@ impl RgtMcpServer {
         }): Parameters<VerifyParams>,
     ) -> Result<Json<serde_json::Value>, String> {
         let result_str = parse_mcp_result(result)?;
-        let claim_unit = if result_str.is_some() {
-            result_unit.as_deref().or(unit.as_deref())
-        } else {
-            result_unit.as_deref()
-        };
         let display = crate::verify::run_verify_core(
             &parents,
             &operation,
             expression.as_deref(),
             result_str.as_deref(),
-            claim_unit,
+            result_unit.as_deref(),
             unit.as_deref(),
         )
         .map_err(|e| e.to_string())?;
@@ -185,18 +180,13 @@ impl RgtMcpServer {
         }): Parameters<DeriveParams>,
     ) -> Result<Json<serde_json::Value>, String> {
         let result_str = parse_mcp_result(result)?;
-        let claim_unit = if result_str.is_some() {
-            result_unit.as_deref().or(unit.as_deref())
-        } else {
-            result_unit.as_deref()
-        };
 
         let (node_id, display) = crate::cli::derive::execute_derive_core(
             &parents,
             &operation,
             expression.as_deref(),
             result_str.as_deref(),
-            claim_unit,
+            result_unit.as_deref(),
             unit.as_deref(),
         )
         .map_err(|e| e.to_string())?;

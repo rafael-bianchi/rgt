@@ -189,7 +189,7 @@ pub fn execute_derive_core(
             let expected = expression_result.expect("validated above");
             let computed_val =
                 verify(&parent_values, operation, expression, expected).map_err(|err| {
-                    if err.contains(": expected ") {
+                    if err.contains(": expected ") || err.contains("evaluated to non-finite") {
                         VerifyDeriveError::VerificationFailed(err)
                     } else {
                         VerifyDeriveError::InvalidInput(err)

@@ -985,3 +985,72 @@ fn millions_and_billions_stay_single_numbers_while_csv_and_uuids_behave_cleanly(
         "hex strings, UUIDs, and ordinals must not leak bogus numbers"
     );
 }
+
+#[test]
+fn cursor_and_copilot_reject_write_and_edit_tools_and_copilot_tool_args_extracts_content() {
+    for agent in ["cursor", "copilot"] {
+        for tool in ["Write", "Edit", "MultiEdit", "create_file", "write_file"] {
+            let payload = format!(
+                r#"{{"event":"PostToolUse","tool_name":"{tool}","tool_input":{{"file_path":"a.csv"}},"tool_response":{{"content":"x,10\n"}}}}"#
+            );
+            let cap = normalize_agent_event(Some(agent), &payload).unwrap();
+            assert!(
+                !cap.is_value_capture_eligible(),
+                "{agent} must not capture values from {tool} tool calls"
+            );
+        }
+    }
+
+    let copilot_with_output = r#"{
+        "event": "PostToolUse",
+        "tool": "Read",
+        "toolArgs": "{\"path\": \"/abs/report.csv\"}",
+        "output": "metric,55\n"
+    }"#;
+    let cap = normalize_agent_event(Some("copilot"), copilot_with_output).unwrap();
+    assert_eq!(cap.path.as_deref(), Some("/abs/report.csv"));
+    assert_eq!(cap.content.as_deref(), Some("metric,55\n"));
+}
+
+#[test]
+fn extract_path_from_command_handles_shell_arrays_newlines_python_sed_redirection_and_grep() {
+    for shell_bin in ["/bin/zsh", "/bin/bash", "zsh"] {
+        let payload = format!(
+            r#"{{"event":"PostToolUse","tool_name":"local_shell","tool_input":{{"cmd":["{shell_bin}","-lc","cat /tmp/data.csv"]}},"tool_response":{{"output":"amount,42\n"}}}}"#
+        );
+        let cap = normalize_agent_event(Some("codex"), &payload).unwrap();
+        assert_eq!(
+            cap.read_target.as_deref(),
+            Some("/tmp/data.csv"),
+            "shell array with {shell_bin} must unwrap -lc"
+        );
+    }
+
+    assert_eq!(
+        extract_path_from_command("cd subdir\ncat data.csv"),
+        Some("subdir/data.csv".to_string())
+    );
+    assert_eq!(
+        extract_path_from_command("python3 -c 'print(1)' && cat data.csv"),
+        Some("data.csv".to_string())
+    );
+    assert_eq!(
+        extract_path_from_command("sed -i 's/1/2/' data.csv"),
+        None,
+        "sed -i is an in-place edit, not a read"
+    );
+    assert_eq!(
+        extract_path_from_command("sed -n '1,5p' data.csv > out.csv"),
+        Some("data.csv".to_string()),
+        "redirection target must not be picked as read source"
+    );
+    assert_eq!(
+        extract_path_from_command("git status | grep foo"),
+        None,
+        "piped grep with only a pattern and no file argument must return None"
+    );
+    assert_eq!(
+        extract_path_from_command("grep foo data.csv"),
+        Some("data.csv".to_string())
+    );
+}

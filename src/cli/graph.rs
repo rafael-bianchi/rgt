@@ -27,7 +27,11 @@ pub fn execute_graph_with_options(
     deadline: Instant,
 ) -> Result<(), String> {
     let output = render_graph_string(format, include_absolute_paths, deadline)?;
-    print!("{output}");
+    if format.eq_ignore_ascii_case("ttl") {
+        turtle::write_bytes_before_deadline(std::io::stdout(), output.into_bytes(), deadline)?;
+    } else {
+        print!("{output}");
+    }
     Ok(())
 }
 
@@ -159,7 +163,7 @@ fn render_turtle_string(include_absolute_paths: bool, deadline: Instant) -> Resu
         Some(db) => db,
         None => {
             let empty_snapshot = turtle::ExportSnapshot {
-                project_id: "uninitialized".to_string(),
+                project_id: "00000000000000000000000000000000".to_string(),
                 nodes: Vec::new(),
                 sources: Vec::new(),
                 edges: Vec::new(),
