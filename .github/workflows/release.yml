@@ -86,7 +86,7 @@ jobs:
       - name: Build release binary
         env:
           TARGET: ${{ matrix.target }}
-        run: cargo build --release --locked --target "$TARGET"
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Strip binary (Unix)
         if: matrix.suffix == 'tar.gz'
