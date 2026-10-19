@@ -160,20 +160,24 @@ fi
 section "Suite 2: Agent Configuration & rgt init"
 
 TEST_ROOT="$(mktemp -d /tmp/rgt-harness-test.XXXXXX)"
+export HOME="$TEST_ROOT/isolated-home"
+export XDG_CONFIG_HOME="$TEST_ROOT/isolated-config"
+mkdir -p "$HOME" "$XDG_CONFIG_HOME"
 
-# 3.1 Test all 13 canonical agents individually
+# 3.1 Test all 14 canonical agents individually
 ALL_13_AGENTS=(
     "claude-code:.claude/settings.json:CLAUDE.md"
     "cursor:.cursor/hooks.json:.cursor/rules/rgt.mdc"
     "codex:.codex/hooks.json:AGENTS.md"
     "windsurf:.windsurf/hooks.json:.windsurfrules"
-    "copilot:.github/copilot-instructions.md"
+    "copilot:.github/copilot-instructions.md:.vscode/settings.json"
     "gemini:GEMINI.md"
     "vibe:AGENTS.md"
     "opencode:.opencode/plugins/rgt.ts"
     "pi:.pi/extensions/rgt.ts:.pi/APPEND_SYSTEM.md"
-    "hermes:.hermes/plugins/rgt/plugin.py:.hermes/config.toml"
+    "hermes:.hermes/plugins/rgt/plugin.py:.hermes/plugins/rgt/plugin.yaml:.hermes/config.toml:AGENTS.md"
     "cline:.clinerules"
+    "roo-code:.roo/rules/rgt.md"
     "antigravity:.agents/rules/antigravity-rgt-rules.md"
     "kilocode:.kilocode/rules/rgt-rules.md"
 )
@@ -208,10 +212,10 @@ for spec in "${ALL_13_AGENTS[@]}"; do
     fi
 done
 
-# 3.2 Test Aliases: claude -> claude-code, roo-code -> cline, kilo -> kilocode
+# 3.2 Test Aliases: claude -> claude-code, roo -> roo-code, kilo -> kilocode
 ALIAS_TESTS=(
     "claude:.claude/settings.json"
-    "roo-code:.roo/rules/rgt.md"
+    "roo:.roo/rules/rgt.md"
     "kilo:.kilocode/rules/rgt-rules.md"
 )
 for spec in "${ALIAS_TESTS[@]}"; do
@@ -269,17 +273,13 @@ mkdir -p "$DOCTOR_DIR"
     "$RGT_BIN" init --agent opencode >/dev/null
     "$RGT_BIN" init --agent codex >/dev/null
     
-    DOCTOR_OUT="$("$RGT_BIN" doctor 2>&1)"
-    DOCTOR_CODE=$?
+    DOCTOR_CODE=0
+    DOCTOR_OUT="$("$RGT_BIN" doctor 2>&1)" || DOCTOR_CODE=$?
     
     if [ "$DOCTOR_CODE" -eq 0 ]; then
         success "rgt doctor reports healthy exit code 0 for initialized project"
     else
-        if echo "$DOCTOR_OUT" | grep -q "Store initialized"; then
-            success "rgt doctor detected active registrations"
-        else
-            fail "rgt doctor failed on initialized project: $DOCTOR_OUT"
-        fi
+        fail "rgt doctor failed on initialized project (exit $DOCTOR_CODE): $DOCTOR_OUT"
     fi
 )
 

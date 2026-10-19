@@ -974,10 +974,11 @@ fn write_gemini(
                 }]
             }
         });
-        (
-            settings_file.clone(),
-            ensure_json_hooks(&settings_file, &desired, force)?,
-        )
+        let outcome = ensure_json_hooks(&settings_file, &desired, force)?;
+        if hooks_file.exists() {
+            let _ = fs::remove_file(&hooks_file);
+        }
+        (settings_file.clone(), outcome)
     } else {
         (
             hooks_file.clone(),
@@ -1021,6 +1022,9 @@ fn write_vibe(
     };
     let hooks_file = crate::hooks::paths::vibe_hooks_toml(home, global);
     let target_file = if config_file.exists() {
+        if hooks_file.exists() {
+            let _ = fs::remove_file(&hooks_file);
+        }
         config_file
     } else {
         hooks_file

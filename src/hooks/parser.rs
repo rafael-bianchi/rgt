@@ -183,6 +183,16 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
         other => other,
     };
     let number_regex = Regex::new(r"(\d[\d.,]*(?:[eE][+-]?\d+)?)").unwrap();
+    let has_csv_text_row = content.lines().any(|l| {
+        l.contains(',')
+            && !l.contains(", ")
+            && l.split(',').any(|cell| {
+                !cell.is_empty()
+                    && cell
+                        .chars()
+                        .all(|c| c.is_ascii_alphabetic() || c == '_' || c == ' ')
+            })
+    });
 
     for (idx, line) in content.lines().enumerate() {
         let line_num = (idx + 1) as u32;
@@ -329,6 +339,9 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
                 // Attach sign, currency context, accounting parens
                 let (prefix, suffix, has_currency, preceded_by_comma) =
                     candidate_context_ext(line, m.start(), end);
+                let followed_by_comma = line[end..].starts_with(',');
+                let enclosed_in_brackets =
+                    line[..m.start()].ends_with('[') && line[end..].starts_with(']');
                 let has_line_whitespace = line.contains([' ', '\t']);
 
                 match process_candidate(
@@ -337,8 +350,9 @@ pub fn extract_values_from_content(content: &str, format: NumberFormat) -> Extra
                     &suffix,
                     format,
                     has_currency,
-                    preceded_by_comma,
+                    preceded_by_comma || followed_by_comma || enclosed_in_brackets,
                     has_line_whitespace,
+                    has_csv_text_row,
                 ) {
                     ProcessedCandidate::Single(num) => {
                         let val = ValueData::Number(num);
@@ -461,14 +475,16 @@ fn is_ipv4(s: &str) -> bool {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_candidate(
     prefix: &str,
     raw: &str,
     suffix: &str,
     format: NumberFormat,
     has_currency: bool,
-    preceded_by_comma: bool,
+    is_csv_or_list_cell: bool,
     has_line_whitespace: bool,
+    has_csv_text_row: bool,
 ) -> ProcessedCandidate {
     if is_ipv4(raw) {
         return ProcessedCandidate::Malformed;
@@ -509,7 +525,7 @@ fn process_candidate(
         // US format convention: '.' is decimal, ',' is thousands
         if raw.contains(',') {
             // Check if valid single thousands-grouped number
-            let is_valid_single = if preceded_by_comma {
+            let is_valid_single = if is_csv_or_list_cell {
                 false
             } else if let Some(dot_idx) = raw.find('.') {
                 let after_dot = &raw[dot_idx + 1..];
@@ -541,7 +557,7 @@ fn process_candidate(
                 if !valid_thousands_shape {
                     false
                 } else if groups.len() == 2 {
-                    true
+                    !(has_csv_text_row && !has_line_whitespace && !has_currency)
                 } else {
                     // For 3+ groups without a decimal point (e.g. `1,000,000` vs `10,200,300`),
                     // treat as a single number when in currency/prose context or when any
@@ -563,9 +579,10 @@ fn process_candidate(
                 return ProcessedCandidate::Malformed;
             }
 
-            // In prose or currency context, non-thousands single comma tokens (e.g. 12,34 in Price: 12,34 EUR)
-            // must be rejected as Malformed rather than split into CSV items.
-            if (has_line_whitespace || has_currency) && !raw.contains('.') {
+            // In prose or currency context (not a CSV cell or bracketed list), non-thousands
+            // single comma tokens (e.g. 12,34 in Price: 12,34 EUR) must be rejected as Malformed
+            // rather than split into CSV items.
+            if !is_csv_or_list_cell && (has_line_whitespace || has_currency) && !raw.contains('.') {
                 let pieces: Vec<&str> = raw.split(',').collect();
                 if pieces.len() == 2 && pieces[1].len() != 3 {
                     return ProcessedCandidate::Malformed;
@@ -705,7 +722,7 @@ fn candidate_context_ext(line: &str, start: usize, end: usize) -> (String, Strin
         .map(|c| matches!(c, ')' | ']'))
         .unwrap_or(false);
 
-    let prefix = if preceded_by_word || preceded_by_expr_closer {
+    let mut prefix: String = if preceded_by_word || preceded_by_expr_closer {
         String::new()
     } else if sign_chars.iter().filter(|&&c| c == '-').count() >= 2 {
         // Multi-hyphen CLI flags (e.g. --100 or ---50) are not unary minus
@@ -715,8 +732,28 @@ fn candidate_context_ext(line: &str, start: usize, end: usize) -> (String, Strin
     };
 
     let mut suffix = String::new();
-    if end < line.len() && prefix.contains('(') && line[end..].starts_with(')') {
+    let after = &line[end..];
+    if prefix.contains('(')
+        && (after.starts_with(')') || after.strip_prefix('%').is_some_and(|s| s.starts_with(')')))
+    {
         suffix.push(')');
+    }
+
+    // Prose single-digit parenthetical enumerations like `step (1)` or `item (2)` are not negative
+    let raw_slice = &line[start..end];
+    if prefix == "("
+        && suffix == ")"
+        && !has_currency
+        && raw_slice.len() == 1
+        && after.starts_with(')')
+        && rem
+            .trim_end()
+            .chars()
+            .last()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+    {
+        prefix.clear();
+        suffix.clear();
     }
 
     (prefix, suffix, has_currency, preceded_by_comma)
@@ -797,6 +834,7 @@ fn resolve_auto_format(content: &str) -> NumberFormat {
     let candidate_regex = Regex::new(r"\d[\d.,]*\d").unwrap();
     let us_fmt_regex = Regex::new(r"^\d{1,3}(,\d{3})+\.\d+$").unwrap();
     let eu_fmt_regex = Regex::new(r"^\d{1,3}(\.\d{3})+,\d+$").unwrap();
+    let mut has_unambiguous_us_decimal = false;
 
     for line in content.lines() {
         for cap in candidate_regex.captures_iter(line) {
@@ -809,15 +847,27 @@ fn resolve_auto_format(content: &str) -> NumberFormat {
                     if eu_fmt_regex.is_match(s) {
                         return NumberFormat::Eu;
                     }
+                } else if s.contains('.') && !s.contains(',') {
+                    let parts: Vec<&str> = s.split('.').collect();
+                    if parts.len() == 2 && parts[1].len() != 3 {
+                        has_unambiguous_us_decimal = true;
+                    }
                 }
             }
         }
     }
 
+    if has_unambiguous_us_decimal {
+        return NumberFormat::Us;
+    }
+
     // Secondary scan: detect unambiguous European decimal tokens in prose (e.g. `Price: 12,34 EUR`)
-    let eu_decimal_regex = Regex::new(r"\b\d+,\d{1,2}\b").unwrap();
+    let eu_decimal_regex = Regex::new(r"(?:^|[\s$€£¥])(\d+,\d{1,2})(?:$|[\s%€$£¥a-zA-Z])").unwrap();
     for line in content.lines() {
-        if line.contains([' ', '\t']) && eu_decimal_regex.is_match(line) {
+        if line.contains([' ', '\t'])
+            && line.matches(',').count() == 1
+            && eu_decimal_regex.is_match(line)
+        {
             return NumberFormat::Eu;
         }
     }
@@ -835,17 +885,20 @@ pub fn unwrap_line_numbered_content(raw: &str) -> (String, Vec<u32>) {
     }
 
     let mut lines_to_process: Vec<&str> = raw.lines().collect();
+    let mut has_xml_wrapper = false;
     if lines_to_process.first().is_some_and(|l| {
         let t = l.trim();
         (t.starts_with("<file") || t == "<content>") && t.ends_with('>')
     }) {
         lines_to_process.remove(0);
+        has_xml_wrapper = true;
     }
     if lines_to_process.last().is_some_and(|l| {
         let t = l.trim();
         t == "</file>" || t == "</content>"
     }) {
         lines_to_process.pop();
+        has_xml_wrapper = true;
     }
 
     let claude_re = Regex::new(r"^\s*(\d+)[\u{2192}\t](.*)$").unwrap();
@@ -855,10 +908,12 @@ pub fn unwrap_line_numbered_content(raw: &str) -> (String, Vec<u32>) {
     let mut is_claude = true;
     let mut is_pipe = true;
     let mut is_colon = true;
-    let mut non_empty_count = 0;
+    let mut non_empty_count = 0usize;
+    let mut expected_colon_num: Option<u32> = None;
 
     for line in &lines_to_process {
         if line.trim().is_empty() {
+            expected_colon_num = expected_colon_num.map(|n| n + 1);
             continue;
         }
         non_empty_count += 1;
@@ -868,7 +923,28 @@ pub fn unwrap_line_numbered_content(raw: &str) -> (String, Vec<u32>) {
         if !pipe_re.is_match(line) {
             is_pipe = false;
         }
-        if !colon_re.is_match(line) {
+        if let Some(caps) = colon_re.captures(line) {
+            if !has_xml_wrapper {
+                let parsed_num: u32 = caps
+                    .get(1)
+                    .and_then(|m| m.as_str().parse().ok())
+                    .unwrap_or(0);
+                match expected_colon_num {
+                    None => {
+                        if parsed_num != 1 {
+                            is_colon = false;
+                        }
+                        expected_colon_num = Some(parsed_num + 1);
+                    }
+                    Some(exp) => {
+                        if parsed_num != exp {
+                            is_colon = false;
+                        }
+                        expected_colon_num = Some(exp + 1);
+                    }
+                }
+            }
+        } else {
             is_colon = false;
         }
     }
@@ -952,12 +1028,17 @@ fn extract_command_str(value: &serde_json::Value) -> Option<String> {
         }
         if let Some(arr) = cand.as_array() {
             let str_tokens: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
-            if str_tokens.len() >= 3
-                && (str_tokens[0] == "bash" || str_tokens[0] == "sh")
-                && str_tokens[1].starts_with('-')
-                && str_tokens[1].contains('c')
-            {
-                return Some(str_tokens[2].to_string());
+            if str_tokens.len() >= 3 {
+                let bin_name = std::path::Path::new(str_tokens[0])
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or(str_tokens[0]);
+                if matches!(bin_name, "bash" | "sh" | "zsh" | "dash" | "ksh")
+                    && str_tokens[1].starts_with('-')
+                    && str_tokens[1].contains('c')
+                {
+                    return Some(str_tokens[2].to_string());
+                }
             }
             let joined = str_tokens
                 .iter()
@@ -1026,6 +1107,36 @@ pub fn normalize_agent_event_with_phase(
         if let Some(phase) = default_phase {
             capture.phase = phase;
         }
+    }
+
+    let explicit_tool = value
+        .get("tool_name")
+        .or_else(|| value.get("toolName"))
+        .or_else(|| value.get("tool"))
+        .and_then(serde_json::Value::as_str);
+    if matches!(
+        explicit_tool,
+        Some(
+            "Write"
+                | "Edit"
+                | "MultiEdit"
+                | "NotebookEdit"
+                | "write_file"
+                | "WriteFile"
+                | "edit_file"
+                | "EditFile"
+                | "create_file"
+                | "CreateFile"
+                | "delete_file"
+                | "DeleteFile"
+                | "apply_patch"
+                | "ApplyPatch"
+                | "str_replace_editor"
+        )
+    ) {
+        capture.content_complete = false;
+        capture.path = None;
+        capture.read_target = None;
     }
 
     if matches!(agent, None | Some("claude-code") | Some("codex"))
@@ -1353,6 +1464,20 @@ fn copilot_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
         return default_dialect(value);
     }
     let cwd = extract_cwd(value);
+    let raw_content = value
+        .get("content")
+        .or_else(|| value.get("stdout"))
+        .or_else(|| value.get("output"))
+        .and_then(|s| s.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string);
+    let (unwrapped_content, line_mapping) = match raw_content {
+        Some(ref text) => {
+            let (u, m) = unwrap_line_numbered_content(text);
+            (Some(u), Some(m))
+        }
+        None => (None, None),
+    };
 
     if let Some(args_str) = value.get("toolArgs").and_then(|t| t.as_str()) {
         if let Ok(args) = serde_json::from_str::<serde_json::Value>(args_str) {
@@ -1364,8 +1489,8 @@ fn copilot_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
                 return Some(normalized_capture(
                     value,
                     Some(path.to_string()),
-                    None,
-                    None,
+                    unwrapped_content,
+                    line_mapping,
                     None,
                     cwd,
                 ));
@@ -1374,8 +1499,8 @@ fn copilot_dialect(value: &serde_json::Value) -> Option<NormalizedCapture> {
                 return Some(normalized_capture(
                     value,
                     extract_path_from_command(cmd),
-                    None,
-                    None,
+                    unwrapped_content,
+                    line_mapping,
                     None,
                     cwd,
                 ));
@@ -1453,8 +1578,8 @@ fn split_shell_segments(cmd: &str) -> Vec<String> {
             current.push(c);
             i += 1;
         } else if !in_single && !in_double {
-            if c == ';' || c == '|' {
-                if i + 1 < chars.len() && chars[i + 1] == '|' {
+            if c == ';' || c == '|' || c == '\n' {
+                if c == '|' && i + 1 < chars.len() && chars[i + 1] == '|' {
                     segments.push(std::mem::take(&mut current));
                     i += 2;
                     continue;
@@ -1511,7 +1636,7 @@ pub fn extract_path_from_command(command: &str) -> Option<String> {
     let segments = split_shell_segments(command);
     let mut cd_dir: Option<String> = None;
 
-    for segment in segments {
+    for (seg_idx, segment) in segments.into_iter().enumerate() {
         let tokens = crate::hooks::editor::shell_tokens(&segment)
             .unwrap_or_else(|| segment.split_whitespace().map(String::from).collect());
         if tokens.is_empty() {
@@ -1519,7 +1644,21 @@ pub fn extract_path_from_command(command: &str) -> Option<String> {
         }
 
         if tokens[0] == "cd" && tokens.len() > 1 {
-            cd_dir = Some(tokens[1].trim_matches('"').trim_matches('\'').to_string());
+            let dir_arg = tokens[1..]
+                .iter()
+                .find(|t| !t.starts_with('-'))
+                .map(|s| s.trim_matches('"').trim_matches('\'').to_string());
+            if let Some(d) = dir_arg {
+                cd_dir = Some(match cd_dir {
+                    Some(prev) if !std::path::Path::new(&d).is_absolute() => {
+                        std::path::Path::new(&prev)
+                            .join(&d)
+                            .to_string_lossy()
+                            .to_string()
+                    }
+                    _ => d,
+                });
+            }
             continue;
         }
 
@@ -1550,13 +1689,32 @@ pub fn extract_path_from_command(command: &str) -> Option<String> {
             continue;
         }
 
-        let remaining = &tokens[idx + advance..];
+        // Strip output redirections (`>`, `>>`, `1>`, `2>`, `&>`) and their target file
+        let mut remaining = Vec::new();
+        let raw_rem = &tokens[idx + advance..];
+        let mut r_idx = 0;
+        while r_idx < raw_rem.len() {
+            let tok = &raw_rem[r_idx];
+            if matches!(
+                tok.as_str(),
+                ">" | ">>" | "1>" | "1>>" | "2>" | "2>>" | "&>" | "&>>"
+            ) {
+                r_idx += 2;
+                continue;
+            }
+            if tok.starts_with('>') || tok.starts_with("1>") || tok.starts_with("2>") {
+                r_idx += 1;
+                continue;
+            }
+            remaining.push(tok.clone());
+            r_idx += 1;
+        }
 
         if verb == "python" || verb == "python3" {
             if remaining.iter().any(|t| t == "-c" || t == "-m") {
-                return None;
+                continue;
             }
-            for tok in remaining {
+            for tok in &remaining {
                 if !tok.starts_with('-') {
                     return resolve_path_with_cd(tok, cd_dir.as_deref());
                 }
@@ -1565,9 +1723,17 @@ pub fn extract_path_from_command(command: &str) -> Option<String> {
         }
 
         if verb == "sed" {
+            if remaining.iter().any(|t| {
+                t == "-i"
+                    || t.starts_with("-i")
+                    || t == "--in-place"
+                    || t.starts_with("--in-place=")
+            }) {
+                continue;
+            }
             let mut target = None;
             let mut skip_next = false;
-            for tok in remaining {
+            for tok in &remaining {
                 if skip_next {
                     skip_next = false;
                     continue;
@@ -1588,13 +1754,12 @@ pub fn extract_path_from_command(command: &str) -> Option<String> {
         }
 
         if verb == "grep" {
-            let mut last_non_flag = None;
-            for tok in remaining {
-                if !tok.starts_with('-') {
-                    last_non_flag = Some(tok);
-                }
+            let non_flags: Vec<&String> =
+                remaining.iter().filter(|t| !t.starts_with('-')).collect();
+            if seg_idx > 0 && non_flags.len() < 2 {
+                continue;
             }
-            if let Some(tok) = last_non_flag {
+            if let Some(tok) = non_flags.last() {
                 return resolve_path_with_cd(tok, cd_dir.as_deref());
             }
             continue;

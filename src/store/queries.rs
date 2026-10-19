@@ -644,15 +644,15 @@ fn get_source_document_by_dev_ino(
             file_size: row.get(3)?,
             blake3_hash: row.get(4)?,
             last_checked_at,
-            dev: row.get(6)?,
-            ino: row.get(7)?,
+            dev: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+            ino: row.get::<_, Option<i64>>(7)?.map(|v| v as u64),
         }))
     } else {
         Ok(None)
     }
 }
 
-/// Updates the line number of an existing tracked node in place.
+/// Updates the line number of an existing tracked node in place and ensures it is not marked stale.
 pub fn update_node_line_number(
     conn: &Connection,
     id: &str,
@@ -660,8 +660,18 @@ pub fn update_node_line_number(
 ) -> Result<()> {
     let now = Utc::now().to_rfc3339();
     conn.execute(
-        "UPDATE tracked_nodes SET line_number = ?1, updated_at = ?2 WHERE id = ?3",
+        "UPDATE tracked_nodes SET line_number = ?1, is_stale = 0, stale_reason = NULL, updated_at = ?2 WHERE id = ?3",
         params![line_number, now, id],
+    )?;
+    Ok(())
+}
+
+/// Restores a previously stale tracked node back to active/fresh state.
+pub fn unmark_node_stale(conn: &Connection, id: &str) -> Result<()> {
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE tracked_nodes SET is_stale = 0, stale_reason = NULL, updated_at = ?1 WHERE id = ?2",
+        params![now, id],
     )?;
     Ok(())
 }
@@ -700,14 +710,27 @@ pub fn record_file_batch(
     };
 
     let mut matched_ext_node_ids: HashMap<usize, String> = HashMap::new();
+    let mut used_node_ids: HashSet<String> = HashSet::new();
 
     if file_path != "<stdin>" {
         if let Some(ref existing_doc) = existing_doc {
-            if existing_doc.blake3_hash != hash {
-                // Content modified! Reconcile line shifts and find root nodes that are no longer present.
-                let existing_roots = list_nodes_by_source_doc(conn, existing_doc.id)?;
-                let mut active_roots: Vec<TrackedNode> =
-                    existing_roots.into_iter().filter(|r| !r.is_stale).collect();
+            let existing_roots = list_nodes_by_source_doc(conn, existing_doc.id)?;
+            for r in &existing_roots {
+                used_node_ids.insert(r.id.clone());
+            }
+            let any_root_stale = existing_roots.iter().any(|r| r.is_stale);
+            if existing_doc.blake3_hash != hash
+                || any_root_stale
+                || existing_roots.len() != extracted.len()
+            {
+                // Content modified or previously marked stale by sync_staleness!
+                // Reconcile line shifts and find root nodes that are no longer present.
+                let has_fresh_roots = existing_roots.iter().any(|r| !r.is_stale);
+                let mut active_roots: Vec<TrackedNode> = if has_fresh_roots {
+                    existing_roots.into_iter().filter(|r| !r.is_stale).collect()
+                } else {
+                    existing_roots
+                };
                 active_roots.sort_by(|a, b| {
                     a.line_number
                         .unwrap_or(0)
@@ -717,7 +740,7 @@ pub fn record_file_batch(
 
                 let mut matched_root_ids: HashSet<String> = HashSet::new();
 
-                // Pass 1: exact same-line matches.
+                // Pass 1: exact same-line matches (prefer exact ID match first, then any active root on the same line with the same value).
                 for (ext_idx, ext) in extracted.iter().enumerate() {
                     let expected_id = TrackedNode::generate_root_id(
                         effective_file_path,
@@ -725,12 +748,25 @@ pub fn record_file_batch(
                         ext.occurrence,
                         &ext.value,
                     );
-                    if let Some(pos) = active_roots.iter().position(|r| {
-                        !matched_root_ids.contains(&r.id)
-                            && r.id == expected_id
-                            && r.line_number == ext.line_number
-                            && r.value == ext.value
-                    }) {
+                    let pos = active_roots
+                        .iter()
+                        .position(|r| {
+                            !matched_root_ids.contains(&r.id)
+                                && r.id == expected_id
+                                && r.line_number == ext.line_number
+                                && r.value == ext.value
+                        })
+                        .or_else(|| {
+                            active_roots.iter().position(|r| {
+                                !matched_root_ids.contains(&r.id)
+                                    && r.line_number == ext.line_number
+                                    && r.value == ext.value
+                            })
+                        });
+                    if let Some(pos) = pos {
+                        if active_roots[pos].is_stale {
+                            unmark_node_stale(conn, &active_roots[pos].id)?;
+                        }
                         matched_ext_node_ids.insert(ext_idx, active_roots[pos].id.clone());
                         matched_root_ids.insert(active_roots[pos].id.clone());
                     }
@@ -789,14 +825,28 @@ pub fn record_file_batch(
                     cascade_invalidation_downstream(conn, &stale_root_ids, "PARENT_NODE_STALE")?;
                 }
             } else {
+                let mut matched_root_ids: HashSet<String> = HashSet::new();
                 for (i, ext) in extracted.iter().enumerate() {
-                    let node_id = TrackedNode::generate_root_id(
+                    let expected_id = TrackedNode::generate_root_id(
                         effective_file_path,
                         ext.line_number,
                         ext.occurrence,
                         &ext.value,
                     );
-                    matched_ext_node_ids.insert(i, node_id);
+                    if let Some(r) = existing_roots
+                        .iter()
+                        .find(|r| !matched_root_ids.contains(&r.id) && r.id == expected_id)
+                        .or_else(|| {
+                            existing_roots.iter().find(|r| {
+                                !matched_root_ids.contains(&r.id)
+                                    && r.line_number == ext.line_number
+                                    && r.value == ext.value
+                            })
+                        })
+                    {
+                        matched_root_ids.insert(r.id.clone());
+                        matched_ext_node_ids.insert(i, r.id.clone());
+                    }
                 }
             }
         }
@@ -805,7 +855,7 @@ pub fn record_file_batch(
     // 2. Upsert source document with updated metadata & hash
     let doc = upsert_source_document(
         conn,
-        file_path,
+        effective_file_path,
         meta.mtime_nsec,
         meta.file_size,
         hash,
@@ -823,12 +873,19 @@ pub fn record_file_batch(
             continue;
         }
 
-        let node_id = TrackedNode::generate_root_id(
-            effective_file_path,
-            ext.line_number,
-            ext.occurrence,
-            &ext.value,
-        );
+        let mut occ = ext.occurrence;
+        let mut node_id =
+            TrackedNode::generate_root_id(effective_file_path, ext.line_number, occ, &ext.value);
+        while used_node_ids.contains(&node_id) {
+            occ += 1;
+            node_id = TrackedNode::generate_root_id(
+                effective_file_path,
+                ext.line_number,
+                occ,
+                &ext.value,
+            );
+        }
+        used_node_ids.insert(node_id.clone());
         let node = TrackedNode {
             id: node_id.clone(),
             node_type: NodeType::Root,

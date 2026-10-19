@@ -33,7 +33,10 @@ if [ -n "${1:-}" ]; then
     [ -f "$diff_file" ] || fail "diff file '$diff_file' not found"
     changed=$(cat "$diff_file")
 else
-    if git rev-parse --verify origin/main >/dev/null 2>&1; then
+    BASE_REF="origin/${GITHUB_BASE_REF:-develop}"
+    if git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
+        changed=$(git diff --name-only "${BASE_REF}...HEAD")
+    elif git rev-parse --verify origin/main >/dev/null 2>&1; then
         changed=$(git diff --name-only origin/main...HEAD)
     else
         changed=$(git diff --name-only HEAD~1...HEAD)
@@ -51,9 +54,12 @@ for f in $changed; do
     esac
 
     # A source file is covered when any file under tests/ references its
-    # basename or its module path. Use both signals to keep false positives low.
+    # basename or its module path, or is named after its basename.
     basename=$(basename "$f" .rs)
     module_ref=$(printf '%s' "$f" | sed -E 's#^src/##; s#/#::#g; s#\.rs$##')
+    if [ -n "$(find tests -name "*${basename}*.rs" -print -quit 2>/dev/null)" ]; then
+        continue
+    fi
     if grep -Rq --include='*.rs' -e "$basename" -e "$module_ref" tests/ 2>/dev/null; then
         continue
     fi

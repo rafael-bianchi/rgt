@@ -98,7 +98,10 @@ pub fn handle_passive_hook_event(event_type: &str, agent: Option<&str>) -> io::R
         return Ok(()); // Path-only, partial, or changed snapshots never create roots.
     };
 
-    let Some(root) = DbStore::find_project_root(".") else {
+    let Some(root) = DbStore::find_project_root(".")
+        .or_else(|| capture.cwd.as_deref().and_then(DbStore::find_project_root))
+        .or_else(|| path_obj.parent().and_then(DbStore::find_project_root))
+    else {
         return Ok(());
     };
 
@@ -243,9 +246,20 @@ fn handle_pdf_capture(
 
     // Recording half is agent-agnostic (FR-002/FR-007): record any values even
     // when stdout injection is unsupported or the text is empty.
-    let path = capture.read_target.as_deref();
-    let recorded = path
-        .map(|p| record_pdf_values(p, &decoded, &extracted, agent))
+    let resolved_path = capture.read_target.as_deref().map(|raw_path| {
+        if !Path::new(raw_path).is_absolute() {
+            if let Some(ref cwd) = capture.cwd {
+                Path::new(cwd).join(raw_path).to_string_lossy().to_string()
+            } else {
+                raw_path.to_string()
+            }
+        } else {
+            raw_path.to_string()
+        }
+    });
+    let recorded = resolved_path
+        .as_deref()
+        .map(|p| record_pdf_values(p, capture.cwd.as_deref(), &decoded, &extracted, agent))
         .transpose()?
         .unwrap_or(false);
 
@@ -253,7 +267,7 @@ fn handle_pdf_capture(
     // If a target file path was provided but snapshot verification or recording failed,
     // suppress additionalContext injection so unverified content is not injected.
     if is_claude {
-        if path.is_some() && !recorded {
+        if resolved_path.is_some() && !recorded {
             return Ok(());
         }
         let context = render_additional_context(&extracted);
@@ -275,6 +289,7 @@ fn handle_pdf_capture(
 /// the text-capture path. Returns whether a source document was upserted.
 fn record_pdf_values(
     path: &str,
+    cwd: Option<&str>,
     source_bytes: &[u8],
     text: &str,
     agent: Option<&str>,
@@ -284,7 +299,10 @@ fn record_pdf_values(
         return Ok(false);
     };
 
-    let Some(root) = DbStore::find_project_root(".") else {
+    let Some(root) = DbStore::find_project_root(".")
+        .or_else(|| cwd.and_then(DbStore::find_project_root))
+        .or_else(|| path_obj.parent().and_then(DbStore::find_project_root))
+    else {
         return Ok(false);
     };
 
@@ -345,7 +363,21 @@ fn matching_file_snapshot(
     }
     let matches = current == expected_bytes
         || (current.ends_with(b"\n") && &current[..current.len() - 1] == expected_bytes)
-        || (current.ends_with(b"\r\n") && &current[..current.len() - 2] == expected_bytes);
+        || (current.ends_with(b"\r\n") && &current[..current.len() - 2] == expected_bytes)
+        || (expected_bytes.ends_with(b"\n")
+            && &expected_bytes[..expected_bytes.len() - 1] == current.as_slice())
+        || {
+            // Normalize CRLF -> LF on both sides for multi-line CRLF files unwrapped by line-numbering tools
+            let norm_cur: Vec<u8> = current.iter().copied().filter(|&b| b != b'\r').collect();
+            let norm_exp: Vec<u8> = expected_bytes
+                .iter()
+                .copied()
+                .filter(|&b| b != b'\r')
+                .collect();
+            norm_cur == norm_exp
+                || (norm_cur.ends_with(b"\n") && norm_cur[..norm_cur.len() - 1] == norm_exp[..])
+                || (norm_exp.ends_with(b"\n") && norm_exp[..norm_exp.len() - 1] == norm_cur[..])
+        };
     if !matches {
         return None;
     }

@@ -42,6 +42,10 @@ impl DbStore {
         if file_path == "<stdin>" {
             return file_path.to_string();
         }
+        let file_path = file_path
+            .strip_prefix("./")
+            .or_else(|| file_path.strip_prefix(".\\"))
+            .unwrap_or(file_path);
         let rebased = if !Path::new(file_path).is_relative() {
             file_path.to_string()
         } else {

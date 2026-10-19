@@ -224,6 +224,9 @@ pub fn verify_expression(
     }
 
     if approx_eq(computed_val, expected_result) {
+        if expected_result == 0.0 {
+            computed_val = 0.0;
+        }
         Ok(computed_val)
     } else {
         Err(format!(

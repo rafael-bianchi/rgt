@@ -735,7 +735,41 @@ mod tests {
         assert_eq!(body["display"], "10 days");
         assert_eq!(body["display_details"]["decimal"], "10");
 
-        // 2. verify_only on DATE_DIFF with correct result claim
+        // 2b. verify_only and derive_and_verify with result in default seconds ("864000") and display unit: "days" (no result_unit)
+        let ok_default_sec_with_display = client.call_tool(
+            50,
+            "verify_only",
+            serde_json::json!({
+                "parents": format!("{id1},{id2}"),
+                "operation": "DATE_DIFF",
+                "result": "864000",
+                "unit": "days",
+            }),
+        );
+        assert_eq!(
+            ok_default_sec_with_display["result"]["isError"],
+            serde_json::Value::Bool(false),
+            "result without result_unit must default to seconds even when display unit is days: {ok_default_sec_with_display}"
+        );
+        let sec_body: serde_json::Value =
+            serde_json::from_str(&client.text_content(&ok_default_sec_with_display)).unwrap();
+        assert_eq!(sec_body["display"], "10 days");
+
+        // 2c. verify_only with result_unit but no result must fail with --result-unit requires --result
+        let orphan_result_unit = client.call_tool(
+            51,
+            "verify_only",
+            serde_json::json!({
+                "parents": format!("{id1},{id2}"),
+                "operation": "DATE_DIFF",
+                "result_unit": "days",
+            }),
+        );
+        assert_eq!(
+            orphan_result_unit["result"]["isError"],
+            serde_json::Value::Bool(true),
+            "result_unit without result must be rejected: {orphan_result_unit}"
+        );
         let ok_claim = client.call_tool(
             5,
             "verify_only",

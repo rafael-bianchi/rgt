@@ -138,14 +138,16 @@ pub fn fetch_bundle(subject_digest: &str, token: Option<&str>) -> Result<Vec<u8>
         }
 
         if let Some(ref pol) = policy {
-            if let Ok(decompressed) = decompress_bundle(&bytes) {
-                if verify_bundle(&decompressed, digest_hex, pol).is_ok() {
-                    return Ok(bytes);
-                } else {
-                    last_err = "attestation bundle verification failed against policy".to_string();
+            match decompress_bundle(&bytes) {
+                Ok(decompressed) => match verify_bundle(&decompressed, digest_hex, pol) {
+                    Ok(()) => return Ok(bytes),
+                    Err(e) => {
+                        last_err = format!("attestation bundle verification failed: {e}");
+                    }
+                },
+                Err(e) => {
+                    last_err = format!("attestation bundle decompression failed: {e}");
                 }
-            } else {
-                last_err = "attestation bundle decompression failed".to_string();
             }
         } else {
             return Ok(bytes);

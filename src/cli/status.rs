@@ -151,7 +151,7 @@ pub fn build_status_summary(
 
     json!({
         "total_nodes": all_nodes.len(),
-        "active_nodes": all_nodes.len() - stale_nodes.len(),
+        "active_nodes": all_nodes.len().saturating_sub(stale_nodes.len()),
         "stale_nodes": stale_nodes.len(),
         "stale_details": stale_details,
     })

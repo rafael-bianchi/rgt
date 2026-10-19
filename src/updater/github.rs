@@ -44,13 +44,18 @@ use std::io::Read;
 const MAX_JSON_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Fetches a GitHub release by exact tag name (e.g., `v0.2.0`).
+/// Fetches a GitHub release by exact tag name (e.g., `v0.2.0` or `0.2.0`).
 pub fn fetch_release_by_tag(tag: &str, token: Option<&str>) -> Result<GitHubRelease, String> {
     let clean = tag.trim_start_matches('v');
     if crate::updater::version::parse_version(clean).is_err() {
         return Err(format!("Release not found at invalid tag {}", tag));
     }
-    let url = format!("{}/{}", GITHUB_API_RELEASES_TAG, tag);
+    let normalized = if tag.starts_with('v') {
+        tag.to_string()
+    } else {
+        format!("v{tag}")
+    };
+    let url = format!("{}/{}", GITHUB_API_RELEASES_TAG, normalized);
     fetch_release_from_url(&url, token)
 }
 

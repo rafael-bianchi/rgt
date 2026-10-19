@@ -156,8 +156,13 @@ pub fn run_verify_core(
     }
 
     let claim = if matches!(operation, "DATE_DIFF" | "DURATION_SUM" | "DURATION_AVG") {
+        if result_unit.is_some() && result.is_none() {
+            return Err(VerifyDeriveError::InvalidInput(
+                "--result-unit requires --result".into(),
+            ));
+        }
         if let Some(token) = result {
-            let unit_name = result_unit.or(display_unit).unwrap_or("seconds");
+            let unit_name = result_unit.unwrap_or("seconds");
             let unit = DurationUnit::parse(unit_name).map_err(VerifyDeriveError::InvalidInput)?;
             Some(DurationClaim::parse(token, unit).map_err(VerifyDeriveError::InvalidInput)?)
         } else {
@@ -263,7 +268,7 @@ pub fn run_verify_core(
             verify(&parent_values, operation, expression, parsed)
                 .map(|_| None)
                 .map_err(|err| {
-                    if err.contains(": expected ") {
+                    if err.contains(": expected ") || err.contains("evaluated to non-finite") {
                         VerifyDeriveError::VerificationFailed(err)
                     } else {
                         VerifyDeriveError::InvalidInput(err)
