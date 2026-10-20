@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.1](https://github.com/rafael-bianchi/rgt/compare/v0.8.0...v0.8.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* distinguish pending release version from published formula ([#53](https://github.com/rafael-bianchi/rgt/issues/53)) ([9bfef2d](https://github.com/rafael-bianchi/rgt/commit/9bfef2de546c0d39d41e47bf7909dc0e2dbf517a))
+* handle pending release formula version ([#53](https://github.com/rafael-bianchi/rgt/issues/53)) ([ff21ad5](https://github.com/rafael-bianchi/rgt/commit/ff21ad5785837b142f315e46703aaebbd4837066))
+* inspect managed marker in encoded Windows hooks ([#53](https://github.com/rafael-bianchi/rgt/issues/53)) ([8c4d1e9](https://github.com/rafael-bianchi/rgt/commit/8c4d1e9886d0ce170b939cd2822e2a91e5b5b39b))
+* preserve patched Git installs and normalize source lookup ([#53](https://github.com/rafael-bianchi/rgt/issues/53)) ([14380c3](https://github.com/rafael-bianchi/rgt/commit/14380c347d14ca5742919f37746182b438afdae8))
+* repair attestation compatibility and gate release publication ([#53](https://github.com/rafael-bianchi/rgt/issues/53)) ([d00becb](https://github.com/rafael-bianchi/rgt/commit/d00becb587e4b17ef2b2c36074bbcf9f0dcaa851))
+* repair attestation verification and gate release publication ([#53](https://github.com/rafael-bianchi/rgt/issues/53)) ([111fe64](https://github.com/rafael-bianchi/rgt/commit/111fe64187526994b99d5304382faca87b9f075c))
+* synchronize formula with restored CI release assets ([#53](https://github.com/rafael-bianchi/rgt/issues/53)) ([d1b91b3](https://github.com/rafael-bianchi/rgt/commit/d1b91b3b7b44a6c85e5b7ad3975877254eefe0d4))
+* use direct matrix expression for cargo target on windows in release.yml ([25bb020](https://github.com/rafael-bianchi/rgt/commit/25bb020cce3779086be9cf2ff65ca5ca7ab51333))
+
 ## [0.8.0](https://github.com/rafael-bianchi/rgt/compare/v0.7.0...v0.8.0) (2026-10-19)
 
 
