@@ -899,21 +899,29 @@ mod tests {
         )
         .unwrap();
         assert_eq!(registration().health, RegistrationHealth::Obsolete);
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
-            .arg("doctor")
-            .current_dir(dir.path())
-            .env("HOME", &home)
-            .env("USERPROFILE", &home)
-            .env("APPDATA", &config_dir)
-            .env("XDG_CONFIG_HOME", &config_dir)
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(1));
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        assert!(
-            stdout.contains(&home.join(".hermes/config.toml").display().to_string()),
-            "{stdout}"
-        );
+        // Windows dirs::home_dir uses the OS Known Folder API rather than
+        // USERPROFILE/HOME overrides. The injected registration assertion above
+        // covers user scope on every platform; only Unix can safely run this
+        // subprocess assertion against a temporary home without touching the
+        // runner's actual user configuration.
+        #[cfg(unix)]
+        {
+            let output = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
+                .arg("doctor")
+                .current_dir(dir.path())
+                .env("HOME", &home)
+                .env("USERPROFILE", &home)
+                .env("APPDATA", &config_dir)
+                .env("XDG_CONFIG_HOME", &config_dir)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(1));
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(
+                stdout.contains(&home.join(".hermes/config.toml").display().to_string()),
+                "{stdout}"
+            );
+        }
     }
 
     #[test]
