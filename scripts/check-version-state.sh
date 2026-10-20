@@ -39,14 +39,22 @@ changelog_version="$(sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' "$REPO_ROOT/CHANGE
 [ -n "$changelog_version" ] || fail "could not read latest release heading from CHANGELOG.md"
 
 # --- 2. Assert all four agree -------------------------------------------------
-for src in "Cargo.toml:$cargo_version" "manifest:$manifest_version" "Formula:$formula_version" "CHANGELOG:$changelog_version"; do
+for src in "Cargo.toml:$cargo_version" "manifest:$manifest_version" "CHANGELOG:$changelog_version"; do
     name="${src%%:*}"
     ver="${src#*:}"
     if [ "$ver" != "$cargo_version" ]; then
         fail "$name version '$ver' does not match Cargo.toml version '$cargo_version'"
     fi
 done
-echo "check-version-state: all version fields agree ($cargo_version)"
+if [ "$formula_version" != "$cargo_version" ]; then
+    previous_version="$(sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' "$REPO_ROOT/CHANGELOG.md" | sed -n '2p')"
+    if [ -z "$previous_version" ] || [ "$formula_version" != "$previous_version" ]; then
+        fail "Formula version '$formula_version' matches neither current '$cargo_version' nor previous release '$previous_version'"
+    fi
+    echo "check-version-state: source release $cargo_version pending; formula retains previous release $formula_version until verified assets exist"
+else
+    echo "check-version-state: all version fields agree ($cargo_version)"
+fi
 
 # --- 3. Assert no stale "rgt" manifest key ------------------------------------
 if printf '%s' "$manifest_json" | grep -q '"rgt"'; then

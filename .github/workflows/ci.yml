@@ -201,5 +201,7 @@ jobs:
         run: scripts/check-readme-parity.sh
       - name: Check release asset gate regressions
         run: python3 tests/contract/test_release_assets.py
+      - name: Check pending release version regressions
+        run: python3 tests/contract/test_version_state.py
       - name: Check version state consistency
         run: scripts/check-version-state.sh

@@ -50,5 +50,8 @@ strips path dependencies and would otherwise substitute the unpatched verifier.
 - Do not delete or move released tags to fix an upload failure.
 - Release Please creates drafts; only the successful asset-verification job
   publishes them. No stable release may be published merely because builds ran.
+- While a source release is pending, the formula retains the immediately
+  preceding changelog release and its matching hashes. The release workflow
+  updates the formula only after new verified assets have been published.
 - Verify each archive with both `gh` and the verifier inside the packaged RGT
   binary. A successful upload or signing job alone is insufficient.
