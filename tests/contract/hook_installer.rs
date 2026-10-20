@@ -1,4 +1,7 @@
 use base64::Engine;
+#[path = "../hook_test_support.rs"]
+mod hook_test_support;
+use hook_test_support::inspect_command_text;
 use rgt::hooks::installer::{
     detect_and_configure_hooks_with_config_and_exe, resolve_agent_name, valid_agent_names,
     AgentOutcome, InstallReport,
@@ -23,6 +26,27 @@ fn set_cwd(dir: &Path) -> std::sync::MutexGuard<'static, ()> {
 
 fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap()
+}
+
+fn count_managed_commands(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Object(map) => map
+            .iter()
+            .map(|(key, value)| {
+                if key == "command" {
+                    usize::from(
+                        value
+                            .as_str()
+                            .is_some_and(rgt::hooks::editor::hook_command_is_managed),
+                    )
+                } else {
+                    count_managed_commands(value)
+                }
+            })
+            .sum(),
+        serde_json::Value::Array(values) => values.iter().map(count_managed_commands).sum(),
+        _ => 0,
+    }
 }
 
 fn write(path: &Path, content: &str) {
@@ -137,8 +161,8 @@ fn claude_merge_preserves_foreign_hooks_settings_and_comments() {
     assert!(content.contains("\"rtk hook post\""));
     assert!(content.contains("\"keybindings\": { \"esc\": \"stop\" }"));
     assert!(content.contains("Read|Edit|Write|Bash"));
-    assert!(content.contains(&format!("{} hook post", exe_prefix_json())));
-    assert!(content.contains(&format!("{} hook pre", exe_prefix_json())));
+    assert!(inspect_command_text(&content).contains(&format!("{} hook post", exe_prefix_json())));
+    assert!(inspect_command_text(&content).contains(&format!("{} hook pre", exe_prefix_json())));
     assert!(
         !content.contains("\"rgt hook post\""),
         "must not use bare rgt"
@@ -177,8 +201,8 @@ fn cursor_merge_preserves_existing_entries_and_version() {
     let content = read(&hooks);
     assert!(content.contains("\"version\": 2"));
     assert!(content.contains("notify --done"));
-    assert!(content.contains(&format!("{} hook post", exe_prefix_json())));
-    assert!(content.contains(&format!("{} hook pre", exe_prefix_json())));
+    assert!(inspect_command_text(&content).contains(&format!("{} hook post", exe_prefix_json())));
+    assert!(inspect_command_text(&content).contains(&format!("{} hook pre", exe_prefix_json())));
     assert!(!content.contains("\"rgt hook post\""));
     serde_json::from_str::<serde_json::Value>(&content).expect("must be valid JSON");
 }
@@ -267,12 +291,12 @@ fn existing_four_agents_write_with_markers() {
 
     let claude = read(&home.join(".claude").join("settings.json"));
     assert!(claude.contains("Read|Edit|Write|Bash"));
-    assert!(claude.contains(&format!("{} hook post", exe_prefix_json())));
-    assert!(claude.contains(&format!("{} hook pre", exe_prefix_json())));
+    assert!(inspect_command_text(&claude).contains(&format!("{} hook post", exe_prefix_json())));
+    assert!(inspect_command_text(&claude).contains(&format!("{} hook pre", exe_prefix_json())));
     serde_json::from_str::<serde_json::Value>(&claude).unwrap();
 
     let cursor = read(&home.join(".cursor").join("hooks.json"));
-    assert!(cursor.contains(&format!("{} hook post", exe_prefix_json())));
+    assert!(inspect_command_text(&cursor).contains(&format!("{} hook post", exe_prefix_json())));
     serde_json::from_str::<serde_json::Value>(&cursor).unwrap();
 
     let agents_md = read(&home.join(".codex/AGENTS.md"));
@@ -321,7 +345,9 @@ fn gemini_writer_creates_hooks_toml() {
 
     let toml = read(&home.join(".gemini").join("hooks.toml"));
     assert!(toml.contains("[PostToolUse]"));
-    assert!(toml.contains(&format!("{} hook post --agent gemini", exe_prefix())));
+    assert!(
+        inspect_command_text(&toml).contains(&format!("{} hook post --agent gemini", exe_prefix()))
+    );
     let _: toml_edit::DocumentMut = toml.parse().unwrap();
 }
 
@@ -339,7 +365,9 @@ fn vibe_writer_creates_hooks_toml_and_loaded_guidance() {
     assert!(toml.contains("[[pre_tool]]"));
     assert!(toml.contains("match = \"bash\""));
     assert!(toml.contains("strict = false"));
-    assert!(toml.contains(&format!("{} hook pre --agent vibe", exe_prefix())));
+    assert!(
+        inspect_command_text(&toml).contains(&format!("{} hook pre --agent vibe", exe_prefix()))
+    );
     let _: toml_edit::DocumentMut = toml.parse().unwrap();
 
     let guidance = read(&home.join(".vibe").join("AGENTS.md"));
@@ -1107,7 +1135,7 @@ fn vibe_init_registration_is_current_in_doctor_and_idempotent() {
     assert_eq!(configured(&first), vec!["vibe".to_string()]);
     let hooks_path = home.join(".vibe/hooks.toml");
     let installed = read(&hooks_path);
-    assert!(installed.contains("hook pre --agent vibe"));
+    assert!(inspect_command_text(&installed).contains("hook pre --agent vibe"));
 
     let registrations = rgt::hooks::registration::inspect_local_registrations(&home, &config_dir);
     let vibe = registrations
@@ -1275,7 +1303,7 @@ fn native_json_surface_migrations_keep_unrelated_settings_and_are_idempotent() {
             1
         };
         assert_eq!(
-            upgraded.to_string().matches("--rgt-managed").count(),
+            count_managed_commands(&upgraded),
             expected_callbacks,
             "{agent}"
         );

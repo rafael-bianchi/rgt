@@ -1,6 +1,7 @@
 [package]
 name = "rgt"
 version = "0.8.0"
+publish = false # Git installs retain the vendored verifier; crates.io would strip its path.
 edition = "2021"
 authors = ["RGT Contributors"]
 description = "Rust Graph Tracker: Numeric and date provenance tracking for LLM coding agents"
@@ -42,7 +43,7 @@ toml_edit = "0.25.13"
 semver = "1"
 snap = "1"
 uuid = { version = "1", features = ["v4"] }
-attestation-verify = "=0.1.0"
+attestation-verify = { version = "=0.1.0", path = "vendor/attestation-verify" }
 self-replace = "1.5.0"
 base64 = "0.23"
 pdf-extract = "0.12"

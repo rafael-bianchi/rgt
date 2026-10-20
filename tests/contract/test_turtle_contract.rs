@@ -392,7 +392,8 @@ fn absolute_source_paths_require_the_explicit_option_and_byte_limit_is_preflight
             .canonicalize()
             .unwrap()
             .to_string_lossy()
-            .as_ref()
+            .replace('\\', "/")
+            .as_str()
     ));
     assert!(!parse(&full.turtle).is_empty());
 
@@ -445,7 +446,8 @@ fn graph_cli_exports_turtle_and_preserves_existing_graph_formats() {
             .canonicalize()
             .unwrap()
             .to_string_lossy()
-            .as_ref()
+            .replace('\\', "/")
+            .as_str()
     ));
 
     let invalid_option = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))

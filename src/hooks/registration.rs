@@ -817,7 +817,7 @@ fn inspect_native_hook(
         } else {
             wrong_identity = true;
         }
-        if !callback.command.contains("--rgt-managed") {
+        if !crate::hooks::editor::hook_command_is_managed(&callback.command) {
             current_marker = false;
         }
         resolvable &= crate::hooks::editor::hook_command_executable_resolvable(&callback.command);

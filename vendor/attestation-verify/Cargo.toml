@@ -1,0 +1,59 @@
+[package]
+name = "attestation-verify"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+description = "Verify GitHub Artifact Attestations (Sigstore bundles) offline - minimal, sans-io, fail-closed"
+repository = "https://github.com/combinatrix-ai/attestation-verify"
+documentation = "https://docs.rs/attestation-verify"
+readme = "README.md"
+keywords = ["github", "attestation", "sigstore", "slsa", "supply-chain"]
+categories = ["cryptography", "authentication"]
+
+[workspace]
+members = []
+default-members = ["."]
+resolver = "3"
+
+[features]
+# Enables the separate cargo-fuzz crate's typed adapters for parser routines
+# that are intentionally crate-private in the normal library API. This
+# feature adds no dependencies and is not part of the default build.
+fuzzing = []
+
+[dependencies]
+base64 = "0.23.0"
+der = "0.8.1"
+ecdsa = { version = "0.17.0", features = ["der"] }
+hex = "0.4.3"
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "alloc"] }
+p384 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "alloc"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+signature = "3.0.0"
+spki = "0.8.0"
+thiserror = "2.0.19"
+x509-cert = { version = "0.3.0", default-features = false }
+
+# Integration tests (tests/) compile as a separate crate and only see the
+# library's public API plus [dev-dependencies] — not its own [dependencies]
+# — so `base64` and `serde_json` are re-listed here for the fixture-JSON
+# mutation tests. Same crates already used by the library itself; this adds
+# no new dependency and does not appear under `cargo tree --edges normal`.
+[dev-dependencies]
+base64 = "0.23.0"
+serde_json = "1.0.151"
+
+[workspace.lints.rust]
+missing_docs = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+
+[lints]
+workspace = true

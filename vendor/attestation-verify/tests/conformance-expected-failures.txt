@@ -1,0 +1,53 @@
+# Expected failures for sigstore-conformance's pytest node names.
+#
+# The first tab-separated field is passed as an xfail glob. "[[]" matches the
+# literal "[" in pytest's parametrized node name. The second field is the
+# deliberate DESIGN.md scope decision; keep one line per failing test node.
+#
+# Source suite revision used for this list:
+# sigstore/sigstore-conformance @ f12aa02f4a6e5a9e84bcc3c10c193b14ab04da9d
+
+# Rekor v2: v0.1 implements Rekor v1 only; v2 is a typed-Unsupported scope
+# boundary, including TSA-backed and checkpoint-cosigned variants.
+test_verify[[]PATH-bundle-with-sct-with-extensions]	DESIGN: this valid fixture requires Rekor v2; the v0.1 release gate verifies Rekor v1 only.
+test_verify[[]DIGEST-bundle-with-sct-with-extensions]	DESIGN: this valid fixture requires Rekor v2; the v0.1 release gate verifies Rekor v1 only.
+test_verify[[]PATH-rekor2-checkpoint-cosigned]	DESIGN: this valid fixture requires Rekor v2 checkpoint cosigning; the crate implements Rekor v1 only.
+test_verify[[]DIGEST-rekor2-checkpoint-cosigned]	DESIGN: this valid fixture requires Rekor v2 checkpoint cosigning; the crate implements Rekor v1 only.
+test_verify[[]PATH-rekor2-checkpoint-multiple-cosigs]	DESIGN: this valid fixture requires Rekor v2 checkpoint cosigning; the crate implements Rekor v1 only.
+test_verify[[]DIGEST-rekor2-checkpoint-multiple-cosigs]	DESIGN: this valid fixture requires Rekor v2 checkpoint cosigning; the crate implements Rekor v1 only.
+test_verify[[]PATH-rekor2-checkpoint-origin-not-first]	DESIGN: this valid fixture requires Rekor v2 checkpoint handling; the crate implements Rekor v1 only.
+test_verify[[]DIGEST-rekor2-checkpoint-origin-not-first]	DESIGN: this valid fixture requires Rekor v2 checkpoint handling; the crate implements Rekor v1 only.
+test_verify[[]PATH-rekor2-checkpoint-two-sigs-cosigned]	DESIGN: this valid fixture requires Rekor v2 checkpoint cosigning; the crate implements Rekor v1 only.
+test_verify[[]DIGEST-rekor2-checkpoint-two-sigs-cosigned]	DESIGN: this valid fixture requires Rekor v2 checkpoint cosigning; the crate implements Rekor v1 only.
+test_verify[[]PATH-rekor2-checkpoint-two-sigs-from-origin]	DESIGN: this valid fixture requires Rekor v2 checkpoint handling; the crate implements Rekor v1 only.
+test_verify[[]DIGEST-rekor2-checkpoint-two-sigs-from-origin]	DESIGN: this valid fixture requires Rekor v2 checkpoint handling; the crate implements Rekor v1 only.
+test_verify[[]PATH-rekor2-dsse-happy-path]	DESIGN: this valid DSSE fixture uses Rekor v2 hashedrekord-over-DSSE; the crate implements Rekor v1 only.
+test_verify[[]DIGEST-rekor2-dsse-happy-path]	DESIGN: this valid DSSE fixture uses Rekor v2 hashedrekord-over-DSSE; the crate implements Rekor v1 only.
+test_verify[[]PATH-rekor2-happy-path]	DESIGN: this valid fixture uses a Rekor v2 hashedrekord entry and TSA timestamp; the crate implements Rekor v1 only.
+test_verify[[]DIGEST-rekor2-happy-path]	DESIGN: this valid fixture uses a Rekor v2 hashedrekord entry and TSA timestamp; the crate implements Rekor v1 only.
+test_verify[[]PATH-rekor2-timestamp-with-embedded-cert]	DESIGN: this valid fixture requires Rekor v2 and RFC 3161 TSA evidence; the GitHub-TSA/Rekor-v2 path is out of scope.
+test_verify[[]DIGEST-rekor2-timestamp-with-embedded-cert]	DESIGN: this valid fixture requires Rekor v2 and RFC 3161 TSA evidence; the GitHub-TSA/Rekor-v2 path is out of scope.
+test_verify[[]PATH-rekor2-timestamp-with-expired-cert-chain]	DESIGN: this valid fixture requires Rekor v2 and TSA-chain validation; the crate implements Rekor v1 only.
+test_verify[[]DIGEST-rekor2-timestamp-with-expired-cert-chain]	DESIGN: this valid fixture requires Rekor v2 and TSA-chain validation; the crate implements Rekor v1 only.
+test_verify[[]PATH-rekor2-timestamp-without-embedded-cert]	DESIGN: this valid fixture requires Rekor v2 and RFC 3161 TSA evidence; the GitHub-TSA/Rekor-v2 path is out of scope.
+test_verify[[]DIGEST-rekor2-timestamp-without-embedded-cert]	DESIGN: this valid fixture requires Rekor v2 and RFC 3161 TSA evidence; the GitHub-TSA/Rekor-v2 path is out of scope.
+
+# Legacy bundle versions and hashedrekord: v0.1 models only v0.3 DSSE
+# bundles with the GitHub SLSA provenance predicate.
+test_verify[[]PATH-happy-path-v0.1]	DESIGN: this fixture is a legacy v0.1 hashedrekord bundle; the crate supports v0.3 DSSE bundles only.
+test_verify[[]DIGEST-happy-path-v0.1]	DESIGN: this fixture is a legacy v0.1 hashedrekord bundle; the crate supports v0.3 DSSE bundles only.
+test_verify[[]PATH-happy-path-v0.2]	DESIGN: this fixture is a legacy v0.2 hashedrekord bundle; the crate supports v0.3 DSSE bundles only.
+test_verify[[]DIGEST-happy-path-v0.2]	DESIGN: this fixture is a legacy v0.2 hashedrekord bundle; the crate supports v0.3 DSSE bundles only.
+test_verify[[]PATH-happy-path-v0.3]	DESIGN: hashedrekord entries are out of scope; this crate models DSSE entries only.
+test_verify[[]DIGEST-happy-path-v0.3]	DESIGN: hashedrekord entries are out of scope; this crate models DSSE entries only.
+test_verify[[]PATH-happy-path-v0.3-new-mediaType]	DESIGN: hashedrekord entries are out of scope; this crate models DSSE entries only.
+test_verify[[]DIGEST-happy-path-v0.3-new-mediaType]	DESIGN: hashedrekord entries are out of scope; this crate models DSSE entries only.
+test_verify[[]PATH-intoto-with-custom-trust-root]	DESIGN: custom roots are supported, but this fixture is the legacy v0.2 intoto bundle schema; v0.1 accepts v0.3 DSSE bundles only.
+test_verify[[]DIGEST-intoto-with-custom-trust-root]	DESIGN: custom roots are supported, but this fixture is the legacy v0.2 intoto bundle schema; v0.1 accepts v0.3 DSSE bundles only.
+
+# Managed keys: the protocol's --key verification flow is outside this
+# certificate/Fulcio/GitHub-policy crate.
+test_verify[[]PATH-managed-key-and-trusted-root]	DESIGN: key-based cosign/managed-key verification is a non-goal; the client supports certificate-identity verification only.
+test_verify[[]DIGEST-managed-key-and-trusted-root]	DESIGN: key-based cosign/managed-key verification is a non-goal; the client supports certificate-identity verification only.
+test_verify[[]PATH-managed-key-happy-path]	DESIGN: key-based cosign/managed-key verification is a non-goal; the client supports certificate-identity verification only.
+test_verify[[]DIGEST-managed-key-happy-path]	DESIGN: key-based cosign/managed-key verification is a non-goal; the client supports certificate-identity verification only.

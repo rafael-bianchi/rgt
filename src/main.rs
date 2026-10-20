@@ -115,6 +115,14 @@ enum Commands {
         /// Skip GitHub Artifact Attestation verification (INSECURE — never the default)
         #[arg(long)]
         skip_attestation: bool,
+
+        /// Verify a local archive's attestation without downloading or installing
+        #[arg(long, requires = "bundle", conflicts_with_all = ["check", "yes", "version", "skip_checksum", "skip_attestation"])]
+        verify_archive: Option<std::path::PathBuf>,
+
+        /// Sigstore bundle JSON for --verify-archive (offline verification)
+        #[arg(long, requires = "verify_archive")]
+        bundle: Option<std::path::PathBuf>,
     },
     /// Diagnose hook installation and capture health (0 = healthy/warnings, 1 = error)
     Doctor,
@@ -296,7 +304,15 @@ fn main() {
             version,
             skip_checksum,
             skip_attestation,
-        } => match cli::execute_update(check, yes, version, skip_checksum, skip_attestation) {
+            verify_archive,
+            bundle,
+        } => match if let (Some(archive), Some(bundle)) = (verify_archive, bundle) {
+            rgt::updater::attestation::verify_archive_bundle(&archive, &bundle)
+                .map(|()| println!("Verified archive attestation: {}", archive.display()))
+                .map_err(|message| rgt::cli::update::UpdateError { message, code: 1 })
+        } else {
+            cli::execute_update(check, yes, version, skip_checksum, skip_attestation)
+        } {
             Ok(()) => Ok(()),
             Err(e) => {
                 eprintln!("Error: {}", e.message);

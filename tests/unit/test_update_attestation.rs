@@ -82,21 +82,12 @@ fn rgt_policy_targets_rgt_repo() {
 }
 
 /// Verifies the production policy against a REAL `rafael-bianchi/rgt`
-/// attestation (convergence task T024). Skipped until the first attested
-/// release ships — run `scripts/capture-rgt-attestation-fixture.sh vX.Y.Z`
-/// against it (see SECURITY.md "Remediation trigger" and the fixture README),
-/// then this test verifies the bundle against the production policy for real.
+/// attestation. Mandatory regression for the v0.8.0 Apple Silicon release;
+/// absence of the fixture is a failure, not a silently skipped test.
 #[test]
 fn verifies_real_rgt_bundle_when_fixture_present() {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rgt");
     let bundle_path = dir.join("rgt-bundle.json");
-    if !bundle_path.exists() {
-        eprintln!(
-            "skipping: no real rgt attestation fixture yet. Once an attested release ships, \
-             run `scripts/capture-rgt-attestation-fixture.sh vX.Y.Z` (see SECURITY.md) to capture it."
-        );
-        return;
-    }
     let digest = std::fs::read_to_string(dir.join("artifact.sha256"))
         .unwrap()
         .trim()
@@ -105,4 +96,89 @@ fn verifies_real_rgt_bundle_when_fixture_present() {
     let policy = rgt::updater::attestation::rgt_policy().unwrap();
     verify_bundle(&bundle_json, &digest, &policy)
         .expect("real rafael-bianchi/rgt bundle must verify under the production policy");
+}
+
+fn real_rgt_fixture() -> serde_json::Value {
+    serde_json::from_slice(include_bytes!("../fixtures/rgt/rgt-bundle.json")).unwrap()
+}
+
+fn verify_real_rgt(value: &serde_json::Value) -> Result<(), String> {
+    verify_bundle(
+        &serde_json::to_vec(value).unwrap(),
+        include_str!("../fixtures/rgt/artifact.sha256").trim(),
+        &rgt::updater::attestation::rgt_policy().unwrap(),
+    )
+}
+
+#[test]
+fn real_rgt_bundle_accepts_explicit_empty_keyid_but_not_a_different_keyid() {
+    let mut bundle = real_rgt_fixture();
+    bundle["dsseEnvelope"]["signatures"][0]["keyid"] = serde_json::json!("");
+    verify_real_rgt(&bundle).unwrap();
+    bundle["dsseEnvelope"]["signatures"][0]["keyid"] = serde_json::json!("different-key");
+    assert!(verify_real_rgt(&bundle).is_err());
+}
+
+#[test]
+fn real_rgt_bundle_rejects_tampered_signed_material() {
+    use base64::prelude::*;
+    for pointer in [
+        "/dsseEnvelope/payload",
+        "/dsseEnvelope/signatures/0/sig",
+        "/verificationMaterial/certificate/rawBytes",
+        "/verificationMaterial/tlogEntries/0/canonicalizedBody",
+        "/verificationMaterial/tlogEntries/0/inclusionPromise/signedEntryTimestamp",
+        "/verificationMaterial/tlogEntries/0/inclusionProof/rootHash",
+    ] {
+        let mut bundle = real_rgt_fixture();
+        let field = bundle.pointer_mut(pointer).unwrap();
+        let mut bytes = BASE64_STANDARD.decode(field.as_str().unwrap()).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        *field = serde_json::json!(BASE64_STANDARD.encode(bytes));
+        assert!(
+            verify_real_rgt(&bundle).is_err(),
+            "accepted mutation at {pointer}"
+        );
+    }
+    let bundle = serde_json::to_vec(&real_rgt_fixture()).unwrap();
+    assert!(verify_bundle(
+        &bundle,
+        &"00".repeat(32),
+        &rgt::updater::attestation::rgt_policy().unwrap()
+    )
+    .is_err());
+    assert!(verify_bundle(
+        &bundle,
+        include_str!("../fixtures/rgt/artifact.sha256").trim(),
+        &cli_cli_policy()
+    )
+    .is_err());
+}
+
+#[test]
+fn offline_archive_verification_rejects_wrong_digest_without_installing() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = dir.path().join("wrong.tar.gz");
+    std::fs::write(&archive, b"not the signed archive").unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
+        .arg("update")
+        .arg("--verify-archive")
+        .arg(&archive)
+        .arg("--bundle")
+        .arg(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/rgt/rgt-bundle.json"),
+        )
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!dir.path().join(".rgt").exists());
+    assert!(output.stdout.is_empty());
 }

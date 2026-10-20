@@ -7,8 +7,41 @@ mod tests {
 
     static CWD_MUTEX: Mutex<()> = Mutex::new(());
 
+    #[test]
+    fn encoded_windows_vibe_registration_recognizes_managed_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = set_cwd(dir.path());
+        let home = dir.path().join("home");
+        let config = dir.path().join("config");
+        let executable = std::env::current_exe().unwrap();
+        let command = rgt::hooks::installer::direct_hook_command_for_platform(
+            &executable,
+            "pre",
+            "vibe",
+            true,
+        );
+        std::fs::create_dir_all(".vibe").unwrap();
+        let mut hook = toml_edit::Table::new();
+        hook["command"] = toml_edit::value(command);
+        hook["match"] = toml_edit::value("bash");
+        hook["strict"] = toml_edit::value(false);
+        let mut hooks = toml_edit::ArrayOfTables::new();
+        hooks.push(hook);
+        let mut document = toml_edit::DocumentMut::new();
+        document["pre_tool"] = toml_edit::Item::ArrayOfTables(hooks);
+        std::fs::write(".vibe/hooks.toml", document.to_string()).unwrap();
+        let registration = rgt::hooks::registration::inspect_local_registrations(&home, &config)
+            .into_iter()
+            .find(|r| r.surface_id == "vibe")
+            .unwrap();
+        assert_eq!(
+            registration.health,
+            rgt::hooks::registration::RegistrationHealth::Active
+        );
+    }
+
     fn set_cwd(dir: &std::path::Path) -> std::sync::MutexGuard<'static, ()> {
-        let guard = CWD_MUTEX.lock().unwrap();
+        let guard = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_current_dir(dir).unwrap();
         guard
     }
@@ -637,6 +670,8 @@ mod tests {
                 .arg("doctor")
                 .current_dir(dir.path())
                 .env("HOME", &home)
+                .env("USERPROFILE", &home)
+                .env("APPDATA", &config)
                 .env("XDG_CONFIG_HOME", &config)
                 .output()
                 .unwrap();
@@ -720,6 +755,8 @@ mod tests {
             .arg("doctor")
             .current_dir(dir.path())
             .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("APPDATA", &config)
             .env("XDG_CONFIG_HOME", &config)
             .output()
             .unwrap();
@@ -771,6 +808,8 @@ mod tests {
                 .arg("doctor")
                 .current_dir(dir.path())
                 .env("HOME", &home)
+                .env("USERPROFILE", &home)
+                .env("APPDATA", &config_dir)
                 .env("XDG_CONFIG_HOME", &config_dir)
                 .output()
                 .unwrap();
@@ -860,19 +899,29 @@ mod tests {
         )
         .unwrap();
         assert_eq!(registration().health, RegistrationHealth::Obsolete);
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
-            .arg("doctor")
-            .current_dir(dir.path())
-            .env("HOME", &home)
-            .env("XDG_CONFIG_HOME", &config_dir)
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(1));
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        assert!(
-            stdout.contains(&home.join(".hermes/config.toml").display().to_string()),
-            "{stdout}"
-        );
+        // Windows dirs::home_dir uses the OS Known Folder API rather than
+        // USERPROFILE/HOME overrides. The injected registration assertion above
+        // covers user scope on every platform; only Unix can safely run this
+        // subprocess assertion against a temporary home without touching the
+        // runner's actual user configuration.
+        #[cfg(unix)]
+        {
+            let output = std::process::Command::new(env!("CARGO_BIN_EXE_rgt"))
+                .arg("doctor")
+                .current_dir(dir.path())
+                .env("HOME", &home)
+                .env("USERPROFILE", &home)
+                .env("APPDATA", &config_dir)
+                .env("XDG_CONFIG_HOME", &config_dir)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(1));
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(
+                stdout.contains(&home.join(".hermes/config.toml").display().to_string()),
+                "{stdout}"
+            );
+        }
     }
 
     #[test]
@@ -928,6 +977,8 @@ mod tests {
             .arg("doctor")
             .current_dir(dir.path())
             .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("APPDATA", &config_dir)
             .env("XDG_CONFIG_HOME", &config_dir)
             .output()
             .unwrap();

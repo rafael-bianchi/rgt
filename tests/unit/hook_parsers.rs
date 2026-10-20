@@ -1028,7 +1028,12 @@ fn extract_path_from_command_handles_shell_arrays_newlines_python_sed_redirectio
 
     assert_eq!(
         extract_path_from_command("cd subdir\ncat data.csv"),
-        Some("subdir/data.csv".to_string())
+        Some(
+            std::path::Path::new("subdir")
+                .join("data.csv")
+                .to_string_lossy()
+                .to_string()
+        )
     );
     assert_eq!(
         extract_path_from_command("python3 -c 'print(1)' && cat data.csv"),

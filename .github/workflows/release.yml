@@ -86,7 +86,8 @@ jobs:
       - name: Build release binary
         env:
           TARGET: ${{ matrix.target }}
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        run: cargo build --release --locked --target "$TARGET"
+        shell: bash
 
       - name: Strip binary (Unix)
         if: matrix.suffix == 'tar.gz'
@@ -132,9 +133,20 @@ jobs:
         shell: pwsh
 
       - name: Attest release artifact
+        id: archive-attestation
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
         with:
           subject-path: 'rgt-v*.${{ matrix.suffix }}'
+
+      - name: Preserve signed bundle with archive
+        env:
+          BUNDLE_PATH: ${{ steps.archive-attestation.outputs.bundle-path }}
+          SUFFIX: ${{ matrix.suffix }}
+        shell: bash
+        run: |
+          for archive in rgt-v*."${SUFFIX}"; do
+            cp "$BUNDLE_PATH" "${archive}.sigstore.json"
+          done
 
       - name: Upload archive artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -143,6 +155,7 @@ jobs:
           path: |
             rgt-v*.${{ matrix.suffix }}
             rgt-v*.${{ matrix.suffix }}.sha256
+            rgt-v*.${{ matrix.suffix }}.sigstore.json
           if-no-files-found: error
 
   build-deb:
@@ -159,16 +172,32 @@ jobs:
         run: cargo install cargo-deb
 
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Build DEB
         run: cargo deb
+
+      - name: Attest DEB package
+        id: deb-attestation
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: 'target/debian/*.deb'
+
+      - name: Preserve DEB bundle
+        env:
+          BUNDLE_PATH: ${{ steps.deb-attestation.outputs.bundle-path }}
+        run: |
+          for archive in target/debian/*.deb; do
+            cp "$BUNDLE_PATH" "${archive}.sigstore.json"
+          done
 
       - name: Upload DEB
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: rgt-deb
-          path: target/debian/*.deb
+          path: |
+            target/debian/*.deb
+            target/debian/*.deb.sigstore.json
 
   build-rpm:
     name: Build RPM package
@@ -186,16 +215,32 @@ jobs:
         run: cargo install cargo-generate-rpm
 
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Generate RPM
         run: cargo generate-rpm
+
+      - name: Attest RPM package
+        id: rpm-attestation
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: 'target/generate-rpm/*.rpm'
+
+      - name: Preserve RPM bundle
+        env:
+          BUNDLE_PATH: ${{ steps.rpm-attestation.outputs.bundle-path }}
+        run: |
+          for archive in target/generate-rpm/*.rpm; do
+            cp "$BUNDLE_PATH" "${archive}.sigstore.json"
+          done
 
       - name: Upload RPM
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: rgt-rpm
-          path: target/generate-rpm/*.rpm
+          path: |
+            target/generate-rpm/*.rpm
+            target/generate-rpm/*.rpm.sigstore.json
 
   release:
     name: Create GitHub Release
@@ -203,6 +248,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - name: Get version
         id: version
@@ -221,7 +268,7 @@ jobs:
       - name: Flatten artifacts
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.deb" -o -name "*.rpm" \) -exec cp {} release/ \;
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.deb" -o -name "*.rpm" -o -name "*.sigstore.json" \) -exec cp {} release/ \;
 
       - name: Create checksums
         run: |
@@ -232,12 +279,49 @@ jobs:
             fi
           done > checksums.txt
 
+      - name: Verify archives before publication
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir verifier
+          tar -xzf "release/rgt-${TAG}-x86_64-unknown-linux-musl.tar.gz" -C verifier rgt
+          ./verifier/rgt --version
+          python3 scripts/verify-release-assets.py release --tag "$TAG" --rgt ./verifier/rgt
+
+      - name: Refuse mutation of an already published release
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" --repo rafael-bianchi/rgt --json isDraft --jq .isDraft > release-state.txt; then
+            if [ "$(cat release-state.txt)" != "true" ]; then
+              echo "::error::Release $TAG is already public; publish a new version instead of replacing signed assets."
+              exit 1
+            fi
+          fi
+
       - name: Upload Release Assets
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           files: release/*
           prerelease: ${{ inputs.prerelease }}
+          draft: true
+
+      - name: Verify uploaded draft and publish
+        env:
+          TAG: ${{ inputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" --repo rafael-bianchi/rgt --dir published
+          python3 scripts/verify-release-assets.py published --tag "$TAG" --rgt ./verifier/rgt
+          if [ "$PRERELEASE" = "true" ]; then
+            gh release edit "$TAG" --repo rafael-bianchi/rgt --draft=false
+          else
+            gh release edit "$TAG" --repo rafael-bianchi/rgt --draft=false --latest
+          fi
 
   homebrew:
     name: Update Homebrew formula

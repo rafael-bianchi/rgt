@@ -5,9 +5,7 @@ mod update_stub;
 mod tests {
     use super::update_stub;
     use rgt::cli::update::execute_update_with_io;
-    use std::process::{Command, Stdio};
-    use std::thread;
-    use std::time::{Duration, Instant};
+    use std::process::Command;
 
     #[test]
     fn test_quickstart_installer_help() {
@@ -54,35 +52,46 @@ mod tests {
     }
 
     #[test]
-    fn test_quickstart_cargo_package_clean() {
-        let mut child = Command::new("cargo")
+    fn test_quickstart_git_install_resolves_patched_verifier_offline() {
+        // The documented Cargo channel is `cargo install --git`. A crates.io
+        // package would replace the path dependency with the unpatched registry
+        // crate, so publishing is explicitly disabled until an upstream fix ships.
+        let manifest = std::fs::read_to_string("Cargo.toml").unwrap();
+        assert!(manifest.contains("publish = false"));
+        let metadata = Command::new("cargo")
             .args([
-                "package",
-                "--allow-dirty",
+                "metadata",
+                "--format-version",
+                "1",
                 "--offline",
                 "--locked",
-                "--no-verify",
+                "--no-deps",
             ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("Failed to run cargo package");
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            if let Some(status) = child.try_wait().expect("Failed to wait for cargo package") {
-                assert!(status.success(), "offline cargo package failed: {status}");
-                break;
-            }
-            if Instant::now() >= deadline {
-                child
-                    .kill()
-                    .expect("Failed to stop timed-out cargo package");
-                child
-                    .wait()
-                    .expect("Failed to reap timed-out cargo package");
-                panic!("offline cargo package exceeded 30 seconds");
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
+            .output()
+            .unwrap();
+        assert!(
+            metadata.status.success(),
+            "{}",
+            String::from_utf8_lossy(&metadata.stderr)
+        );
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
+        let verifier = metadata["packages"][0]["dependencies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "attestation-verify")
+            .unwrap();
+        assert!(
+            verifier["source"].is_null(),
+            "Git installs must not silently use the unpatched registry verifier"
+        );
+        assert!(verifier["path"]
+            .as_str()
+            .unwrap()
+            .replace('\\', "/")
+            .ends_with("/vendor/attestation-verify"));
+        // This test binary has already compiled the path dependency. Starting
+        // another Cargo build here adds a cold metadata build inside cargo test
+        // and makes success depend on runner speed rather than the contract.
     }
 }

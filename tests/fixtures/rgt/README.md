@@ -4,9 +4,12 @@ This directory holds a **real** `rafael-bianchi/rgt` GitHub Artifact
 Attestation bundle, captured from the first release built after the
 `attest-build-provenance` step landed in `.github/workflows/release.yml`.
 
-Until such a release exists, the directory intentionally has **no fixture** and
-`verifies_real_rgt_bundle_when_fixture_present` in
-`tests/unit/test_update_attestation.rs` skips itself.
+The committed fixture covers the published v0.8.0 Apple Silicon archive from
+Actions run `39192508416`, captured on 2026-10-20. Its digest is recorded in
+`artifact.sha256`. It reproduces the empty-`keyid` envelope serialization bug
+in `attestation-verify 0.1.0`. The test is mandatory and never silently skips.
+`gh attestation verify --repo rafael-bianchi/rgt` independently accepted the
+original archive before this fixture was committed.
 
 ## Capture procedure (run once after the first attested release)
 
@@ -33,11 +36,8 @@ cp /tmp/rgt-bundle.json tests/fixtures/rgt/rgt-bundle.json
 echo "<hex>" > tests/fixtures/rgt/artifact.sha256
 ```
 
-Then the gated test in `tests/unit/test_update_attestation.rs` verifies it
-against the production `rgt_policy()`. If verification fails, the recorded
-identity differs from the policy constants — update `RGT_SIGNER_WORKFLOW`
-and/or the `RefPolicy` in `src/updater/attestation.rs` to match the real
-bundle's `source_ref`/`signer_workflow_path` (inspect the failed
-`VerificationReport`/error), then re-run the test.
+The test verifies the fixture against the production `rgt_policy()`. A failure
+does not authorize weakening that policy: investigate the signed identity and
+cryptographic error before making changes.
 
 This is convergence task T024 (FR-003 / T018).
