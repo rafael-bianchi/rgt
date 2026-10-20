@@ -1,0 +1,16 @@
+{
+ "attestations": [
+  {
+   "repository_id": 212613049,
+   "bundle_url": "https://tmaproduction.blob.core.windows.net/attestations/212613049/2026/07/02/33698471.json.sn?<REDACTED-SAS-TOKEN>",
+   "initiator": "github",
+   "bundle": null
+  },
+  {
+   "repository_id": 212613049,
+   "bundle_url": "https://tmaproduction.blob.core.windows.net/attestations/212613049/2026/07/02/33698298.json.sn?<REDACTED-SAS-TOKEN>",
+   "initiator": "user",
+   "bundle": null
+  }
+ ]
+}

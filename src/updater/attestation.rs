@@ -109,7 +109,7 @@ pub fn fetch_bundle(subject_digest: &str, token: Option<&str>) -> Result<Vec<u8>
     }
 
     let digest_hex = subject_digest.trim_start_matches("sha256:");
-    let policy = rgt_policy().ok();
+    let policy = rgt_policy()?;
     let mut last_err = String::new();
 
     // FR-014: iterate across all .attestations entries until one matches rgt_policy()
@@ -137,9 +137,9 @@ pub fn fetch_bundle(subject_digest: &str, token: Option<&str>) -> Result<Vec<u8>
             continue;
         }
 
-        if let Some(ref pol) = policy {
+        {
             match decompress_bundle(&bytes) {
-                Ok(decompressed) => match verify_bundle(&decompressed, digest_hex, pol) {
+                Ok(decompressed) => match verify_bundle(&decompressed, digest_hex, &policy) {
                     Ok(()) => return Ok(bytes),
                     Err(e) => {
                         last_err = format!("attestation bundle verification failed: {e}");
@@ -149,8 +149,6 @@ pub fn fetch_bundle(subject_digest: &str, token: Option<&str>) -> Result<Vec<u8>
                     last_err = format!("attestation bundle decompression failed: {e}");
                 }
             }
-        } else {
-            return Ok(bytes);
         }
     }
 
@@ -231,4 +229,23 @@ pub fn file_sha256_hex(path: &std::path::Path) -> Result<String, String> {
         hasher.update(&buf[..n]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Offline verification of a local archive under the production release policy.
+/// Does not install, modify the archive, access the network, or open a store.
+pub fn verify_archive_bundle(
+    archive: &std::path::Path,
+    bundle_path: &std::path::Path,
+) -> Result<(), String> {
+    use std::io::Read;
+    let mut bundle = Vec::new();
+    std::fs::File::open(bundle_path)
+        .map_err(|e| format!("cannot open bundle {}: {e}", bundle_path.display()))?
+        .take(MAX_BUNDLE_BYTES + 1)
+        .read_to_end(&mut bundle)
+        .map_err(|e| format!("cannot read bundle {}: {e}", bundle_path.display()))?;
+    if bundle.len() > MAX_BUNDLE_BYTES as usize {
+        return Err("attestation bundle exceeds 16 MiB limit".into());
+    }
+    verify_bundle(&bundle, &file_sha256_hex(archive)?, &rgt_policy()?)
 }

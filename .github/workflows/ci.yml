@@ -199,5 +199,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check README translations parity
         run: scripts/check-readme-parity.sh
+      - name: Check release asset gate regressions
+        run: python3 tests/contract/test_release_assets.py
       - name: Check version state consistency
         run: scripts/check-version-state.sh

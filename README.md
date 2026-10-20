@@ -216,6 +216,16 @@ never the default. Version comparison uses Semantic Versioning: an older or
 equal tag is never installed (no silent downgrades), and `--version <tag>`
 warns when the requested tag is older than the installed version.
 
+RGT 0.7.0 / 0.8.0 users encountering an `envelopeHash` attestation error need
+the [one-time independently verified migration](docs/upgrading-from-0.7.md).
+Do not disable verification to work around that error. Release automation now
+keeps stable releases in draft until checksums and both attestation verifiers
+accept every archive.
+
+For offline verification without installing: `rgt update --verify-archive
+<archive> --bundle <sigstore-bundle.json>`. This uses the production repository
+and workflow policy and never modifies the archive or the installed binary.
+
 ### Provenance
 ```bash
 rgt record <file> [--number-format <us|eu|auto>]   # extract and track values from a file
