@@ -654,6 +654,13 @@ pub fn hook_command_executable_resolvable(cmd: &str) -> bool {
     })
 }
 
+/// Checks the managed marker in the actual CLI arguments, including encoded
+/// PowerShell wrappers, rather than searching only the outer command text.
+pub fn hook_command_is_managed(cmd: &str) -> bool {
+    command_executable_and_args(cmd)
+        .is_some_and(|(_, args)| args.iter().any(|arg| arg == "--rgt-managed"))
+}
+
 fn command_executable_and_args(command: &str) -> Option<(String, Vec<String>)> {
     let tokens = if command.starts_with("( _rgt_tmp=$(mktemp -d ") {
         let (_, remainder) = command.split_once("; trap 'rm -rf \"$_rgt_tmp\"' 0; ")?;
