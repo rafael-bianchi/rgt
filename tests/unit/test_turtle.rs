@@ -279,7 +279,13 @@ fn source_paths_are_relative_only_after_canonical_containment() {
     assert_eq!(full.relative_path.as_deref(), Some("data/values.csv"));
     assert_eq!(
         full.absolute_path.as_deref(),
-        Some(file.canonicalize().unwrap().to_str().unwrap())
+        Some(
+            file.canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+                .as_str()
+        )
     );
 
     let outside = tempfile::NamedTempFile::new().unwrap();

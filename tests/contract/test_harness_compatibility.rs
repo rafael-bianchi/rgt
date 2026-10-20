@@ -825,7 +825,8 @@ fn replay_candidate_read_paths_against_local_graph_and_source_snapshots() {
             } else {
                 serde_json::to_string(&case["payload"]).unwrap()
             };
-            input = input.replace("$SOURCE_PATH", &source.to_string_lossy());
+            let escaped = serde_json::to_string(&source.to_string_lossy()).unwrap();
+            input = input.replace("$SOURCE_PATH", &escaped[1..escaped.len() - 1]);
             if case["bom"].as_bool() == Some(true) {
                 input.insert(0, '\u{feff}');
             }

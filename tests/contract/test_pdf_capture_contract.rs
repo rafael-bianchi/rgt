@@ -68,9 +68,11 @@ mod tests {
     }
 
     fn envelope(file_path: &str, base64: &str) -> String {
-        format!(
-            r#"{{"event":"PostToolUse","tool_name":"Read","tool_input":{{"file_path":"{file_path}"}},"tool_response":{{"type":"pdf","file":{{"filePath":"{file_path}","base64":"{base64}","originalSize":100}}}}}}"#
-        )
+        serde_json::json!({"event":"PostToolUse", "tool_name":"Read",
+            "tool_input":{"file_path":file_path},
+            "tool_response":{"type":"pdf", "file":{"filePath":file_path,
+                "base64":base64, "originalSize":100}}})
+        .to_string()
     }
 
     // -----------------------------------------------------------------------
