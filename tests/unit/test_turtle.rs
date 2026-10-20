@@ -286,12 +286,12 @@ fn source_paths_are_relative_only_after_canonical_containment() {
     let private = source_location(outside.path().to_str().unwrap(), project.path(), false);
     assert!(private.relative_path.is_none());
     assert!(private.absolute_path.is_none());
-    let missing_path = project.path().join("missing.csv");
+    let missing_path = project.path().canonicalize().unwrap().join("missing.csv");
     let opted_in = source_location(missing_path.to_str().unwrap(), project.path(), true);
-    assert!(opted_in.relative_path.is_none());
+    assert_eq!(opted_in.relative_path.as_deref(), Some("missing.csv"));
     assert_eq!(
         opted_in.absolute_path.as_deref(),
-        Some(missing_path.to_string_lossy().as_ref())
+        Some(missing_path.to_string_lossy().replace('\\', "/").as_str())
     );
     let missing_rel = source_location("missing_relative.csv", project.path(), false);
     assert_eq!(
