@@ -338,14 +338,18 @@ mod detection_tests {
         let m = get_metadata_snapshot(&p).unwrap();
         let hash = compute_blake3_hash_from_bytes(b"amount,42\n");
 
+        // Test store reconciliation with explicit identical identities on all
+        // platforms. Windows deliberately reports None for file identity.
+        let (dev, ino) = (Some(7), Some(9));
+
         upsert_source_document(
             db.conn(),
             "Data.CSV",
             m.mtime_nsec,
             m.file_size,
             &hash,
-            m.dev,
-            m.ino,
+            dev,
+            ino,
         )
         .unwrap();
         upsert_source_document(
@@ -354,8 +358,8 @@ mod detection_tests {
             m.mtime_nsec,
             m.file_size,
             &hash,
-            m.dev,
-            m.ino,
+            dev,
+            ino,
         )
         .unwrap();
 
