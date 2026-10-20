@@ -91,10 +91,12 @@ pub fn get_source_document_by_path(
 ) -> Result<Option<SourceDocument>> {
     let mut stmt = conn.prepare(
         "SELECT id, file_path, mtime_nsec, file_size, blake3_hash, last_checked_at, dev, ino
-         FROM source_documents WHERE file_path = ?1",
+         FROM source_documents WHERE file_path = ?1 OR file_path = ?2
+         ORDER BY CASE WHEN file_path = ?1 THEN 0 ELSE 1 END LIMIT 1",
     )?;
 
-    let mut rows = stmt.query(params![file_path])?;
+    let normalized = file_path.replace('\\', "/");
+    let mut rows = stmt.query(params![file_path, normalized])?;
     if let Some(row) = rows.next()? {
         let last_checked_str: String = row.get(5)?;
         let last_checked_at = DateTime::parse_from_rfc3339(&last_checked_str)

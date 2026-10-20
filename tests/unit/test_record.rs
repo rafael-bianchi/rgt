@@ -1,5 +1,26 @@
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn source_lookup_accepts_windows_separators_after_normalized_recording() {
+        let db = rgt::store::DbStore::open_in_memory().unwrap();
+        rgt::store::queries::upsert_source_document(
+            db.conn(),
+            "C:/project/data.csv",
+            1,
+            1,
+            "hash",
+            None,
+            None,
+        )
+        .unwrap();
+        let doc =
+            rgt::store::queries::get_source_document_by_path(db.conn(), "C:\\project\\data.csv")
+                .unwrap();
+        assert!(
+            doc.is_some(),
+            "lookup must use the same separator convention as recording"
+        );
+    }
     use rgt::hooks::parser::{extract_values_from_content, NumberFormat};
     use rgt::types::{TrackedNode, ValueKind};
     use std::sync::Mutex;

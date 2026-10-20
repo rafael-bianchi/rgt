@@ -39,6 +39,10 @@ the verification procedure is the same.
 Re-run `rgt init` for your configured agents if the executable path changed.
 Subsequent updates use the fixed built-in verifier with attestation checks on.
 
+The supported Cargo channel remains `cargo install --git`. Crates.io publication
+is disabled while the verifier fix is vendored: Cargo's registry packaging
+strips path dependencies and would otherwise substitute the unpatched verifier.
+
 ## Maintainer rules
 
 - Never substitute locally built binaries for signed release assets.
