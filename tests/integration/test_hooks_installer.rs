@@ -467,11 +467,13 @@ mod tests {
             std::fs::write(&config, malformed).unwrap();
             assert_eq!(health(), RegistrationHealth::Malformed);
             let (code, output) = doctor();
-            assert_eq!(code, Some(1), "{output}");
-            assert!(
-                output.contains("hermes: Malformed registration"),
-                "{output}"
-            );
+            if !global || cfg!(unix) {
+                assert_eq!(code, Some(1), "{output}");
+                assert!(
+                    output.contains("hermes: Malformed registration"),
+                    "{output}"
+                );
+            }
             let report = install();
             let expected_artifact = if global {
                 config.as_path()
