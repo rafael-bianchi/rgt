@@ -41,7 +41,7 @@ mod tests {
     }
 
     fn set_cwd(dir: &std::path::Path) -> std::sync::MutexGuard<'static, ()> {
-        let guard = CWD_MUTEX.lock().unwrap();
+        let guard = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_current_dir(dir).unwrap();
         guard
     }
@@ -670,6 +670,8 @@ mod tests {
                 .arg("doctor")
                 .current_dir(dir.path())
                 .env("HOME", &home)
+                .env("USERPROFILE", &home)
+                .env("APPDATA", &config)
                 .env("XDG_CONFIG_HOME", &config)
                 .output()
                 .unwrap();
@@ -753,6 +755,8 @@ mod tests {
             .arg("doctor")
             .current_dir(dir.path())
             .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("APPDATA", &config)
             .env("XDG_CONFIG_HOME", &config)
             .output()
             .unwrap();
@@ -804,6 +808,8 @@ mod tests {
                 .arg("doctor")
                 .current_dir(dir.path())
                 .env("HOME", &home)
+                .env("USERPROFILE", &home)
+                .env("APPDATA", &config_dir)
                 .env("XDG_CONFIG_HOME", &config_dir)
                 .output()
                 .unwrap();
@@ -897,6 +903,8 @@ mod tests {
             .arg("doctor")
             .current_dir(dir.path())
             .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("APPDATA", &config_dir)
             .env("XDG_CONFIG_HOME", &config_dir)
             .output()
             .unwrap();
@@ -961,6 +969,8 @@ mod tests {
             .arg("doctor")
             .current_dir(dir.path())
             .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("APPDATA", &config_dir)
             .env("XDG_CONFIG_HOME", &config_dir)
             .output()
             .unwrap();
