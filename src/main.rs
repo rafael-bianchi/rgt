@@ -211,6 +211,8 @@ fn parse_number_format(s: Option<&str>) -> Option<NumberFormat> {
     s.and_then(|raw| raw.parse().ok())
 }
 
+const GRAPH_COMMAND_BUDGET: std::time::Duration = std::time::Duration::from_millis(550);
+
 fn remaining_hook_budget(elapsed: std::time::Duration) -> std::time::Duration {
     std::time::Duration::from_millis(800).saturating_sub(elapsed)
 }
@@ -219,7 +221,7 @@ fn main() {
     let process_started = std::time::Instant::now();
     // Reserve time for process-launch and scheduling overhead so a blocked
     // stdout write remains observable as a sub-second CLI failure.
-    let command_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let command_deadline = process_started + GRAPH_COMMAND_BUDGET;
     let cli = Cli::parse();
 
     let result = match cli.command {
@@ -394,9 +396,16 @@ fn main() {
 
 #[cfg(test)]
 mod hook_deadline_tests {
-    use super::remaining_hook_budget;
+    use super::{remaining_hook_budget, GRAPH_COMMAND_BUDGET};
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[test]
+    fn graph_command_budget_reserves_startup_headroom() {
+        assert!(GRAPH_COMMAND_BUDGET >= Duration::from_millis(500));
+        assert!(GRAPH_COMMAND_BUDGET <= Duration::from_millis(750));
+        assert!(GRAPH_COMMAND_BUDGET < Duration::from_secs(1));
+    }
 
     #[test]
     fn direct_hook_deadline_is_bounded_and_expires_without_waiting() {
