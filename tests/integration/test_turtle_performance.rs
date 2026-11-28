@@ -245,15 +245,27 @@ fn insert_node(conn: &Connection, node: FixtureNode<'_>) {
 }
 
 fn insert_source(conn: &Connection, project: &Path, relative: &str) -> i64 {
+    const CONTENT: &[u8] = b"fixture\n";
     let path = project.join(relative);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).unwrap();
     }
-    fs::write(&path, "fixture\n").unwrap();
+    fs::write(&path, CONTENT).unwrap();
+    let meta = rgt::detection::get_metadata_snapshot(&path).unwrap();
+    let hash = blake3::hash(CONTENT).to_hex().to_string();
+    let now = Utc::now().to_rfc3339();
     conn.execute(
-        "INSERT INTO source_documents (file_path,mtime_nsec,file_size,blake3_hash,last_checked_at)
-         VALUES (?1,0,8,'fixture-hash','2026-01-01T00:00:00Z')",
-        [relative],
+        "INSERT INTO source_documents (file_path,mtime_nsec,file_size,blake3_hash,last_checked_at,dev,ino)
+         VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![
+            relative,
+            meta.mtime_nsec,
+            meta.file_size as i64,
+            hash,
+            now,
+            meta.dev.map(|v| v as i64),
+            meta.ino.map(|v| v as i64),
+        ],
     )
     .unwrap();
     conn.last_insert_rowid()
