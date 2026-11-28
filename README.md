@@ -80,10 +80,11 @@ curl -fsSL https://raw.githubusercontent.com/rafael-bianchi/rgt/main/install.sh 
 ### Homebrew (tap)
 
 ```bash
+brew tap rafael-bianchi/rgt https://github.com/rafael-bianchi/rgt.git
 brew install rafael-bianchi/rgt/rgt
 ```
 
-> The tap formula is refreshed by each GitHub release.
+Homebrew reads the tap formula from the default branch of the RGT repository.
 
 ### Cargo
 
