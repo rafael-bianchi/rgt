@@ -1,6 +1,6 @@
 [package]
 name = "rgt"
-version = "0.8.1"
+version = "0.8.2"
 publish = false # Git installs retain the vendored verifier; crates.io would strip its path.
 edition = "2021"
 authors = ["RGT Contributors"]

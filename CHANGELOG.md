@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.2](https://github.com/rafael-bianchi/rgt/compare/v0.8.1...v0.8.2) (2026-11-28)
+
+
+### Bug Fixes
+
+* **export:** reserve startup headroom in Turtle command deadline ([44aa532](https://github.com/rafael-bianchi/rgt/commit/44aa532aa39fe2bf5b400bb718c673e8c26f5ea6))
+* **export:** reserve startup headroom in Turtle command deadline ([aa3a9a2](https://github.com/rafael-bianchi/rgt/commit/aa3a9a22c52e7dd25fb0605713b346514086e1e7))
+
 ## [0.8.1](https://github.com/rafael-bianchi/rgt/compare/v0.8.0...v0.8.1) (2026-10-20)
 
 
