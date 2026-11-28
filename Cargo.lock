@@ -1784,7 +1784,7 @@ dependencies = [
 
 [[package]]
 name = "rgt"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "attestation-verify",
  "base64 0.23.1",
